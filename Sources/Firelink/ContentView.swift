@@ -214,6 +214,7 @@ private struct DownloadTable: View {
     @State private var sortColumn: DownloadColumn = .dateAdded
     @State private var sortDirection: SortDirection = .descending
     @State private var pendingDeleteItem: DownloadItem?
+    @State private var resizeBaseWidths: [DownloadColumn: CGFloat] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -304,42 +305,62 @@ private struct DownloadTable: View {
         HStack(spacing: 0) {
             ForEach(orderedVisibleColumns) { column in
                 HStack(spacing: 0) {
-                    Button {
-                        if sortColumn == column {
-                            sortDirection.toggle()
-                        } else {
-                            sortColumn = column
-                            sortDirection = .ascending
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(column.rawValue)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
+                    ZStack(alignment: .trailing) {
+                        Button {
                             if sortColumn == column {
-                                Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
-                                    .font(.caption2)
+                                sortDirection.toggle()
+                            } else {
+                                sortColumn = column
+                                sortDirection = .ascending
                             }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(width: max(44, width(for: column) - 8), height: 34, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
-
-                    Rectangle()
-                        .fill(.secondary.opacity(0.18))
-                        .frame(width: 1, height: 20)
-                        .padding(.horizontal, 3)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 1)
-                                .onChanged { value in
-                                    columnWidths[column] = max(70, column.width + value.translation.width)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Spacer(minLength: 0)
+                                Text(column.rawValue)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .multilineTextAlignment(.center)
+                                    .layoutPriority(1)
+                                if sortColumn == column {
+                                    Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
+                                        .font(.caption2)
                                 }
-                        )
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 8)
+                            .frame(width: width(for: column), height: 34, alignment: .center)
+                            .clipped()
+                        }
+                        .buttonStyle(.plain)
+
+                        Rectangle()
+                            .fill(.secondary.opacity(0.18))
+                            .frame(width: 1, height: 20)
+                            .frame(width: 8, height: 34)
+                            .contentShape(Rectangle())
+                            .onHover { isHovering in
+                                if isHovering {
+                                    NSCursor.resizeLeftRight.push()
+                                } else {
+                                    NSCursor.pop()
+                                }
+                            }
+                            .gesture(
+                                DragGesture(minimumDistance: 1)
+                                    .onChanged { value in
+                                        let baseWidth = resizeBaseWidths[column] ?? width(for: column)
+                                        resizeBaseWidths[column] = baseWidth
+                                        columnWidths[column] = max(70, baseWidth + value.translation.width)
+                                    }
+                                    .onEnded { _ in
+                                        resizeBaseWidths[column] = nil
+                                    }
+                            )
+                    }
+                    .frame(width: width(for: column), height: 34)
+                    .clipped()
                 }
-                .frame(width: width(for: column), height: 34)
             }
         }
         .frame(minWidth: totalWidth, alignment: .leading)
@@ -493,9 +514,10 @@ private struct DownloadRow: View {
         HStack(alignment: .top, spacing: 0) {
             ForEach(visibleColumns) { column in
                 cell(for: column)
-                    .frame(width: columnWidth(column), alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 8)
+                    .frame(width: columnWidth(column), alignment: alignment(for: column))
+                    .clipped()
             }
         }
     }
@@ -510,55 +532,81 @@ private struct DownloadRow: View {
                     .foregroundStyle(categoryColor)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(item.fileName)
-                            .font(.headline)
-                            .lineLimit(1)
-                    }
+                    Text(item.fileName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     Text(item.url.absoluteString)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         case .size:
             Text(ByteFormatter.string(item.sizeBytes))
                 .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .status:
             Text(item.status.rawValue)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .progress:
             Text(progressStatusText)
                 .monospacedDigit()
                 .foregroundStyle(statusColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .lastTry:
             Text(formatted(item.lastTryAt))
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .dateAdded:
             Text(formatted(item.createdAt))
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .category:
             Text(item.category.rawValue)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .connections:
             Text("\(item.connectionsPerServer)")
                 .monospacedDigit()
+                .lineLimit(1)
         case .liveConnections:
             Text("\(item.connectionCount)")
                 .monospacedDigit()
+                .lineLimit(1)
         case .speed:
             Text(item.speedText)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .eta:
             Text(item.etaText)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .destination:
             Text(item.destinationPath)
                 .font(.system(.caption, design: .monospaced))
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .url:
             Text(item.url.absoluteString)
                 .font(.system(.caption, design: .monospaced))
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.tail)
         case .message:
             Text(item.message)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
+    }
+
+    private func alignment(for column: DownloadColumn) -> Alignment {
+        column == .fileName ? .leading : .center
     }
 
     private var categoryColor: Color {

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -10,15 +11,38 @@ final class DownloadController: ObservableObject {
     private let engine = Aria2DownloadEngine()
     private var activeHandles: [UUID: Aria2DownloadEngine.Handle] = [:]
     private var sleepActivity: SleepActivityHandle?
-    private var settingsCancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
+    private lazy var storageURL: URL = {
+        let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
+        return supportDir.appendingPathComponent("Firelink").appendingPathComponent("downloads.json")
+    }()
 
     init(settings: AppSettings) {
         self.settings = settings
-        settingsCancellable = settings.$preventsSleepWhileDownloading.sink { [weak self] _ in
-            Task { @MainActor in
-                self?.updateSleepActivity()
+        
+        loadDownloads()
+        
+        settings.$preventsSleepWhileDownloading
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.updateSleepActivity()
+                }
             }
-        }
+            .store(in: &cancellables)
+            
+        $downloads
+            .dropFirst()
+            .debounce(for: .seconds(2.0), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.saveDownloads()
+            }
+            .store(in: &cancellables)
+            
+        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in
+                self?.saveDownloads()
+            }
+            .store(in: &cancellables)
     }
 
     deinit {
@@ -309,6 +333,39 @@ final class DownloadController: ObservableObject {
 
         for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
             try? FileManager.default.trashItem(at: candidate, resultingItemURL: nil)
+        }
+    }
+
+    private func saveDownloads() {
+        do {
+            let directory = storageURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+            let data = try JSONEncoder().encode(downloads)
+            try data.write(to: storageURL, options: .atomic)
+        } catch {
+            print("Failed to save downloads: \(error)")
+        }
+    }
+
+    private func loadDownloads() {
+        do {
+            guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+            let data = try Data(contentsOf: storageURL)
+            let loaded = try JSONDecoder().decode([DownloadItem].self, from: data)
+            
+            self.downloads = loaded.map { item in
+                var adjusted = item
+                if adjusted.status == .downloading {
+                    adjusted.status = .paused
+                    adjusted.message = "Paused on startup"
+                    adjusted.speedText = "-"
+                    adjusted.etaText = "-"
+                    adjusted.connectionCount = 0
+                }
+                return adjusted
+            }
+        } catch {
+            print("Failed to load downloads: \(error)")
         }
     }
 }

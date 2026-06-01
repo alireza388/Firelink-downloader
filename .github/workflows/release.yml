@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.1.0"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64-dmg:
+    name: Build macOS ARM64 DMG
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Show build environment
+        run: |
+          uname -a
+          swift --version
+
+      - name: Build app bundle
+        env:
+          MARKETING_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: Scripts/create_app_bundle.sh
+
+      - name: Verify ARM64 binary
+        run: |
+          file build/Firelink.app/Contents/MacOS/Firelink
+          lipo -archs build/Firelink.app/Contents/MacOS/Firelink | grep -qx arm64
+
+      - name: Create DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: arm64
+        run: Scripts/create_dmg.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Firelink-${{ steps.version.outputs.version }}-mac-arm64-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.dmg --generate-notes --verify-tag
+          fi

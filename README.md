@@ -82,6 +82,18 @@ Or build a production `.app` bundle:
 make app && open build/Firelink.app
 ```
 
+Create a local Apple Silicon DMG:
+```bash
+make dmg
+```
+
+### Release
+GitHub Actions builds and publishes the macOS ARM64 DMG when a version tag is pushed:
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ---
 
 ## 🗺️ Roadmap

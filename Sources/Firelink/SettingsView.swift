@@ -17,7 +17,7 @@ struct SettingsView: View {
 
             SiteLoginsSettingsPane()
                 .tabItem {
-                    Label("Site Logins", systemImage: "person.crop.circle.badge.key")
+                    Label("Site Logins", systemImage: "key.fill")
                 }
 
             PowerSettingsPane()
@@ -37,11 +37,20 @@ private struct DownloadSettingsPane: View {
         Form {
             Section {
                 Stepper(
-                    "Connections per server: \(settings.perServerConnections)",
+                    "Default connections per server: \(settings.perServerConnections)",
                     value: $settings.perServerConnections,
                     in: 1...16
                 )
-                Text("Used by aria2 for each server. Firelink still lets each download request 16-32 parts.")
+                Text("Used as the default for new downloads. The Add Downloads window can override it per batch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Stepper(
+                    "Parallel downloads: \(settings.maxConcurrentDownloads)",
+                    value: $settings.maxConcurrentDownloads,
+                    in: 1...12
+                )
+                Text("Controls how many files Firelink downloads at the same time.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

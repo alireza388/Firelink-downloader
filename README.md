@@ -7,11 +7,13 @@ This project is early, but it already has a working native prototype and an `ari
 ## Features
 
 - Native SwiftUI macOS interface.
-- Segmented downloads with 16-32 requested parts per file.
+- Segmented downloads with a per-file connection count that also controls the split count.
 - Multiple files downloading at the same time.
 - Queue-based downloads with drag-and-drop priority ordering.
 - Native macOS Settings window, available from App menu > Settings and the main toolbar.
-- Configurable per-server connection count.
+- Configurable default per-server connection count.
+- Configurable parallel file download limit in Settings.
+- Per-batch connection controls in the Add Downloads window.
 - Automatic save folders under `~/Downloads`:
   - `Musics`
   - `Movies`
@@ -31,7 +33,7 @@ This project is early, but it already has a working native prototype and an `ari
 
 This first version uses `aria2c` as the download engine. It is a better fit than plain `curl` for the requested IDM/FDM-style behavior because it has segmented downloads, resumable transfers, concurrent downloads, HTTP/FTP/SFTP support, and username/password options built in.
 
-The UI allows 16-32 requested parts. For ordinary same-host HTTP downloads, Firelink currently caps `aria2c`'s per-server connection count at 16 while still setting the requested split count. This keeps behavior aligned with common server limits and `aria2c`'s stable controls.
+Firelink uses one per-file connection value for both `aria2c` split count and same-server connection count. That keeps the download behavior close to the familiar IDM-style model: choosing 8 connections splits the file into 8 parallel segments.
 
 ## Requirements
 

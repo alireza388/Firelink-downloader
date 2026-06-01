@@ -18,6 +18,16 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var maxConcurrentDownloads: Int {
+        didSet {
+            let clamped = min(max(maxConcurrentDownloads, 1), 12)
+            if maxConcurrentDownloads != clamped {
+                maxConcurrentDownloads = clamped
+            }
+            save()
+        }
+    }
+
     @Published var preventsSleepWhileDownloading: Bool {
         didSet { save() }
     }
@@ -41,11 +51,13 @@ final class AppSettings: ObservableObject {
         if let data = defaults.data(forKey: storageKey),
            let stored = try? JSONDecoder().decode(StoredSettings.self, from: data) {
             perServerConnections = min(max(stored.perServerConnections, 1), 16)
+            maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             preventsSleepWhileDownloading = stored.preventsSleepWhileDownloading
             siteLogins = stored.siteLogins
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             perServerConnections = 16
+            maxConcurrentDownloads = 3
             preventsSleepWhileDownloading = true
             siteLogins = []
             downloadDirectories = Self.defaultDirectories()
@@ -106,9 +118,18 @@ final class AppSettings: ObservableObject {
         return DownloadCredentials(username: login.username, password: password)
     }
 
+    func credentials(for login: SiteLogin) -> DownloadCredentials? {
+        guard let password = KeychainCredentialStore.password(for: login.id) else {
+            return nil
+        }
+
+        return DownloadCredentials(username: login.username, password: password)
+    }
+
     private func save() {
         let stored = StoredSettings(
             perServerConnections: perServerConnections,
+            maxConcurrentDownloads: maxConcurrentDownloads,
             preventsSleepWhileDownloading: preventsSleepWhileDownloading,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins
@@ -165,6 +186,7 @@ final class AppSettings: ObservableObject {
 
 private struct StoredSettings: Codable {
     var perServerConnections: Int
+    var maxConcurrentDownloads: Int?
     var preventsSleepWhileDownloading: Bool
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]

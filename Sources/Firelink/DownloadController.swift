@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class DownloadController: ObservableObject {
     @Published var downloads: [DownloadItem] = []
-    @Published var maxConcurrentDownloads = 3
     @Published var engineMessage = ""
 
     private let settings: AppSettings
@@ -46,7 +45,7 @@ final class DownloadController: ObservableObject {
         Aria2DownloadEngine.findExecutable() != nil
     }
 
-    func add(urlText: String, parts: Int) {
+    func add(urlText: String, connectionsPerServer: Int? = nil) {
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
               ["http", "https", "ftp", "sftp"].contains(scheme) else {
@@ -61,12 +60,42 @@ final class DownloadController: ObservableObject {
             fileName: fileName,
             category: category,
             destinationDirectory: settings.destinationDirectory(for: category),
-            parts: min(max(parts, 16), 32),
+            connectionsPerServer: min(max(connectionsPerServer ?? settings.perServerConnections, 1), 16),
             credentials: settings.credentials(for: url)
         )
 
         downloads.append(item)
         engineMessage = "Added \(fileName) to \(category.rawValue)."
+    }
+
+    func addPendingDownloads(
+        _ pendingDownloads: [PendingDownload],
+        connectionsPerServer: Int,
+        overrideDirectory: URL?,
+        startImmediately: Bool
+    ) {
+        let clampedConnections = min(max(connectionsPerServer, 1), 16)
+
+        let items = pendingDownloads.map { pending in
+            DownloadItem(
+                url: pending.url,
+                fileName: pending.fileName,
+                category: pending.category,
+                destinationDirectory: overrideDirectory ?? pending.defaultDirectory,
+                connectionsPerServer: clampedConnections,
+                credentials: settings.credentials(for: pending.url),
+                sizeBytes: pending.sizeBytes,
+                bytesText: ByteFormatter.string(pending.sizeBytes),
+                message: startImmediately ? "Queued to start" : "Added to queue"
+            )
+        }
+
+        downloads.append(contentsOf: items)
+        engineMessage = "Added \(items.count) download\(items.count == 1 ? "" : "s")."
+
+        if startImmediately {
+            startQueue()
+        }
     }
 
     func startQueue() {
@@ -83,6 +112,22 @@ final class DownloadController: ObservableObject {
         }
         updateSleepActivity()
         pumpQueue()
+    }
+
+    func queue(_ item: DownloadItem) {
+        activeHandles[item.id]?.cancel()
+        activeHandles[item.id] = nil
+        update(item.id) {
+            $0.status = .queued
+            if item.status != .paused {
+                $0.progress = 0
+                $0.speedText = "-"
+                $0.etaText = "-"
+                $0.connectionCount = 0
+            }
+            $0.message = "Added to queue"
+        }
+        updateSleepActivity()
     }
 
     func resume(_ item: DownloadItem) {
@@ -114,6 +159,13 @@ final class DownloadController: ObservableObject {
         updateSleepActivity()
     }
 
+    func delete(_ item: DownloadItem) {
+        activeHandles[item.id]?.cancel()
+        activeHandles[item.id] = nil
+        downloads.removeAll { $0.id == item.id }
+        updateSleepActivity()
+    }
+
     func move(from source: IndexSet, to destination: Int) {
         downloads.move(fromOffsets: source, toOffset: destination)
     }
@@ -124,7 +176,7 @@ final class DownloadController: ObservableObject {
             return
         }
 
-        while activeCount < maxConcurrentDownloads,
+        while activeCount < settings.maxConcurrentDownloads,
               let next = downloads.first(where: { $0.status == .queued }) {
             start(next)
         }
@@ -133,6 +185,7 @@ final class DownloadController: ObservableObject {
     private func start(_ item: DownloadItem) {
         update(item.id) {
             $0.status = .downloading
+            $0.lastTryAt = Date()
             $0.message = "Starting"
             $0.speedText = "-"
             $0.etaText = "-"
@@ -141,7 +194,6 @@ final class DownloadController: ObservableObject {
         do {
             let handle = try engine.start(
                 item: item,
-                perServerConnections: settings.perServerConnections,
                 progress: { [weak self] progress in
                     Task { @MainActor in
                         self?.update(item.id) {
@@ -202,6 +254,25 @@ final class DownloadController: ObservableObject {
     private func update(_ id: UUID, mutate: (inout DownloadItem) -> Void) {
         guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
         mutate(&downloads[index])
+    }
+
+    func updateDownload(
+        id: UUID,
+        url: URL,
+        fileName: String,
+        destinationDirectory: URL,
+        connectionsPerServer: Int,
+        credentials: DownloadCredentials?
+    ) {
+        update(id) {
+            $0.url = url
+            $0.fileName = fileName
+            $0.category = FileClassifier.category(forFileName: fileName)
+            $0.destinationDirectory = destinationDirectory
+            $0.connectionsPerServer = min(max(connectionsPerServer, 1), 16)
+            $0.credentials = credentials
+            $0.message = "Properties updated"
+        }
     }
 
     private func updateSleepActivity() {

@@ -45,16 +45,18 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var fileName: String
     var category: DownloadCategory
     var destinationDirectory: URL
-    var parts: Int
+    var connectionsPerServer: Int
     var credentials: DownloadCredentials?
     var status: DownloadStatus = .queued
     var progress: Double = 0
     var speedText: String = "-"
     var etaText: String = "-"
     var connectionCount: Int = 0
+    var sizeBytes: Int64?
     var bytesText: String = "-"
     var message: String = ""
     var createdAt = Date()
+    var lastTryAt: Date?
 
     var destinationPath: String {
         destinationDirectory.appendingPathComponent(fileName).path
@@ -67,4 +69,26 @@ struct DownloadProgress: Equatable, Sendable {
     var speedText: String
     var etaText: String
     var connectionCount: Int
+}
+
+struct PendingDownload: Identifiable, Equatable, Sendable {
+    enum MetadataState: Equatable, Sendable {
+        case pending
+        case loading
+        case loaded
+        case failed(String)
+    }
+
+    var id = UUID()
+    var url: URL
+    var fileName: String
+    var category: DownloadCategory
+    var defaultDirectory: URL
+    var sizeBytes: Int64?
+    var mimeType: String?
+    var state: MetadataState = .pending
+
+    var destinationPath: String {
+        defaultDirectory.appendingPathComponent(fileName).path
+    }
 }

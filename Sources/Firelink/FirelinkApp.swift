@@ -19,6 +19,25 @@ struct FirelinkApp: App {
                 .frame(minWidth: 980, minHeight: 640)
         }
         .windowStyle(.titleBar)
+
+        WindowGroup("Add Downloads", id: "add-downloads") {
+            AddDownloadsView()
+                .environmentObject(controller)
+                .environmentObject(settings)
+        }
+        .windowResizability(.contentSize)
+
+        WindowGroup("Download Properties", for: UUID.self) { $downloadID in
+            if let downloadID {
+                DownloadPropertiesWindow(downloadID: downloadID)
+                    .environmentObject(controller)
+                    .environmentObject(settings)
+            } else {
+                ContentUnavailableView("Download Not Found", systemImage: "questionmark.circle")
+            }
+        }
+        .windowResizability(.contentSize)
+
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Start Queue") {

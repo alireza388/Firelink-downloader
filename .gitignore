@@ -2,5 +2,6 @@
 .build/
 build/
 DerivedData/
+.vscode/
 *.xcuserdata/
 *.xcuserstate

@@ -2,12 +2,20 @@ import SwiftUI
 
 @main
 struct FirelinkApp: App {
-    @StateObject private var controller = DownloadController()
+    @StateObject private var settings: AppSettings
+    @StateObject private var controller: DownloadController
+
+    init() {
+        let settings = AppSettings()
+        _settings = StateObject(wrappedValue: settings)
+        _controller = StateObject(wrappedValue: DownloadController(settings: settings))
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(controller)
+                .environmentObject(settings)
                 .frame(minWidth: 980, minHeight: 640)
         }
         .windowStyle(.titleBar)
@@ -18,6 +26,11 @@ struct FirelinkApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(settings)
         }
     }
 }

@@ -10,6 +10,8 @@ This project is early, but it already has a working native prototype and an `ari
 - Segmented downloads with 16-32 requested parts per file.
 - Multiple files downloading at the same time.
 - Queue-based downloads with drag-and-drop priority ordering.
+- Native macOS Settings window, available from App menu > Settings and the main toolbar.
+- Configurable per-server connection count.
 - Automatic save folders under `~/Downloads`:
   - `Musics`
   - `Movies`
@@ -17,9 +19,11 @@ This project is early, but it already has a working native prototype and an `ari
   - `Pictures`
   - `Documents`
   - `Other`
+- Custom download locations per file category.
 - Broad file extension detection for audio, video, archive, image, and document formats.
 - HTTP, HTTPS, FTP, and SFTP URL support through `aria2c`.
-- Optional per-download username/password support for servers that require authentication.
+- Site login rules with URL pattern matching and Keychain-stored passwords.
+- Optional prevention of system sleep while files are downloading, while still allowing display sleep.
 - Pause, resume, cancel, delete, progress, speed, ETA, and connection count display.
 - Release `.app` bundle script for local macOS builds.
 
@@ -60,7 +64,7 @@ Because the current machine only has Command Line Tools selected, this repositor
 ## Roadmap
 
 - Persist download history and queue state.
-- Add Keychain-backed credential storage.
+- Improve site-login editing and migration tools.
 - Add browser integration and URL capture.
 - Add scheduler rules and speed limits.
 - Add checksum verification.

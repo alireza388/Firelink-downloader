@@ -55,6 +55,7 @@ final class Aria2DownloadEngine {
 
     func start(
         item: DownloadItem,
+        perServerConnections: Int,
         progress: @escaping @Sendable (DownloadProgress) -> Void,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws -> Handle {
@@ -121,7 +122,7 @@ final class Aria2DownloadEngine {
 
         do {
             try process.run()
-            if let input = inputFileContent(for: item).data(using: .utf8) {
+            if let input = inputFileContent(for: item, perServerConnections: perServerConnections).data(using: .utf8) {
                 inputPipe.fileHandleForWriting.write(input)
             }
             inputPipe.fileHandleForWriting.closeFile()
@@ -150,8 +151,8 @@ final class Aria2DownloadEngine {
         ]
     }
 
-    private func inputFileContent(for item: DownloadItem) -> String {
-        let sameHostConnections = min(item.parts, 16)
+    private func inputFileContent(for item: DownloadItem, perServerConnections: Int) -> String {
+        let sameHostConnections = min(max(perServerConnections, 1), item.parts)
         var lines = [
             sanitizedOptionValue(item.url.absoluteString),
             "  dir=\(sanitizedOptionValue(item.destinationDirectory.path))",

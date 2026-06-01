@@ -3,8 +3,6 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var controller: DownloadController
     @State private var urlText = ""
-    @State private var username = ""
-    @State private var password = ""
     @State private var parts = 16.0
     @State private var selection: DownloadItem.ID?
 
@@ -16,8 +14,6 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 AddDownloadBar(
                     urlText: $urlText,
-                    username: $username,
-                    password: $password,
                     parts: $parts,
                     addAction: addDownload
                 )
@@ -32,6 +28,10 @@ struct ContentView: View {
                         controller.startQueue()
                     } label: {
                         Label("Start Queue", systemImage: "play.fill")
+                    }
+
+                    SettingsLink {
+                        Label("Settings", systemImage: "gearshape")
                     }
 
                     if let selectedItem {
@@ -68,14 +68,10 @@ struct ContentView: View {
     private func addDownload() {
         controller.add(
             urlText: urlText,
-            parts: Int(parts),
-            username: username,
-            password: password
+            parts: Int(parts)
         )
         if controller.engineMessage.hasPrefix("Added") {
             urlText = ""
-            username = ""
-            password = ""
         }
     }
 }
@@ -117,8 +113,6 @@ private struct SidebarView: View {
 
 private struct AddDownloadBar: View {
     @Binding var urlText: String
-    @Binding var username: String
-    @Binding var password: String
     @Binding var parts: Double
     let addAction: () -> Void
 
@@ -145,16 +139,6 @@ private struct AddDownloadBar: View {
                         .monospacedDigit()
                         .frame(width: 62, alignment: .trailing)
                 }
-
-                Divider()
-                    .frame(height: 22)
-
-                TextField("Username", text: $username)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                SecureField("Password", text: $password)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
 
                 Spacer()
             }

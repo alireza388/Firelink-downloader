@@ -7,8 +7,24 @@ final class DownloadController: ObservableObject {
     @Published var maxConcurrentDownloads = 3
     @Published var engineMessage = ""
 
+    private let settings: AppSettings
     private let engine = Aria2DownloadEngine()
     private var activeHandles: [UUID: Aria2DownloadEngine.Handle] = [:]
+    private var sleepActivity: SleepActivityHandle?
+    private var settingsCancellable: AnyCancellable?
+
+    init(settings: AppSettings) {
+        self.settings = settings
+        settingsCancellable = settings.$preventsSleepWhileDownloading.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.updateSleepActivity()
+            }
+        }
+    }
+
+    deinit {
+        sleepActivity?.end()
+    }
 
     var activeCount: Int {
         downloads.filter { $0.status == .downloading }.count
@@ -30,7 +46,7 @@ final class DownloadController: ObservableObject {
         Aria2DownloadEngine.findExecutable() != nil
     }
 
-    func add(urlText: String, parts: Int, username: String, password: String) {
+    func add(urlText: String, parts: Int) {
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
               ["http", "https", "ftp", "sftp"].contains(scheme) else {
@@ -40,14 +56,13 @@ final class DownloadController: ObservableObject {
 
         let fileName = FileClassifier.fileName(from: url)
         let category = FileClassifier.category(forFileName: fileName)
-        let credentials = DownloadCredentials(username: username, password: password)
         let item = DownloadItem(
             url: url,
             fileName: fileName,
             category: category,
-            destinationDirectory: FileClassifier.destinationDirectory(for: category),
+            destinationDirectory: settings.destinationDirectory(for: category),
             parts: min(max(parts, 16), 32),
-            credentials: credentials.isEmpty ? nil : credentials
+            credentials: settings.credentials(for: url)
         )
 
         downloads.append(item)
@@ -66,6 +81,7 @@ final class DownloadController: ObservableObject {
             $0.status = .paused
             $0.message = "Paused. Resume will continue from the partial file."
         }
+        updateSleepActivity()
         pumpQueue()
     }
 
@@ -84,6 +100,7 @@ final class DownloadController: ObservableObject {
             $0.status = .canceled
             $0.message = "Canceled"
         }
+        updateSleepActivity()
         pumpQueue()
     }
 
@@ -94,6 +111,7 @@ final class DownloadController: ObservableObject {
             activeHandles[item.id] = nil
         }
         downloads.remove(atOffsets: offsets)
+        updateSleepActivity()
     }
 
     func move(from source: IndexSet, to destination: Int) {
@@ -123,6 +141,7 @@ final class DownloadController: ObservableObject {
         do {
             let handle = try engine.start(
                 item: item,
+                perServerConnections: settings.perServerConnections,
                 progress: { [weak self] progress in
                     Task { @MainActor in
                         self?.update(item.id) {
@@ -161,6 +180,7 @@ final class DownloadController: ObservableObject {
                         }
 
                         self.pumpQueue()
+                        self.updateSleepActivity()
                     }
                 }
             )
@@ -168,11 +188,13 @@ final class DownloadController: ObservableObject {
             update(item.id) {
                 $0.message = "Process \(handle.processIdentifier)"
             }
+            updateSleepActivity()
         } catch {
             update(item.id) {
                 $0.status = .failed
                 $0.message = error.localizedDescription
             }
+            updateSleepActivity()
             pumpQueue()
         }
     }
@@ -180,5 +202,31 @@ final class DownloadController: ObservableObject {
     private func update(_ id: UUID, mutate: (inout DownloadItem) -> Void) {
         guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
         mutate(&downloads[index])
+    }
+
+    private func updateSleepActivity() {
+        let shouldPreventSleep = settings.preventsSleepWhileDownloading && activeCount > 0
+
+        if shouldPreventSleep, sleepActivity == nil {
+            sleepActivity = SleepActivityHandle(activity: ProcessInfo.processInfo.beginActivity(
+                options: [.idleSystemSleepDisabled],
+                reason: "Firelink is downloading files."
+            ))
+        } else if !shouldPreventSleep, let activity = sleepActivity {
+            activity.end()
+            sleepActivity = nil
+        }
+    }
+}
+
+private final class SleepActivityHandle: @unchecked Sendable {
+    private let activity: NSObjectProtocol
+
+    init(activity: NSObjectProtocol) {
+        self.activity = activity
+    }
+
+    func end() {
+        ProcessInfo.processInfo.endActivity(activity)
     }
 }

@@ -33,6 +33,10 @@ struct AddDownloadsView: View {
         }
         .onAppear {
             connectionsPerServer = Double(settings.perServerConnections)
+            if let text = controller.pendingPasteboardText {
+                linkText = text
+                controller.pendingPasteboardText = nil
+            }
         }
         .onDisappear {
             metadataTask?.cancel()

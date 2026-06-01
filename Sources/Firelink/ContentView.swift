@@ -4,8 +4,9 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var controller: DownloadController
     @Environment(\.openWindow) private var openWindow
-    @State private var selection: DownloadItem.ID?
+    @State private var selection: Set<DownloadItem.ID> = []
     @State private var sidebarFilter: DownloadSidebarFilter = .all
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         NavigationSplitView {
@@ -22,53 +23,115 @@ struct ContentView: View {
                 StatusBar()
             }
             .toolbar {
-                ToolbarItemGroup {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         openWindow(id: "add-downloads")
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
-                    .buttonStyle(.borderedProminent)
-
+                }
+                
+                ToolbarItem {
                     Button {
                         controller.startQueue()
                     } label: {
                         Label("Start Queue", systemImage: "play.fill")
                     }
+                }
 
-                    SettingsLink {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-
-                    if let selectedItem {
-                        if selectedItem.status == .downloading {
+                ToolbarItemGroup {
+                    if !selectedItems.isEmpty {
+                        if selectedItems.contains(where: { $0.status == .downloading }) {
                             Button {
-                                controller.pause(selectedItem)
+                                for item in selectedItems where item.status == .downloading {
+                                    controller.pause(item)
+                                }
                             } label: {
                                 Label("Stop", systemImage: "stop.fill")
                             }
-                        } else if selectedItem.status == .paused || selectedItem.status == .failed || selectedItem.status == .canceled {
+                        }
+
+                        if selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
                             Button {
-                                controller.resume(selectedItem)
+                                for item in selectedItems where item.status == .paused || item.status == .failed || item.status == .canceled {
+                                    controller.resume(item)
+                                }
                             } label: {
-                                Label("Resume", systemImage: "arrow.clockwise")
+                                Label("Start", systemImage: "play.fill")
                             }
                         }
 
                         Button(role: .destructive) {
-                            controller.cancel(selectedItem)
+                            showDeleteConfirmation = true
                         } label: {
-                            Label("Cancel", systemImage: "xmark")
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                 }
+
+                ToolbarItem {
+                    SettingsLink {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                }
+            }
+            .background {
+                Button("") {
+                    if !selection.isEmpty {
+                        showDeleteConfirmation = true
+                    }
+                }
+                .keyboardShortcut(.delete, modifiers: [])
+                .opacity(0)
+                
+                Button("") {
+                    handlePaste()
+                }
+                .keyboardShortcut("v", modifiers: .command)
+                .opacity(0)
+
+                Button("") {
+                    selectAll()
+                }
+                .keyboardShortcut("a", modifiers: .command)
+                .opacity(0)
+            }
+            .confirmationDialog(
+                "Delete \(selection.count) Download\(selection.count == 1 ? "" : "s")",
+                isPresented: $showDeleteConfirmation
+            ) {
+                Button("Remove from List") {
+                    deleteSelected(deleteFiles: false)
+                }
+                Button("Move Files and Cache to Trash", role: .destructive) {
+                    deleteSelected(deleteFiles: true)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Are you sure you want to delete the selected downloads?")
             }
         }
     }
 
-    private var selectedItem: DownloadItem? {
-        guard let selection else { return nil }
-        return controller.downloads.first(where: { $0.id == selection })
+    private var selectedItems: [DownloadItem] {
+        controller.downloads.filter { selection.contains($0.id) }
+    }
+
+    private func deleteSelected(deleteFiles: Bool) {
+        for item in selectedItems {
+            controller.delete(item, deleteFiles: deleteFiles)
+        }
+        selection.removeAll()
+    }
+    
+    private func handlePaste() {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        controller.pendingPasteboardText = text
+        openWindow(id: "add-downloads")
+    }
+
+    private func selectAll() {
+        selection = Set(filteredDownloads.map { $0.id })
     }
 
     private var filteredDownloads: [DownloadItem] {

@@ -102,12 +102,13 @@ struct DownloadTable: View {
     @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     let items: [DownloadItem]
-    @Binding var selection: DownloadItem.ID?
+    @Binding var selection: Set<DownloadItem.ID>
     let title: String
 
     @StateObject private var tableSettings = TableSettings()
-    @State private var pendingDeleteItem: DownloadItem?
+    @State private var pendingDeleteItems: Set<DownloadItem.ID>?
     @State private var resizeBaseWidths: [DownloadColumn: CGFloat] = [:]
+    @State private var lastSelectedIndex: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -161,33 +162,38 @@ struct DownloadTable: View {
         .confirmationDialog(
             "Delete Download",
             isPresented: Binding(
-                get: { pendingDeleteItem != nil },
+                get: { pendingDeleteItems != nil },
                 set: { isPresented in
                     if !isPresented {
-                        pendingDeleteItem = nil
+                        pendingDeleteItems = nil
                     }
                 }
             ),
-            presenting: pendingDeleteItem
-        ) { item in
+            presenting: pendingDeleteItems
+        ) { ids in
             Button("Remove from List") {
-                controller.delete(item, deleteFiles: false)
-                pendingDeleteItem = nil
+                let items = controller.downloads.filter { ids.contains($0.id) }
+                for item in items { controller.delete(item, deleteFiles: false) }
+                selection.subtract(ids)
+                pendingDeleteItems = nil
             }
 
             Button("Move File and Cache to Trash", role: .destructive) {
-                controller.delete(item, deleteFiles: true)
-                pendingDeleteItem = nil
+                let items = controller.downloads.filter { ids.contains($0.id) }
+                for item in items { controller.delete(item, deleteFiles: true) }
+                selection.subtract(ids)
+                pendingDeleteItems = nil
             }
 
             Button("Cancel", role: .cancel) {
-                pendingDeleteItem = nil
+                pendingDeleteItems = nil
             }
-        } message: { item in
-            if item.status == .completed {
-                Text("Remove this download from Firelink, or also move the downloaded file to Trash.")
+        } message: { ids in
+            let items = controller.downloads.filter { ids.contains($0.id) }
+            if items.allSatisfy({ $0.status == .completed }) {
+                Text("Remove \(items.count == 1 ? "this download" : "these \(items.count) downloads") from Firelink, or also move the downloaded files to Trash.")
             } else {
-                Text("Remove this unfinished download from Firelink. Partial cache files are removed automatically; moving to Trash also sends any partial file there.")
+                Text("Remove \(items.count == 1 ? "this download" : "these \(items.count) downloads") from Firelink. Partial cache files are removed automatically; moving to Trash also sends any partial files there.")
             }
         }
     }
@@ -201,10 +207,26 @@ struct DownloadTable: View {
         )
         .id(item.id)
         .frame(width: tableWidth, alignment: .leading)
-        .background(selection == item.id ? Color.accentColor.opacity(0.12) : Color.clear)
+        .background(selection.contains(item.id) ? Color.accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture {
-            selection = item.id
+            let index = sortedItems.firstIndex(where: { $0.id == item.id })
+            
+            if NSEvent.modifierFlags.contains(.command) {
+                if selection.contains(item.id) {
+                    selection.remove(item.id)
+                } else {
+                    selection.insert(item.id)
+                }
+                lastSelectedIndex = index
+            } else if NSEvent.modifierFlags.contains(.shift), let lastIndex = lastSelectedIndex, let currentIndex = index {
+                let range = min(lastIndex, currentIndex)...max(lastIndex, currentIndex)
+                let rangeIds = range.map { sortedItems[$0].id }
+                selection.formUnion(rangeIds)
+            } else {
+                selection = [item.id]
+                lastSelectedIndex = index
+            }
         }
         .contextMenu {
             rowContextMenu(for: item)
@@ -304,45 +326,60 @@ struct DownloadTable: View {
 
     @ViewBuilder
     private func rowContextMenu(for item: DownloadItem) -> some View {
+        let targetItems = selection.contains(item.id) ? controller.downloads.filter { selection.contains($0.id) } : [item]
+
         Button {
-            openWindow(value: item.id)
+            for target in targetItems {
+                openWindow(value: target.id)
+            }
         } label: {
-            Label("Properties", systemImage: "info.circle")
+            Label(targetItems.count > 1 ? "Properties (\(targetItems.count))" : "Properties", systemImage: "info.circle")
         }
 
         Button {
-            showInFinder(item)
+            for target in targetItems {
+                showInFinder(target)
+            }
         } label: {
-            Label("Show in Finder", systemImage: "finder")
+            Label(targetItems.count > 1 ? "Show in Finder (\(targetItems.count))" : "Show in Finder", systemImage: "finder")
         }
 
         Divider()
 
-        Button {
-            controller.resume(item)
-        } label: {
-            Label("Resume", systemImage: "arrow.clockwise")
+        if targetItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
+            Button {
+                for target in targetItems where target.status == .paused || target.status == .failed || target.status == .canceled {
+                    controller.resume(target)
+                }
+            } label: {
+                Label("Start", systemImage: "play.fill")
+            }
         }
-        .disabled(item.status == .downloading)
 
-        Button {
-            controller.pause(item)
-        } label: {
-            Label("Stop", systemImage: "stop.fill")
+        if targetItems.contains(where: { $0.status == .downloading }) {
+            Button {
+                for target in targetItems where target.status == .downloading {
+                    controller.pause(target)
+                }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
         }
-        .disabled(item.status != .downloading)
 
-        Button {
-            controller.queue(item)
-        } label: {
-            Label("Add to Queue", systemImage: "list.bullet")
+        if targetItems.contains(where: { $0.status != .downloading && $0.status != .queued }) {
+            Button {
+                for target in targetItems where target.status != .downloading && target.status != .queued {
+                    controller.queue(target)
+                }
+            } label: {
+                Label("Add to Queue", systemImage: "list.bullet")
+            }
         }
-        .disabled(item.status == .downloading || item.status == .queued)
 
         Divider()
 
         Button(role: .destructive) {
-            pendingDeleteItem = item
+            pendingDeleteItems = Set(targetItems.map(\.id))
         } label: {
             Label("Delete", systemImage: "trash")
         }
@@ -467,16 +504,8 @@ private struct DownloadRow: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .truncationMode(.tail)
-        case .status:
-            Text(item.status.rawValue)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        case .progress:
-            Text(progressStatusText)
-                .monospacedDigit()
-                .foregroundStyle(statusColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        case .status, .progress:
+            progressBarCell()
         case .lastTry:
             Text(formatted(item.lastTryAt))
                 .lineLimit(1)
@@ -549,20 +578,30 @@ private struct DownloadRow: View {
         }
     }
 
-    private var progressStatusText: String {
-        switch item.status {
-        case .completed:
-            return "Completed"
-        case .failed:
-            return "Failed"
-        case .canceled:
-            return "Canceled"
-        case .paused:
-            return "Paused \(item.progress.formatted(.percent.precision(.fractionLength(0))))"
-        case .queued:
-            return "Queued"
-        case .downloading:
-            return item.progress.formatted(.percent.precision(.fractionLength(0)))
+    @ViewBuilder
+    private func progressBarCell() -> some View {
+        if item.status == .completed {
+            Text("Completed")
+                .foregroundStyle(.green)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            GeometryReader { proxy in
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.secondary.opacity(0.15))
+                    
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(statusColor)
+                        .frame(width: max(0, proxy.size.width * item.progress))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Text(item.progress.formatted(.percent.precision(.fractionLength(0))))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(.primary)
+                }
+            }
+            .frame(height: 16)
         }
     }
 

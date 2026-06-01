@@ -6,6 +6,7 @@ import Foundation
 final class DownloadController: ObservableObject {
     @Published var downloads: [DownloadItem] = []
     @Published var engineMessage = ""
+    @Published var pendingPasteboardText: String?
 
     private let settings: AppSettings
     private let engine = Aria2DownloadEngine()

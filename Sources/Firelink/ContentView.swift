@@ -232,38 +232,36 @@ private struct DownloadTable: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            tableHeader
-            Divider()
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(spacing: 0) {
-                    ForEach(sortedItems) { item in
-                        DownloadRow(
-                            item: item,
-                            visibleColumns: orderedVisibleColumns,
-                            columnWidth: { width(for: $0) }
-                        )
-                            .id(item.id)
-                            .background(selection == item.id ? Color.accentColor.opacity(0.12) : Color.clear)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                selection = item.id
-                            }
-                            .contextMenu {
-                                rowContextMenu(for: item)
-                            }
+            GeometryReader { proxy in
+                let tableWidth = max(totalWidth, proxy.size.width)
+                let trailingWidth = max(0, tableWidth - totalWidth)
+
+                ScrollView(.horizontal) {
+                    VStack(spacing: 0) {
+                        tableHeader(trailingWidth: trailingWidth)
                         Divider()
+                        ScrollView(.vertical) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(sortedItems) { item in
+                                    tableRow(for: item, tableWidth: tableWidth, trailingWidth: trailingWidth)
+                                    Divider()
+                                }
+                            }
+                            .frame(width: tableWidth, alignment: .topLeading)
+                            .frame(maxHeight: .infinity, alignment: .topLeading)
+                        }
+                        .defaultScrollAnchor(.topLeading)
                     }
+                    .frame(width: tableWidth, height: proxy.size.height, alignment: .topLeading)
                 }
-                .frame(minWidth: totalWidth, maxHeight: .infinity, alignment: .topLeading)
-            }
-            .defaultScrollAnchor(.topLeading)
-            .overlay {
-                if items.isEmpty {
-                    ContentUnavailableView(
-                        "No Downloads",
-                        systemImage: "arrow.down.circle",
-                        description: Text("Use Add to paste one or more links.")
-                    )
+                .overlay {
+                    if items.isEmpty {
+                        ContentUnavailableView(
+                            "No Downloads",
+                            systemImage: "arrow.down.circle",
+                            description: Text("Use Add to paste one or more links.")
+                        )
+                    }
                 }
             }
         }
@@ -301,69 +299,90 @@ private struct DownloadTable: View {
         }
     }
 
-    private var tableHeader: some View {
+    private func tableRow(for item: DownloadItem, tableWidth: CGFloat, trailingWidth: CGFloat) -> some View {
+        DownloadRow(
+            item: item,
+            visibleColumns: orderedVisibleColumns,
+            columnWidth: { width(for: $0) },
+            trailingWidth: trailingWidth
+        )
+        .id(item.id)
+        .frame(width: tableWidth, alignment: .leading)
+        .background(selection == item.id ? Color.accentColor.opacity(0.12) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selection = item.id
+        }
+        .contextMenu {
+            rowContextMenu(for: item)
+        }
+    }
+
+    private func tableHeader(trailingWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(orderedVisibleColumns) { column in
-                HStack(spacing: 0) {
-                    ZStack(alignment: .trailing) {
-                        Button {
-                            if sortColumn == column {
-                                sortDirection.toggle()
-                            } else {
-                                sortColumn = column
-                                sortDirection = .ascending
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Spacer(minLength: 0)
-                                Text(column.rawValue)
-                                    .font(.caption.weight(.semibold))
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                    .multilineTextAlignment(.center)
-                                    .layoutPriority(1)
-                                if sortColumn == column {
-                                    Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
-                                        .font(.caption2)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .padding(.horizontal, 8)
-                            .frame(width: width(for: column), height: 34, alignment: .center)
-                            .clipped()
+                ZStack(alignment: .trailing) {
+                    Button {
+                        if sortColumn == column {
+                            sortDirection.toggle()
+                        } else {
+                            sortColumn = column
+                            sortDirection = .ascending
                         }
-                        .buttonStyle(.plain)
-
-                        Rectangle()
-                            .fill(.secondary.opacity(0.18))
-                            .frame(width: 1, height: 20)
-                            .frame(width: 8, height: 34)
-                            .contentShape(Rectangle())
-                            .onHover { isHovering in
-                                if isHovering {
-                                    NSCursor.resizeLeftRight.push()
-                                } else {
-                                    NSCursor.pop()
-                                }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Spacer(minLength: 0)
+                            Text(column.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .multilineTextAlignment(.center)
+                                .layoutPriority(1)
+                            if sortColumn == column {
+                                Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
                             }
-                            .gesture(
-                                DragGesture(minimumDistance: 1)
-                                    .onChanged { value in
-                                        let baseWidth = resizeBaseWidths[column] ?? width(for: column)
-                                        resizeBaseWidths[column] = baseWidth
-                                        columnWidths[column] = max(70, baseWidth + value.translation.width)
-                                    }
-                                    .onEnded { _ in
-                                        resizeBaseWidths[column] = nil
-                                    }
-                            )
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(width: width(for: column), height: 34, alignment: .center)
+                        .clipped()
                     }
-                    .frame(width: width(for: column), height: 34)
-                    .clipped()
+                    .buttonStyle(.plain)
+
+                    Rectangle()
+                        .fill(.secondary.opacity(0.18))
+                        .frame(width: 1, height: 20)
+                        .frame(width: 8, height: 34)
+                        .contentShape(Rectangle())
+                        .onHover { isHovering in
+                            if isHovering {
+                                NSCursor.resizeLeftRight.push()
+                            } else {
+                                NSCursor.pop()
+                            }
+                        }
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    let baseWidth = resizeBaseWidths[column] ?? width(for: column)
+                                    resizeBaseWidths[column] = baseWidth
+                                    columnWidths[column] = max(70, baseWidth + value.translation.width)
+                                }
+                                .onEnded { _ in
+                                    resizeBaseWidths[column] = nil
+                                }
+                        )
                 }
+                .frame(width: width(for: column), height: 34)
+                .clipped()
+            }
+
+            if trailingWidth > 0 {
+                Color.clear
+                    .frame(width: trailingWidth, height: 34)
             }
         }
-        .frame(minWidth: totalWidth, alignment: .leading)
         .background(.bar)
         .contextMenu {
             Section("Columns") {
@@ -509,6 +528,7 @@ private struct DownloadRow: View {
     let item: DownloadItem
     let visibleColumns: [DownloadColumn]
     let columnWidth: (DownloadColumn) -> CGFloat
+    let trailingWidth: CGFloat
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -518,6 +538,11 @@ private struct DownloadRow: View {
                     .padding(.vertical, 8)
                     .frame(width: columnWidth(column), alignment: alignment(for: column))
                     .clipped()
+            }
+
+            if trailingWidth > 0 {
+                Color.clear
+                    .frame(width: trailingWidth)
             }
         }
     }

@@ -156,8 +156,8 @@ private struct SidebarView: View {
 enum DownloadColumn: String, CaseIterable, Identifiable {
     case fileName = "File name"
     case size = "Size"
-    case status = "Status"
     case progress = "Progress"
+    case status = "Status"
     case lastTry = "Last try date"
     case dateAdded = "Date added"
     case category = "Category"
@@ -173,10 +173,10 @@ enum DownloadColumn: String, CaseIterable, Identifiable {
 
     var width: CGFloat {
         switch self {
-        case .fileName: 320
+        case .fileName: 340
         case .size: 100
         case .status: 105
-        case .progress: 95
+        case .progress: 115
         case .lastTry, .dateAdded: 155
         case .category: 105
         case .connections, .liveConnections: 95
@@ -206,10 +206,14 @@ private struct DownloadTable: View {
     let title: String
 
     @State private var visibleColumns: Set<DownloadColumn> = [
-        .fileName, .size, .status, .progress, .lastTry, .dateAdded, .speed, .eta, .message
+        .fileName, .size, .progress, .eta, .lastTry, .dateAdded
     ]
+    @State private var columnWidths = Dictionary(
+        uniqueKeysWithValues: DownloadColumn.allCases.map { ($0, $0.width) }
+    )
     @State private var sortColumn: DownloadColumn = .dateAdded
     @State private var sortDirection: SortDirection = .descending
+    @State private var pendingDeleteItem: DownloadItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -232,7 +236,11 @@ private struct DownloadTable: View {
             ScrollView([.horizontal, .vertical]) {
                 LazyVStack(spacing: 0) {
                     ForEach(sortedItems) { item in
-                        DownloadRow(item: item, visibleColumns: orderedVisibleColumns)
+                        DownloadRow(
+                            item: item,
+                            visibleColumns: orderedVisibleColumns,
+                            columnWidth: { width(for: $0) }
+                        )
                             .id(item.id)
                             .background(selection == item.id ? Color.accentColor.opacity(0.12) : Color.clear)
                             .contentShape(Rectangle())
@@ -245,8 +253,9 @@ private struct DownloadTable: View {
                         Divider()
                     }
                 }
-                .frame(minWidth: totalWidth, alignment: .topLeading)
+                .frame(minWidth: totalWidth, maxHeight: .infinity, alignment: .topLeading)
             }
+            .defaultScrollAnchor(.topLeading)
             .overlay {
                 if items.isEmpty {
                     ContentUnavailableView(
@@ -257,33 +266,80 @@ private struct DownloadTable: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Delete Download",
+            isPresented: Binding(
+                get: { pendingDeleteItem != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeleteItem = nil
+                    }
+                }
+            ),
+            presenting: pendingDeleteItem
+        ) { item in
+            Button("Remove from List") {
+                controller.delete(item, deleteFiles: false)
+                pendingDeleteItem = nil
+            }
+
+            Button("Move File and Cache to Trash", role: .destructive) {
+                controller.delete(item, deleteFiles: true)
+                pendingDeleteItem = nil
+            }
+
+            Button("Cancel", role: .cancel) {
+                pendingDeleteItem = nil
+            }
+        } message: { item in
+            if item.status == .completed {
+                Text("Remove this download from Firelink, or also move the downloaded file to Trash.")
+            } else {
+                Text("Remove this unfinished download from Firelink. Partial cache files are removed automatically; moving to Trash also sends any partial file there.")
+            }
+        }
     }
 
     private var tableHeader: some View {
         HStack(spacing: 0) {
             ForEach(orderedVisibleColumns) { column in
-                Button {
-                    if sortColumn == column {
-                        sortDirection.toggle()
-                    } else {
-                        sortColumn = column
-                        sortDirection = .ascending
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(column.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
+                HStack(spacing: 0) {
+                    Button {
                         if sortColumn == column {
-                            Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
-                                .font(.caption2)
+                            sortDirection.toggle()
+                        } else {
+                            sortColumn = column
+                            sortDirection = .ascending
                         }
-                        Spacer(minLength: 0)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(column.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            if sortColumn == column {
+                                Image(systemName: sortDirection == .ascending ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(width: max(44, width(for: column) - 8), height: 34, alignment: .leading)
                     }
-                    .padding(.horizontal, 8)
-                    .frame(width: column.width, height: 34, alignment: .leading)
+                    .buttonStyle(.plain)
+
+                    Rectangle()
+                        .fill(.secondary.opacity(0.18))
+                        .frame(width: 1, height: 20)
+                        .padding(.horizontal, 3)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 1)
+                                .onChanged { value in
+                                    columnWidths[column] = max(70, column.width + value.translation.width)
+                                }
+                        )
                 }
-                .buttonStyle(.plain)
+                .frame(width: width(for: column), height: 34)
             }
         }
         .frame(minWidth: totalWidth, alignment: .leading)
@@ -353,7 +409,7 @@ private struct DownloadTable: View {
         Divider()
 
         Button(role: .destructive) {
-            controller.delete(item)
+            pendingDeleteItem = item
         } label: {
             Label("Delete", systemImage: "trash")
         }
@@ -364,7 +420,11 @@ private struct DownloadTable: View {
     }
 
     private var totalWidth: CGFloat {
-        orderedVisibleColumns.map(\.width).reduce(0, +)
+        orderedVisibleColumns.map { width(for: $0) }.reduce(0, +)
+    }
+
+    private func width(for column: DownloadColumn) -> CGFloat {
+        max(70, columnWidths[column] ?? column.width)
     }
 
     private var sortedItems: [DownloadItem] {
@@ -427,12 +487,13 @@ private struct DownloadTable: View {
 private struct DownloadRow: View {
     let item: DownloadItem
     let visibleColumns: [DownloadColumn]
+    let columnWidth: (DownloadColumn) -> CGFloat
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             ForEach(visibleColumns) { column in
                 cell(for: column)
-                    .frame(width: column.width, alignment: .leading)
+                    .frame(width: columnWidth(column), alignment: .leading)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 8)
             }
@@ -453,16 +514,7 @@ private struct DownloadRow: View {
                         Text(item.fileName)
                             .font(.headline)
                             .lineLimit(1)
-                        Text(item.status.rawValue)
-                            .font(.caption)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(statusColor.opacity(0.14))
-                            .foregroundStyle(statusColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    ProgressView(value: item.progress)
-                        .progressViewStyle(.linear)
                     Text(item.url.absoluteString)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -475,8 +527,9 @@ private struct DownloadRow: View {
         case .status:
             Text(item.status.rawValue)
         case .progress:
-            Text(item.progress, format: .percent.precision(.fractionLength(0)))
+            Text(progressStatusText)
                 .monospacedDigit()
+                .foregroundStyle(statusColor)
         case .lastTry:
             Text(formatted(item.lastTryAt))
         case .dateAdded:
@@ -527,6 +580,23 @@ private struct DownloadRow: View {
         case .completed: .green
         case .failed: .red
         case .canceled: .gray
+        }
+    }
+
+    private var progressStatusText: String {
+        switch item.status {
+        case .completed:
+            "Completed"
+        case .failed:
+            "Failed"
+        case .canceled:
+            "Canceled"
+        case .paused:
+            "Paused \(item.progress.formatted(.percent.precision(.fractionLength(0))))"
+        case .queued:
+            "Queued"
+        case .downloading:
+            item.progress.formatted(.percent.precision(.fractionLength(0)))
         }
     }
 

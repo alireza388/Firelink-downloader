@@ -16,7 +16,7 @@ struct FirelinkApp: App {
             ContentView()
                 .environmentObject(controller)
                 .environmentObject(settings)
-                .frame(minWidth: 980, minHeight: 640)
+                .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
         }
         .windowStyle(.titleBar)
 

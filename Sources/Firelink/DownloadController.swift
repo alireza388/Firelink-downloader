@@ -149,19 +149,21 @@ final class DownloadController: ObservableObject {
         pumpQueue()
     }
 
-    func remove(at offsets: IndexSet) {
+    func remove(at offsets: IndexSet, deleteFiles: Bool = false) {
         for index in offsets {
             let item = downloads[index]
-            activeHandles[item.id]?.cancel()
-            activeHandles[item.id] = nil
+            delete(item, deleteFiles: deleteFiles)
         }
-        downloads.remove(atOffsets: offsets)
-        updateSleepActivity()
     }
 
-    func delete(_ item: DownloadItem) {
+    func delete(_ item: DownloadItem, deleteFiles: Bool = false) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
+        if deleteFiles {
+            trashFiles(for: item)
+        } else if item.status != .completed {
+            removeCacheFiles(for: item)
+        }
         downloads.removeAll { $0.id == item.id }
         updateSleepActivity()
     }
@@ -286,6 +288,27 @@ final class DownloadController: ObservableObject {
         } else if !shouldPreventSleep, let activity = sleepActivity {
             activity.end()
             sleepActivity = nil
+        }
+    }
+
+    private func removeCacheFiles(for item: DownloadItem) {
+        let fileURL = item.destinationDirectory.appendingPathComponent(item.fileName)
+        let candidates = [URL(fileURLWithPath: fileURL.path + ".aria2")]
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            try? FileManager.default.removeItem(at: candidate)
+        }
+    }
+
+    private func trashFiles(for item: DownloadItem) {
+        let fileURL = item.destinationDirectory.appendingPathComponent(item.fileName)
+        let candidates = [
+            fileURL,
+            URL(fileURLWithPath: fileURL.path + ".aria2")
+        ]
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            try? FileManager.default.trashItem(at: candidate, resultingItemURL: nil)
         }
     }
 }

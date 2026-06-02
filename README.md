@@ -17,8 +17,9 @@
 ## ✨ Key Features
 
 - ⚡ **High-Speed Downloads:** Multi-segmented download engine powered by `aria2c` for concurrent connections and optimal bandwidth utilization. Supports HTTP, HTTPS, FTP, and SFTP.
-- 🎨 **Native macOS & SwiftUI:** Responsive interface designed natively for Apple Silicon, featuring resizable tables, customizable columns, sidebar filters, and an in-app Settings page.
+- 🎨 **Native macOS & SwiftUI:** Responsive interface designed natively for Apple Silicon, featuring resizable tables, customizable columns, sidebar filters, and an in-app Settings page with a built-in update checker.
 - 🗂️ **Smart Queue & Categories:** Drag-and-drop priority ordering, batch link ingestion with smart parsing, and automatic file organization (`Musics`, `Movies`, `Compressed`, `Pictures`, `Documents`, `Other`) based on extension detection.
+- 🛡️ **Reliability & Recovery:** Built-in download recovery and retry handling for interrupted or unstable transfers.
 - 🔒 **Keychain Security:** Local macOS Keychain integration for secure site credential storage and matching during transfers.
 - ⚙️ **Power & System Integrity:** Optional system sleep prevention during active downloads, disk-space safety checks, and automated cleanup of partial `.aria2` metadata cache files.
 
@@ -31,6 +32,7 @@
   - Segmented downloads with per-file connection/split counts.
   - Multi-threaded, parallel downloading with configurable limits.
   - Support for HTTP, HTTPS, FTP, and SFTP transfers via `aria2c`.
+  - Automatic download recovery and retry handling for unstable connections.
 - **Advanced Queue Control:**
   - Drag-and-drop download reordering to manage priorities.
   - Comprehensive download table with resizable, custom columns (Name, Size, Status, ETA, Dates).
@@ -46,6 +48,7 @@
 - **Security & System:**
   - Local macOS Keychain integration for site logins.
   - Prevents system sleep while active transfers are in progress, preserving display sleep.
+  - Built-in update checker inside the Settings About pane.
   - Release `.app` bundle build scripts ready for distribution.
 
 </details>

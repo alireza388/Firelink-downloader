@@ -22,12 +22,15 @@ enum DownloadSidebarFilter: Hashable {
 
 enum SidebarSelection: Hashable {
     case downloads(DownloadSidebarFilter)
+    case queue(UUID)
     case settings
 }
 
 struct SidebarView: View {
     @EnvironmentObject private var controller: DownloadController
     @Binding var selection: SidebarSelection
+    @State private var queueBeingRenamed: DownloadQueue?
+    @State private var queueName = ""
 
     var body: some View {
         List(selection: $selection) {
@@ -35,9 +38,6 @@ struct SidebarView: View {
                 Label("All", systemImage: "tray.full")
                     .badge(controller.downloads.count)
                     .tag(SidebarSelection.downloads(.all))
-                Label("Queue", systemImage: "list.bullet")
-                    .badge(controller.queuedCount)
-                    .tag(SidebarSelection.downloads(.queued))
                 Label("Active", systemImage: "bolt.fill")
                     .badge(controller.activeCount)
                     .tag(SidebarSelection.downloads(.active))
@@ -56,8 +56,51 @@ struct SidebarView: View {
                         .tag(SidebarSelection.downloads(.category(category)))
                 }
             }
+
+            Section("Queues") {
+                ForEach(controller.queues) { queue in
+                    Label(queue.name, systemImage: queue.isMain ? "list.bullet.rectangle" : "list.bullet")
+                        .badge(controller.queueCount(for: queue.id))
+                        .tag(SidebarSelection.queue(queue.id))
+                        .contextMenu {
+                            if !queue.isMain {
+                                Button("Rename") {
+                                    queueBeingRenamed = queue
+                                    queueName = queue.name
+                                }
+                            }
+                        }
+                }
+
+                Button {
+                    let queue = controller.addQueue()
+                    selection = .queue(queue.id)
+                } label: {
+                    Label("Add new queue", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+            }
         }
         .listStyle(.sidebar)
+        .alert("Rename Queue", isPresented: Binding(
+            get: { queueBeingRenamed != nil },
+            set: { isPresented in
+                if !isPresented {
+                    queueBeingRenamed = nil
+                }
+            }
+        )) {
+            TextField("Queue name", text: $queueName)
+            Button("Rename") {
+                if let queue = queueBeingRenamed {
+                    controller.renameQueue(id: queue.id, name: queueName)
+                }
+                queueBeingRenamed = nil
+            }
+            Button("Cancel", role: .cancel) {
+                queueBeingRenamed = nil
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
                 Divider()

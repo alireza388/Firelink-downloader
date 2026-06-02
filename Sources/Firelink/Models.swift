@@ -29,6 +29,21 @@ enum DownloadCategory: String, Codable, CaseIterable, Sendable {
     }
 }
 
+struct DownloadQueue: Identifiable, Codable, Equatable, Sendable {
+    static let mainQueueID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
+    var id = UUID()
+    var name: String
+
+    var isMain: Bool {
+        id == Self.mainQueueID
+    }
+
+    static var main: DownloadQueue {
+        DownloadQueue(id: mainQueueID, name: "Main queue")
+    }
+}
+
 struct DownloadCredentials: Codable, Equatable, Sendable {
     var username: String
     var password: String
@@ -58,6 +73,7 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var createdAt = Date()
     var lastTryAt: Date?
     var autoResumeOnLaunch: Bool?
+    var queueID: UUID?
 
     var destinationPath: String {
         destinationDirectory.appendingPathComponent(fileName).path

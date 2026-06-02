@@ -1,7 +1,9 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum DownloadColumn: String, CaseIterable, Identifiable, Codable {
+    case priority = "#"
     case fileName = "File name"
     case size = "Size"
     case progress = "Progress"
@@ -21,6 +23,7 @@ enum DownloadColumn: String, CaseIterable, Identifiable, Codable {
 
     var width: CGFloat {
         switch self {
+        case .priority: return 58
         case .fileName: return 340
         case .size: return 100
         case .status: return 105
@@ -104,11 +107,13 @@ struct DownloadTable: View {
     let items: [DownloadItem]
     @Binding var selection: Set<DownloadItem.ID>
     let title: String
+    var queueID: UUID?
 
     @StateObject private var tableSettings = TableSettings()
     @State private var pendingDeleteItems: Set<DownloadItem.ID>?
     @State private var resizeBaseWidths: [DownloadColumn: CGFloat] = [:]
     @State private var lastSelectedIndex: Int?
+    @State private var draggedItemID: DownloadItem.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -201,6 +206,7 @@ struct DownloadTable: View {
     private func tableRow(for item: DownloadItem, tableWidth: CGFloat, trailingWidth: CGFloat) -> some View {
         DownloadRow(
             item: item,
+            priorityNumber: priorityNumber(for: item),
             visibleColumns: orderedVisibleColumns,
             columnWidth: { width(for: $0) },
             trailingWidth: trailingWidth
@@ -231,39 +237,26 @@ struct DownloadTable: View {
         .contextMenu {
             rowContextMenu(for: item)
         }
+        .onDrag {
+            draggedItemID = item.id
+            return NSItemProvider(object: item.id.uuidString as NSString)
+        }
+        .onDrop(
+            of: [.text],
+            delegate: QueueDropDelegate(
+                item: item,
+                queueID: queueID,
+                draggedItemID: $draggedItemID,
+                controller: controller
+            )
+        )
     }
 
     private func tableHeader(trailingWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(orderedVisibleColumns) { column in
                 ZStack(alignment: .trailing) {
-                    Button {
-                        if tableSettings.sortColumn == column {
-                            tableSettings.sortDirection.toggle()
-                        } else {
-                            tableSettings.sortColumn = column
-                            tableSettings.sortDirection = .ascending
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Spacer(minLength: 0)
-                            Text(column.rawValue)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .multilineTextAlignment(.center)
-                                .layoutPriority(1)
-                            if tableSettings.sortColumn == column {
-                                Image(systemName: tableSettings.sortDirection == .ascending ? "chevron.up" : "chevron.down")
-                                    .font(.caption2)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(width: width(for: column), height: 34, alignment: .center)
-                        .clipped()
-                    }
-                    .buttonStyle(.plain)
+                    headerContent(for: column)
 
                     Rectangle()
                         .fill(.secondary.opacity(0.18))
@@ -301,7 +294,7 @@ struct DownloadTable: View {
         .background(.bar)
         .contextMenu {
             Section("Columns") {
-                ForEach(DownloadColumn.allCases) { column in
+                ForEach(availableColumns) { column in
                     Toggle(column.rawValue, isOn: Binding(
                         get: { tableSettings.visibleColumns.contains(column) },
                         set: { isVisible in
@@ -314,10 +307,12 @@ struct DownloadTable: View {
                     ))
                 }
             }
-            Section("Sort By") {
-                ForEach(DownloadColumn.allCases) { column in
-                    Button(column.rawValue) {
-                        tableSettings.sortColumn = column
+            if queueID == nil {
+                Section("Sort By") {
+                    ForEach(availableColumns) { column in
+                        Button(column.rawValue) {
+                            tableSettings.sortColumn = column
+                        }
                     }
                 }
             }
@@ -386,7 +381,17 @@ struct DownloadTable: View {
     }
 
     private var orderedVisibleColumns: [DownloadColumn] {
-        DownloadColumn.allCases.filter { tableSettings.visibleColumns.contains($0) }
+        var columns = DownloadColumn.allCases.filter { tableSettings.visibleColumns.contains($0) }
+        if queueID != nil, !columns.contains(.priority) {
+            columns.insert(.priority, at: 0)
+        } else if queueID == nil {
+            columns.removeAll { $0 == .priority }
+        }
+        return columns
+    }
+
+    private var availableColumns: [DownloadColumn] {
+        DownloadColumn.allCases.filter { $0 != .priority }
     }
 
     private var totalWidth: CGFloat {
@@ -398,7 +403,11 @@ struct DownloadTable: View {
     }
 
     private var sortedItems: [DownloadItem] {
-        items.sorted { lhs, rhs in
+        if queueID != nil {
+            return items
+        }
+
+        return items.sorted { lhs, rhs in
             let result = compare(lhs, rhs, by: tableSettings.sortColumn)
             if result == .orderedSame {
                 return lhs.id.uuidString < rhs.id.uuidString
@@ -409,6 +418,8 @@ struct DownloadTable: View {
 
     private func compare(_ lhs: DownloadItem, _ rhs: DownloadItem, by column: DownloadColumn) -> ComparisonResult {
         switch column {
+        case .priority:
+            return compare(priorityNumber(for: lhs) ?? 0, priorityNumber(for: rhs) ?? 0)
         case .fileName: return lhs.fileName.localizedCaseInsensitiveCompare(rhs.fileName)
         case .size: return compare(lhs.sizeBytes ?? -1, rhs.sizeBytes ?? -1)
         case .status: return compare(lhs.status.rawValue, rhs.status.rawValue)
@@ -424,6 +435,51 @@ struct DownloadTable: View {
         case .url: return compare(lhs.url.absoluteString, rhs.url.absoluteString)
         case .message: return compare(lhs.message, rhs.message)
         }
+    }
+
+    @ViewBuilder
+    private func headerContent(for column: DownloadColumn) -> some View {
+        let content = HStack(spacing: 4) {
+            Spacer(minLength: 0)
+            Text(column.rawValue)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.center)
+                .layoutPriority(1)
+            if queueID == nil && tableSettings.sortColumn == column {
+                Image(systemName: tableSettings.sortDirection == .ascending ? "chevron.up" : "chevron.down")
+                    .font(.caption2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(width: width(for: column), height: 34, alignment: .center)
+        .clipped()
+
+        if queueID == nil {
+            Button {
+                if tableSettings.sortColumn == column {
+                    tableSettings.sortDirection.toggle()
+                } else {
+                    tableSettings.sortColumn = column
+                    tableSettings.sortDirection = .ascending
+                }
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
+        } else {
+            content
+        }
+    }
+
+    private func priorityNumber(for item: DownloadItem) -> Int? {
+        guard queueID != nil,
+              let index = items.firstIndex(where: { $0.id == item.id }) else {
+            return nil
+        }
+        return index + 1
     }
 
     private func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {
@@ -456,6 +512,7 @@ struct DownloadTable: View {
 
 private struct DownloadRow: View {
     let item: DownloadItem
+    let priorityNumber: Int?
     let visibleColumns: [DownloadColumn]
     let columnWidth: (DownloadColumn) -> CGFloat
     let trailingWidth: CGFloat
@@ -480,6 +537,11 @@ private struct DownloadRow: View {
     @ViewBuilder
     private func cell(for column: DownloadColumn) -> some View {
         switch column {
+        case .priority:
+            Text(priorityNumber.map(String.init) ?? "-")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         case .fileName:
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: item.category.symbolName)
@@ -608,5 +670,27 @@ private struct DownloadRow: View {
     private func formatted(_ date: Date?) -> String {
         guard let date else { return "-" }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct QueueDropDelegate: DropDelegate {
+    let item: DownloadItem
+    let queueID: UUID?
+    @Binding var draggedItemID: DownloadItem.ID?
+    let controller: DownloadController
+
+    func dropEntered(info: DropInfo) {
+        guard let queueID,
+              let draggedItemID,
+              draggedItemID != item.id else {
+            return
+        }
+
+        controller.moveDownload(draggedItemID, before: item.id, in: queueID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedItemID = nil
+        return queueID != nil
     }
 }

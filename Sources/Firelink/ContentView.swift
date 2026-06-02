@@ -22,17 +22,38 @@ struct ContentView: View {
         switch sidebarSelection {
         case .downloads(let filter):
             downloadsView(filter: filter)
+        case .queue(let queueID):
+            queueView(queueID: queueID)
         case .settings:
             SettingsView()
         }
     }
 
+    private func queueView(queueID: UUID) -> some View {
+        downloadsView(
+            filter: .all,
+            title: controller.queueName(for: queueID),
+            items: controller.queueItems(for: queueID),
+            queueID: queueID
+        )
+    }
+
     private func downloadsView(filter: DownloadSidebarFilter) -> some View {
+        downloadsView(
+            filter: filter,
+            title: filter.title,
+            items: filteredDownloads(for: filter),
+            queueID: nil
+        )
+    }
+
+    private func downloadsView(filter: DownloadSidebarFilter, title: String, items: [DownloadItem], queueID: UUID?) -> some View {
         VStack(spacing: 0) {
             DownloadTable(
-                items: filteredDownloads(for: filter),
+                items: items,
                 selection: $selection,
-                title: filter.title
+                title: title,
+                queueID: queueID
             )
             Divider()
             StatusBar()
@@ -40,6 +61,7 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    controller.pendingAddQueueID = queueID
                     openWindow(id: "add-downloads")
                 } label: {
                     Label("Add", systemImage: "plus")
@@ -48,7 +70,7 @@ struct ContentView: View {
 
             ToolbarItem {
                 Button {
-                    controller.startQueue()
+                    controller.startQueue(queueID: queueID)
                 } label: {
                     Label("Start Queue", systemImage: "play.fill")
                 }
@@ -94,13 +116,13 @@ struct ContentView: View {
             .opacity(0)
 
             Button("") {
-                handlePaste()
+                handlePaste(queueID: queueID)
             }
             .keyboardShortcut("v", modifiers: .command)
             .opacity(0)
 
             Button("") {
-                selectAll(filter: filter)
+                selectAll(items: items)
             }
             .keyboardShortcut("a", modifiers: .command)
             .opacity(0)
@@ -132,14 +154,15 @@ struct ContentView: View {
         selection.removeAll()
     }
     
-    private func handlePaste() {
+    private func handlePaste(queueID: UUID?) {
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
         controller.pendingPasteboardText = text
+        controller.pendingAddQueueID = queueID
         openWindow(id: "add-downloads")
     }
 
-    private func selectAll(filter: DownloadSidebarFilter) {
-        selection = Set(filteredDownloads(for: filter).map { $0.id })
+    private func selectAll(items: [DownloadItem]) {
+        selection = Set(items.map { $0.id })
     }
 
     private func filteredDownloads(for filter: DownloadSidebarFilter) -> [DownloadItem] {

@@ -11,6 +11,7 @@ struct AddDownloadsView: View {
     @State private var overrideDestination = false
     @State private var destinationPath = ""
     @State private var metadataTask: Task<Void, Never>?
+    @State private var targetQueueID = DownloadQueue.mainQueueID
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +34,8 @@ struct AddDownloadsView: View {
         }
         .onAppear {
             connectionsPerServer = Double(settings.perServerConnections)
+            targetQueueID = controller.pendingAddQueueID ?? DownloadQueue.mainQueueID
+            controller.pendingAddQueueID = nil
             if let text = controller.pendingPasteboardText {
                 linkText = text
                 controller.pendingPasteboardText = nil
@@ -290,7 +293,8 @@ struct AddDownloadsView: View {
             pendingDownloads,
             connectionsPerServer: Int(connectionsPerServer),
             overrideDirectory: overrideDirectory,
-            startImmediately: start
+            startImmediately: start,
+            queueID: targetQueueID
         )
         dismiss()
     }

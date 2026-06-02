@@ -5,8 +5,10 @@ import Foundation
 @MainActor
 final class DownloadController: ObservableObject {
     @Published var downloads: [DownloadItem] = []
+    @Published var queues: [DownloadQueue] = [.main]
     @Published var engineMessage = ""
     @Published var pendingPasteboardText: String?
+    var pendingAddQueueID: UUID?
 
     private let settings: AppSettings
     private let engine = Aria2DownloadEngine()
@@ -81,7 +83,7 @@ final class DownloadController: ObservableObject {
         Aria2DownloadEngine.findExecutable() != nil
     }
 
-    func add(urlText: String, connectionsPerServer: Int? = nil) {
+    func add(urlText: String, connectionsPerServer: Int? = nil, queueID: UUID = DownloadQueue.mainQueueID) {
         guard let url = URL(string: urlText.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
               ["http", "https", "ftp", "sftp"].contains(scheme) else {
@@ -97,7 +99,8 @@ final class DownloadController: ObservableObject {
             category: category,
             destinationDirectory: settings.destinationDirectory(for: category),
             connectionsPerServer: min(max(connectionsPerServer ?? settings.perServerConnections, 1), 16),
-            credentials: settings.credentials(for: url)
+            credentials: settings.credentials(for: url),
+            queueID: normalizedQueueID(queueID)
         )
 
         downloads.append(item)
@@ -109,9 +112,11 @@ final class DownloadController: ObservableObject {
         _ pendingDownloads: [PendingDownload],
         connectionsPerServer: Int,
         overrideDirectory: URL?,
-        startImmediately: Bool
+        startImmediately: Bool,
+        queueID: UUID = DownloadQueue.mainQueueID
     ) {
         let clampedConnections = min(max(connectionsPerServer, 1), 16)
+        let targetQueueID = normalizedQueueID(queueID)
 
         let items = pendingDownloads.map { pending in
             DownloadItem(
@@ -123,7 +128,8 @@ final class DownloadController: ObservableObject {
                 credentials: settings.credentials(for: pending.url),
                 sizeBytes: pending.sizeBytes,
                 bytesText: ByteFormatter.string(pending.sizeBytes),
-                message: startImmediately ? "Queued to start" : "Added to queue"
+                message: startImmediately ? "Queued to start" : "Added to queue",
+                queueID: targetQueueID
             )
         }
 
@@ -132,14 +138,14 @@ final class DownloadController: ObservableObject {
         saveDownloads()
 
         if startImmediately {
-            startQueue()
+            startQueue(queueID: targetQueueID)
         }
     }
 
-    func startQueue() {
+    func startQueue(queueID: UUID? = nil) {
         engineMessage = ""
         restrictQueueToAutoResume = false
-        markQueuedDownloadsForAutoResume()
+        markQueuedDownloadsForAutoResume(queueID: queueID)
         pumpQueue()
     }
 
@@ -225,6 +231,60 @@ final class DownloadController: ObservableObject {
 
     func move(from source: IndexSet, to destination: Int) {
         downloads.move(fromOffsets: source, toOffset: destination)
+        saveDownloads()
+    }
+
+    func queueName(for id: UUID) -> String {
+        queues.first(where: { $0.id == normalizedQueueID(id) })?.name ?? DownloadQueue.main.name
+    }
+
+    func queueItems(for id: UUID) -> [DownloadItem] {
+        let id = normalizedQueueID(id)
+        return downloads.filter { normalizedQueueID($0.queueID) == id }
+    }
+
+    func queueCount(for id: UUID) -> Int {
+        queueItems(for: id).count
+    }
+
+    @discardableResult
+    func addQueue() -> DownloadQueue {
+        var index = 2
+        var name = "Queue \(index)"
+        let existingNames = Set(queues.map(\.name))
+        while existingNames.contains(name) {
+            index += 1
+            name = "Queue \(index)"
+        }
+
+        let queue = DownloadQueue(name: name)
+        queues.append(queue)
+        saveDownloads()
+        return queue
+    }
+
+    func renameQueue(id: UUID, name: String) {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty,
+              id != DownloadQueue.mainQueueID,
+              let index = queues.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        queues[index].name = cleanName
+        saveDownloads()
+    }
+
+    func moveDownload(_ itemID: UUID, before targetID: UUID, in queueID: UUID) {
+        let queueID = normalizedQueueID(queueID)
+        guard itemID != targetID,
+              let source = downloads.firstIndex(where: { $0.id == itemID && normalizedQueueID($0.queueID) == queueID }),
+              let target = downloads.firstIndex(where: { $0.id == targetID && normalizedQueueID($0.queueID) == queueID }) else {
+            return
+        }
+
+        let item = downloads.remove(at: source)
+        downloads.insert(item, at: target)
         saveDownloads()
     }
 
@@ -343,8 +403,10 @@ final class DownloadController: ObservableObject {
         saveDownloads()
     }
 
-    private func markQueuedDownloadsForAutoResume() {
-        for index in downloads.indices where downloads[index].status == .queued {
+    private func markQueuedDownloadsForAutoResume(queueID: UUID?) {
+        let normalizedID = queueID.map(normalizedQueueID)
+        for index in downloads.indices where downloads[index].status == .queued &&
+            (normalizedID == nil || normalizedQueueID(downloads[index].queueID) == normalizedID) {
             downloads[index].autoResumeOnLaunch = true
         }
         saveDownloads()
@@ -431,7 +493,8 @@ final class DownloadController: ObservableObject {
         do {
             let directory = storageURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
-            let data = try JSONEncoder().encode(downloads)
+            let state = StoredDownloadState(queues: queues, downloads: downloads)
+            let data = try JSONEncoder().encode(state)
             try data.write(to: storageURL, options: .atomic)
         } catch {
             print("Failed to save downloads: \(error)")
@@ -442,11 +505,21 @@ final class DownloadController: ObservableObject {
         do {
             guard FileManager.default.fileExists(atPath: storageURL.path) else { return false }
             let data = try Data(contentsOf: storageURL)
-            let loaded = try JSONDecoder().decode([DownloadItem].self, from: data)
+            let state: StoredDownloadState
+            if let storedState = try? JSONDecoder().decode(StoredDownloadState.self, from: data) {
+                state = storedState
+            } else {
+                state = StoredDownloadState(
+                    queues: [.main],
+                    downloads: try JSONDecoder().decode([DownloadItem].self, from: data)
+                )
+            }
 
             var shouldResumeRecoveredDownloads = false
-            self.downloads = loaded.map { item in
+            self.queues = normalizedQueues(state.queues)
+            self.downloads = state.downloads.map { item in
                 var adjusted = item
+                adjusted.queueID = normalizedQueueID(adjusted.queueID)
                 if adjusted.status == .downloading {
                     adjusted.status = .queued
                     adjusted.message = "Recovered after restart. Resuming from partial file."
@@ -471,6 +544,31 @@ final class DownloadController: ObservableObject {
             return false
         }
     }
+
+    private func normalizedQueueID(_ id: UUID?) -> UUID {
+        guard let id, queues.contains(where: { $0.id == id }) else {
+            return DownloadQueue.mainQueueID
+        }
+        return id
+    }
+
+    private func normalizedQueues(_ queues: [DownloadQueue]) -> [DownloadQueue] {
+        var normalized = queues
+        if !normalized.contains(where: { $0.id == DownloadQueue.mainQueueID }) {
+            normalized.insert(.main, at: 0)
+        }
+
+        if let mainIndex = normalized.firstIndex(where: { $0.id == DownloadQueue.mainQueueID }), mainIndex != 0 {
+            let main = normalized.remove(at: mainIndex)
+            normalized.insert(main, at: 0)
+        }
+        return normalized
+    }
+}
+
+private struct StoredDownloadState: Codable {
+    var queues: [DownloadQueue]
+    var downloads: [DownloadItem]
 }
 
 private final class SleepActivityHandle: @unchecked Sendable {

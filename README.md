@@ -3,10 +3,10 @@
   <h1>Firelink</h1>
   <p><strong>A clean, native SwiftUI download manager for Apple Silicon macOS</strong></p>
 
-  [![Swift Version](https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white)](https://swift.org)
-  [![Platform Support](https://img.shields.io/badge/macOS-14.0%2B-blue?logo=apple&logoColor=white)](https://apple.com)
-  [![Engine](https://img.shields.io/badge/Engine-aria2c-red?logo=terminal&logoColor=white)](https://aria2.github.io/)
-  [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white" alt="Swift Version" /></a>
+  <a href="https://apple.com"><img src="https://img.shields.io/badge/macOS-14.0%2B-blue?logo=apple&logoColor=white" alt="Platform Support" /></a>
+  <a href="https://aria2.github.io/"><img src="https://img.shields.io/badge/Engine-aria2c-red?logo=terminal&logoColor=white" alt="Engine" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License" /></a>
 </div>
 
 ---

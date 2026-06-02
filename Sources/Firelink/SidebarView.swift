@@ -24,6 +24,7 @@ enum DownloadSidebarFilter: Hashable {
 enum SidebarSelection: Hashable {
     case downloads(DownloadSidebarFilter)
     case queue(UUID)
+    case scheduler
     case settings
 }
 
@@ -69,6 +70,11 @@ struct SidebarView: View {
                     Label("Add new queue", systemImage: "plus")
                 }
                 .buttonStyle(.plain)
+            }
+            
+            Section("Tools") {
+                Label("Scheduler", systemImage: "calendar.badge.clock")
+                    .tag(SidebarSelection.scheduler)
             }
         }
         .listStyle(.sidebar)

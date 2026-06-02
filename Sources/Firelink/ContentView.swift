@@ -24,6 +24,8 @@ struct ContentView: View {
             downloadsView(filter: filter)
         case .queue(let queueID):
             queueView(queueID: queueID)
+        case .scheduler:
+            SchedulerView()
         case .settings:
             SettingsView()
         }

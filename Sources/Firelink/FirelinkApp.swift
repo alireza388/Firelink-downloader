@@ -4,11 +4,14 @@ import SwiftUI
 struct FirelinkApp: App {
     @StateObject private var settings: AppSettings
     @StateObject private var controller: DownloadController
+    @StateObject private var schedulerController: SchedulerController
 
     init() {
         let settings = AppSettings()
+        let controller = DownloadController(settings: settings)
         _settings = StateObject(wrappedValue: settings)
-        _controller = StateObject(wrappedValue: DownloadController(settings: settings))
+        _controller = StateObject(wrappedValue: controller)
+        _schedulerController = StateObject(wrappedValue: SchedulerController(downloadController: controller))
     }
 
     var body: some Scene {
@@ -16,6 +19,7 @@ struct FirelinkApp: App {
             ContentView()
                 .environmentObject(controller)
                 .environmentObject(settings)
+                .environmentObject(schedulerController)
                 .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
         }
         .windowStyle(.titleBar)

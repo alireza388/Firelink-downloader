@@ -98,7 +98,7 @@ struct AddDownloadsView: View {
                 }
             }
 
-            GridRow {
+            GridRow(alignment: .firstTextBaseline) {
                 Label("Connections per File", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 4) {
@@ -109,7 +109,7 @@ struct AddDownloadsView: View {
                             .monospacedDigit()
                             .frame(width: 130, alignment: .leading)
                     }
-                    Text("Firelink splits each file into this many parallel segments.")
+                    Text("Firelink splits each file into this many parallel segments. This also sets the number of concurrent connections to the server.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

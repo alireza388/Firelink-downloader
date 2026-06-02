@@ -1,32 +1,75 @@
 import SwiftUI
 
+private enum SettingsSection: String, CaseIterable, Hashable {
+    case downloads = "Downloads"
+    case locations = "Locations"
+    case siteLogins = "Site Logins"
+    case power = "Power"
+
+    var symbolName: String {
+        switch self {
+        case .downloads: "arrow.down.circle"
+        case .locations: "folder"
+        case .siteLogins: "key.fill"
+        case .power: "moon.zzz"
+        }
+    }
+}
+
 struct SettingsView: View {
-    @EnvironmentObject private var settings: AppSettings
+    @State private var selection: SettingsSection = .downloads
 
     var body: some View {
-        TabView {
-            DownloadSettingsPane()
-                .tabItem {
-                    Label("Downloads", systemImage: "arrow.down.circle")
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Settings")
+                .font(.largeTitle.weight(.semibold))
+                .padding(.horizontal, 28)
+                .padding(.top, 26)
+                .padding(.bottom, 18)
 
-            LocationsSettingsPane()
-                .tabItem {
-                    Label("Locations", systemImage: "folder")
-                }
+            Divider()
 
-            SiteLoginsSettingsPane()
-                .tabItem {
-                    Label("Site Logins", systemImage: "key.fill")
-                }
+            HStack(spacing: 0) {
+                settingsSidebar
 
-            PowerSettingsPane()
-                .tabItem {
-                    Label("Power", systemImage: "moon.zzz")
+                Divider()
+
+                ScrollView {
+                    selectedPane
+                        .frame(maxWidth: 720, alignment: .leading)
+                        .padding(28)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
         }
-        .padding(20)
-        .frame(width: 680, height: 470)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var settingsSidebar: some View {
+        List(selection: $selection) {
+            Section("Preferences") {
+                ForEach(SettingsSection.allCases, id: \.self) { section in
+                    Label(section.rawValue, systemImage: section.symbolName)
+                        .tag(section)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(width: 210)
+    }
+
+    @ViewBuilder
+    private var selectedPane: some View {
+        switch selection {
+        case .downloads:
+            DownloadSettingsPane()
+        case .locations:
+            LocationsSettingsPane()
+        case .siteLogins:
+            SiteLoginsSettingsPane()
+        case .power:
+            PowerSettingsPane()
+        }
     }
 }
 

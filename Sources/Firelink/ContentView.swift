@@ -5,111 +5,119 @@ struct ContentView: View {
     @EnvironmentObject private var controller: DownloadController
     @Environment(\.openWindow) private var openWindow
     @State private var selection: Set<DownloadItem.ID> = []
-    @State private var sidebarFilter: DownloadSidebarFilter = .all
+    @State private var sidebarSelection: SidebarSelection = .downloads(.all)
     @State private var showDeleteConfirmation = false
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $sidebarFilter)
+            SidebarView(selection: $sidebarSelection)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
         } detail: {
-            VStack(spacing: 0) {
-                DownloadTable(
-                    items: filteredDownloads,
-                    selection: $selection,
-                    title: sidebarFilter.title
-                )
-                Divider()
-                StatusBar()
+            detailView
+        }
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch sidebarSelection {
+        case .downloads(let filter):
+            downloadsView(filter: filter)
+        case .settings:
+            SettingsView()
+        }
+    }
+
+    private func downloadsView(filter: DownloadSidebarFilter) -> some View {
+        VStack(spacing: 0) {
+            DownloadTable(
+                items: filteredDownloads(for: filter),
+                selection: $selection,
+                title: filter.title
+            )
+            Divider()
+            StatusBar()
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openWindow(id: "add-downloads")
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
             }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        openWindow(id: "add-downloads")
-                    } label: {
-                        Label("Add", systemImage: "plus")
-                    }
+
+            ToolbarItem {
+                Button {
+                    controller.startQueue()
+                } label: {
+                    Label("Start Queue", systemImage: "play.fill")
                 }
-                
-                ToolbarItem {
-                    Button {
-                        controller.startQueue()
-                    } label: {
-                        Label("Start Queue", systemImage: "play.fill")
-                    }
-                }
+            }
 
-                ToolbarItemGroup {
-                    if !selectedItems.isEmpty {
-                        if selectedItems.contains(where: { $0.status == .downloading }) {
-                            Button {
-                                for item in selectedItems where item.status == .downloading {
-                                    controller.pause(item)
-                                }
-                            } label: {
-                                Label("Stop", systemImage: "stop.fill")
+            ToolbarItemGroup {
+                if !selectedItems.isEmpty {
+                    if selectedItems.contains(where: { $0.status == .downloading }) {
+                        Button {
+                            for item in selectedItems where item.status == .downloading {
+                                controller.pause(item)
                             }
-                        }
-
-                        if selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
-                            Button {
-                                for item in selectedItems where item.status == .paused || item.status == .failed || item.status == .canceled {
-                                    controller.resume(item)
-                                }
-                            } label: {
-                                Label("Start", systemImage: "play.fill")
-                            }
-                        }
-
-                        Button(role: .destructive) {
-                            showDeleteConfirmation = true
                         } label: {
-                            Label("Delete", systemImage: "trash")
+                            Label("Stop", systemImage: "stop.fill")
                         }
                     }
-                }
 
-                ToolbarItem {
-                    SettingsLink {
-                        Label("Settings", systemImage: "gearshape")
+                    if selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
+                        Button {
+                            for item in selectedItems where item.status == .paused || item.status == .failed || item.status == .canceled {
+                                controller.resume(item)
+                            }
+                        } label: {
+                            Label("Start", systemImage: "play.fill")
+                        }
                     }
-                }
-            }
-            .background {
-                Button("") {
-                    if !selection.isEmpty {
+
+                    Button(role: .destructive) {
                         showDeleteConfirmation = true
+                    } label: {
+                        Label("Delete", systemImage: "trash")
                     }
                 }
-                .keyboardShortcut(.delete, modifiers: [])
-                .opacity(0)
-                
-                Button("") {
-                    handlePaste()
+            }
+        }
+        .background {
+            Button("") {
+                if !selection.isEmpty {
+                    showDeleteConfirmation = true
                 }
-                .keyboardShortcut("v", modifiers: .command)
-                .opacity(0)
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            .opacity(0)
 
-                Button("") {
-                    selectAll()
-                }
-                .keyboardShortcut("a", modifiers: .command)
-                .opacity(0)
+            Button("") {
+                handlePaste()
             }
-            .confirmationDialog(
-                "Delete \(selection.count) Download\(selection.count == 1 ? "" : "s")",
-                isPresented: $showDeleteConfirmation
-            ) {
-                Button("Remove from List") {
-                    deleteSelected(deleteFiles: false)
-                }
-                Button("Move Files and Cache to Trash", role: .destructive) {
-                    deleteSelected(deleteFiles: true)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Are you sure you want to delete the selected downloads?")
+            .keyboardShortcut("v", modifiers: .command)
+            .opacity(0)
+
+            Button("") {
+                selectAll(filter: filter)
             }
+            .keyboardShortcut("a", modifiers: .command)
+            .opacity(0)
+        }
+        .confirmationDialog(
+            "Delete \(selection.count) Download\(selection.count == 1 ? "" : "s")",
+            isPresented: $showDeleteConfirmation
+        ) {
+            Button("Remove from List") {
+                deleteSelected(deleteFiles: false)
+            }
+            Button("Move Files and Cache to Trash", role: .destructive) {
+                deleteSelected(deleteFiles: true)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to delete the selected downloads?")
         }
     }
 
@@ -130,12 +138,12 @@ struct ContentView: View {
         openWindow(id: "add-downloads")
     }
 
-    private func selectAll() {
-        selection = Set(filteredDownloads.map { $0.id })
+    private func selectAll(filter: DownloadSidebarFilter) {
+        selection = Set(filteredDownloads(for: filter).map { $0.id })
     }
 
-    private var filteredDownloads: [DownloadItem] {
-        switch sidebarFilter {
+    private func filteredDownloads(for filter: DownloadSidebarFilter) -> [DownloadItem] {
+        switch filter {
         case .all:
             controller.downloads
         case .queued:

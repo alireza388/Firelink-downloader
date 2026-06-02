@@ -20,35 +20,40 @@ enum DownloadSidebarFilter: Hashable {
     }
 }
 
+enum SidebarSelection: Hashable {
+    case downloads(DownloadSidebarFilter)
+    case settings
+}
+
 struct SidebarView: View {
     @EnvironmentObject private var controller: DownloadController
-    @Binding var selection: DownloadSidebarFilter
+    @Binding var selection: SidebarSelection
 
     var body: some View {
         List(selection: $selection) {
             Section("Library") {
                 Label("All", systemImage: "tray.full")
                     .badge(controller.downloads.count)
-                    .tag(DownloadSidebarFilter.all)
+                    .tag(SidebarSelection.downloads(.all))
                 Label("Queue", systemImage: "list.bullet")
                     .badge(controller.queuedCount)
-                    .tag(DownloadSidebarFilter.queued)
+                    .tag(SidebarSelection.downloads(.queued))
                 Label("Active", systemImage: "bolt.fill")
                     .badge(controller.activeCount)
-                    .tag(DownloadSidebarFilter.active)
+                    .tag(SidebarSelection.downloads(.active))
                 Label("Completed", systemImage: "checkmark.circle")
                     .badge(controller.completedCount)
-                    .tag(DownloadSidebarFilter.completed)
+                    .tag(SidebarSelection.downloads(.completed))
                 Label("Failed", systemImage: "exclamationmark.triangle")
                     .badge(controller.failedCount)
-                    .tag(DownloadSidebarFilter.failed)
+                    .tag(SidebarSelection.downloads(.failed))
             }
 
             Section("Folders") {
                 ForEach(DownloadCategory.allCases, id: \.self) { category in
                     Label(category.rawValue, systemImage: category.symbolName)
                         .badge(controller.downloads.filter { $0.category == category }.count)
-                        .tag(DownloadSidebarFilter.category(category))
+                        .tag(SidebarSelection.downloads(.category(category)))
                 }
             }
 
@@ -61,5 +66,29 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 8) {
+                Divider()
+                Button {
+                    selection = .settings
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .background {
+                    if selection == .settings {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.accentColor.opacity(0.14))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+            .background(.bar)
+        }
     }
 }

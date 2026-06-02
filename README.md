@@ -17,7 +17,7 @@
 ## ✨ Key Features
 
 - ⚡ **High-Speed Downloads:** Multi-segmented download engine powered by `aria2c` for concurrent connections and optimal bandwidth utilization. Supports HTTP, HTTPS, FTP, and SFTP.
-- 🎨 **Native macOS & SwiftUI:** Responsive interface designed natively for Apple Silicon, featuring resizable tables, customizable columns, sidebar filters, and a native Settings panel.
+- 🎨 **Native macOS & SwiftUI:** Responsive interface designed natively for Apple Silicon, featuring resizable tables, customizable columns, sidebar filters, and an in-app Settings page.
 - 🗂️ **Smart Queue & Categories:** Drag-and-drop priority ordering, batch link ingestion with smart parsing, and automatic file organization (`Musics`, `Movies`, `Compressed`, `Pictures`, `Documents`, `Other`) based on extension detection.
 - 🔒 **Keychain Security:** Local macOS Keychain integration for secure site credential storage and matching during transfers.
 - ⚙️ **Power & System Integrity:** Optional system sleep prevention during active downloads, disk-space safety checks, and automated cleanup of partial `.aria2` metadata cache files.

@@ -46,10 +46,5 @@ struct FirelinkApp: App {
                 .keyboardShortcut("r", modifiers: [.command])
             }
         }
-
-        Settings {
-            SettingsView()
-                .environmentObject(settings)
-        }
     }
 }

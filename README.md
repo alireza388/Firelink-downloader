@@ -100,7 +100,7 @@ git push origin v0.1.0
 
 ## 🗺️ Roadmap
 
-- [ ] **Data Persistence:** Store history, column layout preferences, and active queues across restarts.
+- [x] **Data Persistence:** Store history, column layout preferences, and active queues across restarts.
 - [x] **Zero-Config Setup:** Automatically bundle and configure `aria2c` inside the `.app` bundle.
 - [ ] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
 - [ ] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox.

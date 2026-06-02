@@ -20,6 +20,22 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp ".build/$CONFIGURATION/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/$ICON_NAME.icns" "$RESOURCES_DIR/$ICON_NAME.icns"
 
+ARIA2C_PATH=$(which aria2c || true)
+if [[ -n "$ARIA2C_PATH" && -x "$ARIA2C_PATH" ]]; then
+  echo "Bundling aria2c from $ARIA2C_PATH..."
+  cp "$ARIA2C_PATH" "$RESOURCES_DIR/aria2c"
+  
+  if ! command -v dylibbundler &> /dev/null; then
+    echo "Installing dylibbundler..."
+    brew install dylibbundler
+  fi
+  
+  FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+  dylibbundler -od -b -x "$RESOURCES_DIR/aria2c" -d "$FRAMEWORKS_DIR" -p "@executable_path/../Frameworks/"
+else
+  echo "WARNING: aria2c not found! It will not be bundled. Please install it first."
+fi
+
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

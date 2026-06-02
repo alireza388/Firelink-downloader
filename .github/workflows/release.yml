@@ -41,6 +41,9 @@ jobs:
           uname -a
           swift --version
 
+      - name: Install dependencies
+        run: brew install aria2 dylibbundler
+
       - name: Build app bundle
         env:
           MARKETING_VERSION: ${{ steps.version.outputs.version }}

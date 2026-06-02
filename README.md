@@ -67,13 +67,11 @@ Firelink leverages `aria2c` under the hood as its core download engine. Unlike s
 
 ## 🛠️ Requirements & Setup
 
-### 1. Install Dependencies
-Ensure you have **Homebrew** and the **Swift toolchain** installed:
-```bash
-brew install aria2
-```
-- **OS Support:** macOS 14.0 or newer (built natively for Apple Silicon)
-- **Toolchain:** Xcode 15+ / Swift 6.0 toolchain
+### 1. Requirements
+- **OS Support:** macOS 14.0 or newer (built natively for Apple Silicon).
+- **Engine:** `aria2c` is fully packaged and bundled internally for a true Zero-Config experience. No external installations are required.
+
+*For Developers:* If you are building the project from source, you must have the **Swift 6.0 toolchain** (Xcode 15+) installed.
 
 ### 2. Build & Run
 Run the application directly via the terminal:
@@ -103,7 +101,7 @@ git push origin v0.1.0
 ## 🗺️ Roadmap
 
 - [ ] **Data Persistence:** Store history, column layout preferences, and active queues across restarts.
-- [ ] **Zero-Config Setup:** Automatically bundle and configure `aria2c` inside the `.app` bundle.
+- [x] **Zero-Config Setup:** Automatically bundle and configure `aria2c` inside the `.app` bundle.
 - [ ] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
 - [ ] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox.
 - [ ] **Advanced Transfer Features:** Checksum validation, cookie/header ingestion, and smart mirror failovers.

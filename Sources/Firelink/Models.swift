@@ -57,6 +57,7 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var message: String = ""
     var createdAt = Date()
     var lastTryAt: Date?
+    var autoResumeOnLaunch: Bool?
 
     var destinationPath: String {
         destinationDirectory.appendingPathComponent(fileName).path

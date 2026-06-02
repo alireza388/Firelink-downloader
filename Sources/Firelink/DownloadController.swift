@@ -11,8 +11,11 @@ final class DownloadController: ObservableObject {
     private let settings: AppSettings
     private let engine = Aria2DownloadEngine()
     private var activeHandles: [UUID: Aria2DownloadEngine.Handle] = [:]
+    private var automaticRetryCounts: [UUID: Int] = [:]
+    private var restrictQueueToAutoResume = false
     private var sleepActivity: SleepActivityHandle?
     private var cancellables = Set<AnyCancellable>()
+    private let maxAutomaticRetries = 3
     private lazy var storageURL: URL = {
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
         return supportDir.appendingPathComponent("Firelink").appendingPathComponent("downloads.json")
@@ -20,9 +23,9 @@ final class DownloadController: ObservableObject {
 
     init(settings: AppSettings) {
         self.settings = settings
-        
-        loadDownloads()
-        
+
+        let shouldResumeRecoveredDownloads = loadDownloads()
+
         settings.$preventsSleepWhileDownloading
             .sink { [weak self] _ in
                 Task { @MainActor in
@@ -44,6 +47,14 @@ final class DownloadController: ObservableObject {
                 self?.saveDownloads()
             }
             .store(in: &cancellables)
+
+        if shouldResumeRecoveredDownloads {
+            Task { @MainActor in
+                self.engineMessage = "Recovered downloads from the previous session."
+                self.restrictQueueToAutoResume = true
+                self.pumpQueue()
+            }
+        }
     }
 
     deinit {
@@ -91,6 +102,7 @@ final class DownloadController: ObservableObject {
 
         downloads.append(item)
         engineMessage = "Added \(fileName) to \(category.rawValue)."
+        saveDownloads()
     }
 
     func addPendingDownloads(
@@ -117,6 +129,7 @@ final class DownloadController: ObservableObject {
 
         downloads.append(contentsOf: items)
         engineMessage = "Added \(items.count) download\(items.count == 1 ? "" : "s")."
+        saveDownloads()
 
         if startImmediately {
             startQueue()
@@ -125,6 +138,8 @@ final class DownloadController: ObservableObject {
 
     func startQueue() {
         engineMessage = ""
+        restrictQueueToAutoResume = false
+        markQueuedDownloadsForAutoResume()
         pumpQueue()
     }
 
@@ -134,7 +149,10 @@ final class DownloadController: ObservableObject {
         update(item.id) {
             $0.status = .paused
             $0.message = "Paused. Resume will continue from the partial file."
+            $0.autoResumeOnLaunch = false
         }
+        automaticRetryCounts[item.id] = nil
+        saveDownloads()
         updateSleepActivity()
         pumpQueue()
     }
@@ -151,15 +169,22 @@ final class DownloadController: ObservableObject {
                 $0.connectionCount = 0
             }
             $0.message = "Added to queue"
+            $0.autoResumeOnLaunch = false
         }
+        automaticRetryCounts[item.id] = nil
+        saveDownloads()
         updateSleepActivity()
     }
 
     func resume(_ item: DownloadItem) {
+        restrictQueueToAutoResume = false
         update(item.id) {
             $0.status = .queued
             $0.message = ""
+            $0.autoResumeOnLaunch = true
         }
+        automaticRetryCounts[item.id] = nil
+        saveDownloads()
         pumpQueue()
     }
 
@@ -169,7 +194,10 @@ final class DownloadController: ObservableObject {
         update(item.id) {
             $0.status = .canceled
             $0.message = "Canceled"
+            $0.autoResumeOnLaunch = false
         }
+        automaticRetryCounts[item.id] = nil
+        saveDownloads()
         updateSleepActivity()
         pumpQueue()
     }
@@ -190,11 +218,14 @@ final class DownloadController: ObservableObject {
             removeCacheFiles(for: item)
         }
         downloads.removeAll { $0.id == item.id }
+        automaticRetryCounts[item.id] = nil
+        saveDownloads()
         updateSleepActivity()
     }
 
     func move(from source: IndexSet, to destination: Int) {
         downloads.move(fromOffsets: source, toOffset: destination)
+        saveDownloads()
     }
 
     private func pumpQueue() {
@@ -204,8 +235,16 @@ final class DownloadController: ObservableObject {
         }
 
         while activeCount < settings.maxConcurrentDownloads,
-              let next = downloads.first(where: { $0.status == .queued }) {
+              let next = downloads.first(where: { item in
+                  item.status == .queued && (!restrictQueueToAutoResume || item.autoResumeOnLaunch == true)
+              }) {
             start(next)
+        }
+
+        if restrictQueueToAutoResume &&
+            activeCount == 0 &&
+            !downloads.contains(where: { $0.status == .queued && $0.autoResumeOnLaunch == true }) {
+            restrictQueueToAutoResume = false
         }
     }
 
@@ -216,7 +255,9 @@ final class DownloadController: ObservableObject {
             $0.message = "Starting"
             $0.speedText = "-"
             $0.etaText = "-"
+            $0.autoResumeOnLaunch = true
         }
+        saveDownloads()
 
         do {
             let handle = try engine.start(
@@ -241,22 +282,22 @@ final class DownloadController: ObservableObject {
 
                         switch result {
                         case .success:
+                            self.automaticRetryCounts[item.id] = nil
                             self.update(item.id) {
                                 $0.status = .completed
                                 $0.progress = 1
                                 $0.speedText = "-"
                                 $0.etaText = "-"
                                 $0.message = "Saved to \($0.destinationPath)"
+                                $0.autoResumeOnLaunch = false
                             }
+                            self.saveDownloads()
                         case .failure(let error):
                             if self.downloads.first(where: { $0.id == item.id })?.status == .paused ||
                                 self.downloads.first(where: { $0.id == item.id })?.status == .canceled {
                                 return
                             }
-                            self.update(item.id) {
-                                $0.status = .failed
-                                $0.message = error.localizedDescription
-                            }
+                            self.handleDownloadFailure(itemID: item.id, error: error)
                         }
 
                         self.pumpQueue()
@@ -268,12 +309,10 @@ final class DownloadController: ObservableObject {
             update(item.id) {
                 $0.message = "Process \(handle.processIdentifier)"
             }
+            saveDownloads()
             updateSleepActivity()
         } catch {
-            update(item.id) {
-                $0.status = .failed
-                $0.message = error.localizedDescription
-            }
+            handleDownloadFailure(itemID: item.id, error: error)
             updateSleepActivity()
             pumpQueue()
         }
@@ -300,6 +339,56 @@ final class DownloadController: ObservableObject {
             $0.connectionsPerServer = min(max(connectionsPerServer, 1), 16)
             $0.credentials = credentials
             $0.message = "Properties updated"
+        }
+        saveDownloads()
+    }
+
+    private func markQueuedDownloadsForAutoResume() {
+        for index in downloads.indices where downloads[index].status == .queued {
+            downloads[index].autoResumeOnLaunch = true
+        }
+        saveDownloads()
+    }
+
+    private func handleDownloadFailure(itemID: UUID, error: Error) {
+        let retryCount = automaticRetryCounts[itemID] ?? 0
+
+        guard isAutomaticallyRecoverable(error), retryCount < maxAutomaticRetries else {
+            automaticRetryCounts[itemID] = nil
+            update(itemID) {
+                $0.status = .failed
+                $0.speedText = "-"
+                $0.etaText = "-"
+                $0.connectionCount = 0
+                $0.message = error.localizedDescription
+                $0.autoResumeOnLaunch = false
+            }
+            saveDownloads()
+            return
+        }
+
+        automaticRetryCounts[itemID] = retryCount + 1
+        update(itemID) {
+            $0.status = .queued
+            $0.speedText = "-"
+            $0.etaText = "-"
+            $0.connectionCount = 0
+            $0.message = "Connection interrupted. Retrying from partial file (\(retryCount + 1)/\(maxAutomaticRetries))."
+            $0.autoResumeOnLaunch = true
+        }
+        saveDownloads()
+    }
+
+    private func isAutomaticallyRecoverable(_ error: Error) -> Bool {
+        guard let engineError = error as? Aria2DownloadEngine.EngineError else {
+            return true
+        }
+
+        switch engineError {
+        case .executableNotFound, .unsupportedProxy:
+            return false
+        case .launchFailed:
+            return true
         }
     }
 
@@ -349,25 +438,37 @@ final class DownloadController: ObservableObject {
         }
     }
 
-    private func loadDownloads() {
+    private func loadDownloads() -> Bool {
         do {
-            guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+            guard FileManager.default.fileExists(atPath: storageURL.path) else { return false }
             let data = try Data(contentsOf: storageURL)
             let loaded = try JSONDecoder().decode([DownloadItem].self, from: data)
-            
+
+            var shouldResumeRecoveredDownloads = false
             self.downloads = loaded.map { item in
                 var adjusted = item
                 if adjusted.status == .downloading {
-                    adjusted.status = .paused
-                    adjusted.message = "Paused on startup"
+                    adjusted.status = .queued
+                    adjusted.message = "Recovered after restart. Resuming from partial file."
                     adjusted.speedText = "-"
                     adjusted.etaText = "-"
                     adjusted.connectionCount = 0
+                    adjusted.autoResumeOnLaunch = true
+                    shouldResumeRecoveredDownloads = true
+                } else if adjusted.status == .queued && adjusted.autoResumeOnLaunch == true {
+                    adjusted.message = "Recovered queued download."
+                    shouldResumeRecoveredDownloads = true
                 }
                 return adjusted
             }
+
+            if shouldResumeRecoveredDownloads {
+                saveDownloads()
+            }
+            return shouldResumeRecoveredDownloads
         } catch {
             print("Failed to load downloads: \(error)")
+            return false
         }
     }
 }

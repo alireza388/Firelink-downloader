@@ -177,6 +177,10 @@ final class Aria2DownloadEngine {
             "--download-result=hide",
             "--file-allocation=none",
             "--min-split-size=1M",
+            "--max-tries=10",
+            "--retry-wait=5",
+            "--connect-timeout=30",
+            "--timeout=60",
             "--input-file=-"
         ]
 

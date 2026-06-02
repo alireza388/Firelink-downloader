@@ -1,4 +1,5 @@
 import Foundation
+import CFNetwork
 
 final class Aria2DownloadEngine {
     struct Handle {
@@ -9,6 +10,7 @@ final class Aria2DownloadEngine {
     enum EngineError: LocalizedError {
         case executableNotFound
         case launchFailed(String)
+        case unsupportedProxy(String)
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +18,8 @@ final class Aria2DownloadEngine {
                 "aria2c was not found. Install it with `brew install aria2`, or bundle aria2c inside the app resources."
             case .launchFailed(let details):
                 "Could not start aria2c: \(details)"
+            case .unsupportedProxy(let details):
+                details
             }
         }
     }
@@ -55,6 +59,7 @@ final class Aria2DownloadEngine {
 
     func start(
         item: DownloadItem,
+        proxyConfiguration: DownloadProxyConfiguration,
         progress: @escaping @Sendable (DownloadProgress) -> Void,
         completion: @escaping @Sendable (Result<Void, Error>) -> Void
     ) throws -> Handle {
@@ -69,7 +74,7 @@ final class Aria2DownloadEngine {
 
         let process = Process()
         process.executableURL = executableURL
-        process.arguments = arguments(for: item)
+        process.arguments = try arguments(for: item, proxyConfiguration: proxyConfiguration)
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -136,8 +141,8 @@ final class Aria2DownloadEngine {
         }
     }
 
-    private func arguments(for item: DownloadItem) -> [String] {
-        [
+    private func arguments(for item: DownloadItem, proxyConfiguration: DownloadProxyConfiguration) throws -> [String] {
+        var arguments = [
             "--continue=true",
             "--allow-overwrite=false",
             "--auto-file-renaming=true",
@@ -148,6 +153,100 @@ final class Aria2DownloadEngine {
             "--min-split-size=1M",
             "--input-file=-"
         ]
+
+        arguments.append(contentsOf: try proxyArguments(for: item, configuration: proxyConfiguration))
+        return arguments
+    }
+
+    private func proxyArguments(for item: DownloadItem, configuration: DownloadProxyConfiguration) throws -> [String] {
+        switch configuration.mode {
+        case .none:
+            return clearedProxyArguments()
+        case .system:
+            switch systemProxyResolution(for: item.url) {
+            case .direct:
+                return clearedProxyArguments()
+            case .proxy(let proxyURI):
+                return ["\(proxyArgumentName(for: item.url.scheme))=\(sanitizedOptionValue(proxyURI))"]
+            case .unsupported(let message):
+                throw EngineError.unsupportedProxy(message)
+            }
+        case .custom:
+            guard let proxyURI = configuration.customProxyURI else { return [] }
+            return ["--all-proxy=\(sanitizedOptionValue(proxyURI))"]
+        }
+    }
+
+    private func clearedProxyArguments() -> [String] {
+        [
+            "--all-proxy=",
+            "--http-proxy=",
+            "--https-proxy=",
+            "--ftp-proxy="
+        ]
+    }
+
+    private func proxyArgumentName(for urlScheme: String?) -> String {
+        switch urlScheme?.lowercased() {
+        case "http": "--http-proxy"
+        case "https": "--https-proxy"
+        case "ftp": "--ftp-proxy"
+        default: "--all-proxy"
+        }
+    }
+
+    private enum SystemProxyResolution {
+        case direct
+        case proxy(String)
+        case unsupported(String)
+    }
+
+    private func systemProxyResolution(for url: URL) -> SystemProxyResolution {
+        guard let systemSettings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any],
+              let proxies = CFNetworkCopyProxiesForURL(url as CFURL, systemSettings as CFDictionary).takeRetainedValue() as? [[String: Any]] else {
+            return .direct
+        }
+
+        for proxy in proxies {
+            guard let type = proxy[kCFProxyTypeKey as String] as? String else { continue }
+            if type == kCFProxyTypeNone as String {
+                return .direct
+            }
+            if type == kCFProxyTypeSOCKS as String {
+                return .unsupported("aria2c does not support SOCKS system proxies. Choose an HTTP, HTTPS, or FTP proxy in Network settings.")
+            }
+            if type == kCFProxyTypeAutoConfigurationURL as String ||
+                type == kCFProxyTypeAutoConfigurationJavaScript as String {
+                return .unsupported("aria2c does not support automatic system proxy configuration. Choose a manual proxy in Network settings.")
+            }
+            if let uri = proxyURI(fromSystemProxy: proxy, type: type) {
+                return .proxy(uri)
+            }
+        }
+
+        return .direct
+    }
+
+    private func proxyURI(fromSystemProxy proxy: [String: Any], type: String) -> String? {
+        guard let host = proxy[kCFProxyHostNameKey as String] as? String,
+              !host.isEmpty else {
+            return nil
+        }
+
+        let port = (proxy[kCFProxyPortNumberKey as String] as? NSNumber)?.intValue
+        let scheme: String
+        if type == kCFProxyTypeHTTPS as String {
+            scheme = "https"
+        } else if type == kCFProxyTypeFTP as String {
+            scheme = "ftp"
+        } else {
+            scheme = "http"
+        }
+
+        guard let port else {
+            return "\(scheme)://\(host)"
+        }
+        return "\(scheme)://\(host):\(port)"
     }
 
     private func inputFileContent(for item: DownloadItem) -> String {

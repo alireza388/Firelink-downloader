@@ -2,6 +2,7 @@ import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Hashable {
     case downloads = "Downloads"
+    case network = "Network"
     case locations = "Locations"
     case siteLogins = "Site Logins"
     case power = "Power"
@@ -9,6 +10,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     var symbolName: String {
         switch self {
         case .downloads: "arrow.down.circle"
+        case .network: "network"
         case .locations: "folder"
         case .siteLogins: "key.fill"
         case .power: "moon.zzz"
@@ -63,12 +65,87 @@ struct SettingsView: View {
         switch selection {
         case .downloads:
             DownloadSettingsPane()
+        case .network:
+            NetworkSettingsPane()
         case .locations:
             LocationsSettingsPane()
         case .siteLogins:
             SiteLoginsSettingsPane()
         case .power:
             PowerSettingsPane()
+        }
+    }
+}
+
+private struct NetworkSettingsPane: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Proxy", selection: proxyBinding(\.mode)) {
+                    ForEach(ProxyMode.allCases, id: \.self) { mode in
+                        Text(mode.title)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+
+                if settings.proxySettings.mode == .custom {
+                    Picker("Proxy type", selection: proxyBinding(\.type)) {
+                        ForEach(ProxyType.allCases, id: \.self) { type in
+                            Text(type.title)
+                                .tag(type)
+                        }
+                    }
+
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+                        GridRow {
+                            Text("IP or Host")
+                            TextField("127.0.0.1", text: proxyBinding(\.host))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+                        }
+
+                        GridRow {
+                            Text("Port")
+                            TextField("8080", value: proxyBinding(\.port), format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 110)
+                        }
+                    }
+                }
+
+                Text(networkSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var networkSummary: String {
+        switch settings.proxySettings.mode {
+        case .none:
+            "Downloads ignore configured proxies."
+        case .system:
+            "Downloads use the matching macOS system proxy when one is configured."
+        case .custom:
+            if let proxyURI = settings.proxySettings.customProxyURI {
+                "Downloads use \(proxyURI)."
+            } else {
+                "Enter a proxy host and port to enable the custom proxy."
+            }
+        }
+    }
+
+    private func proxyBinding<Value>(_ keyPath: WritableKeyPath<ProxySettings, Value>) -> Binding<Value> {
+        Binding {
+            settings.proxySettings[keyPath: keyPath]
+        } set: { newValue in
+            var proxySettings = settings.proxySettings
+            proxySettings[keyPath: keyPath] = newValue
+            settings.proxySettings = proxySettings
         }
     }
 }

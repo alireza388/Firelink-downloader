@@ -6,6 +6,63 @@ struct SiteLogin: Identifiable, Codable, Equatable, Sendable {
     var username: String
 }
 
+enum ProxyMode: String, Codable, CaseIterable, Sendable {
+    case none
+    case system
+    case custom
+
+    var title: String {
+        switch self {
+        case .none: "No proxy"
+        case .system: "Use system proxy"
+        case .custom: "Set proxy"
+        }
+    }
+}
+
+enum ProxyType: String, Codable, CaseIterable, Sendable {
+    case http
+    case https
+    case ftp
+
+    var title: String {
+        switch self {
+        case .http: "HTTP"
+        case .https: "HTTPS"
+        case .ftp: "FTP"
+        }
+    }
+
+    var uriScheme: String {
+        rawValue
+    }
+}
+
+struct ProxySettings: Codable, Equatable, Sendable {
+    var mode: ProxyMode = .none
+    var type: ProxyType = .http
+    var host = ""
+    var port = 8080
+
+    var normalized: ProxySettings {
+        var copy = self
+        copy.host = copy.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.port = min(max(copy.port, 1), 65_535)
+        return copy
+    }
+
+    var customProxyURI: String? {
+        let clean = normalized
+        guard !clean.host.isEmpty else { return nil }
+        return "\(clean.type.uriScheme)://\(clean.host):\(clean.port)"
+    }
+}
+
+struct DownloadProxyConfiguration: Equatable, Sendable {
+    var mode: ProxyMode
+    var customProxyURI: String?
+}
+
 @MainActor
 final class AppSettings: ObservableObject {
     @Published var perServerConnections: Int {
@@ -32,6 +89,17 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var proxySettings: ProxySettings {
+        didSet {
+            let normalized = proxySettings.normalized
+            if proxySettings != normalized {
+                proxySettings = normalized
+                return
+            }
+            save()
+        }
+    }
+
     @Published var downloadDirectories: [DownloadCategory: String] {
         didSet { save() }
     }
@@ -53,12 +121,14 @@ final class AppSettings: ObservableObject {
             perServerConnections = min(max(stored.perServerConnections, 1), 16)
             maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             preventsSleepWhileDownloading = stored.preventsSleepWhileDownloading
+            proxySettings = stored.proxySettings?.normalized ?? ProxySettings()
             siteLogins = stored.siteLogins
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             perServerConnections = 16
             maxConcurrentDownloads = 3
             preventsSleepWhileDownloading = true
+            proxySettings = ProxySettings()
             siteLogins = []
             downloadDirectories = Self.defaultDirectories()
         }
@@ -81,6 +151,13 @@ final class AppSettings: ObservableObject {
 
     func resetDirectories() {
         downloadDirectories = Self.defaultDirectories()
+    }
+
+    var downloadProxyConfiguration: DownloadProxyConfiguration {
+        DownloadProxyConfiguration(
+            mode: proxySettings.mode,
+            customProxyURI: proxySettings.customProxyURI
+        )
     }
 
     func addSiteLogin(urlPattern: String, username: String, password: String) {
@@ -131,6 +208,7 @@ final class AppSettings: ObservableObject {
             perServerConnections: perServerConnections,
             maxConcurrentDownloads: maxConcurrentDownloads,
             preventsSleepWhileDownloading: preventsSleepWhileDownloading,
+            proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins
         )
@@ -188,6 +266,7 @@ private struct StoredSettings: Codable {
     var perServerConnections: Int
     var maxConcurrentDownloads: Int?
     var preventsSleepWhileDownloading: Bool
+    var proxySettings: ProxySettings?
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
 }

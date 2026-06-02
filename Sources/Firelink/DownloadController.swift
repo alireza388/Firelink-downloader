@@ -221,6 +221,7 @@ final class DownloadController: ObservableObject {
         do {
             let handle = try engine.start(
                 item: item,
+                proxyConfiguration: settings.downloadProxyConfiguration,
                 progress: { [weak self] progress in
                     Task { @MainActor in
                         self?.update(item.id) {

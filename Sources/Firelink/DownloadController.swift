@@ -75,8 +75,8 @@ final class DownloadController: ObservableObject {
         downloads.filter { $0.status == .completed }.count
     }
 
-    var failedCount: Int {
-        downloads.filter { $0.status == .failed }.count
+    var unfinishedCount: Int {
+        downloads.filter { $0.status != .completed }.count
     }
 
     var hasAria2: Bool {
@@ -182,6 +182,30 @@ final class DownloadController: ObservableObject {
         updateSleepActivity()
     }
 
+    func assignToQueue(itemIDs: Set<UUID>, queueID: UUID) {
+        let queueID = normalizedQueueID(queueID)
+        var changed = false
+
+        for index in downloads.indices where itemIDs.contains(downloads[index].id) {
+            guard downloads[index].status != .completed,
+                  downloads[index].status != .downloading else {
+                continue
+            }
+
+            downloads[index].status = .queued
+            downloads[index].queueID = queueID
+            downloads[index].message = "Added to \(queueName(for: queueID))"
+            downloads[index].autoResumeOnLaunch = false
+            automaticRetryCounts[downloads[index].id] = nil
+            changed = true
+        }
+
+        if changed {
+            saveDownloads()
+            updateSleepActivity()
+        }
+    }
+
     func resume(_ item: DownloadItem) {
         restrictQueueToAutoResume = false
         update(item.id) {
@@ -240,7 +264,7 @@ final class DownloadController: ObservableObject {
 
     func queueItems(for id: UUID) -> [DownloadItem] {
         let id = normalizedQueueID(id)
-        return downloads.filter { normalizedQueueID($0.queueID) == id }
+        return downloads.filter { validQueueID($0.queueID) == id }
     }
 
     func queueCount(for id: UUID) -> Int {
@@ -275,11 +299,25 @@ final class DownloadController: ObservableObject {
         saveDownloads()
     }
 
+    func removeQueue(id: UUID) {
+        guard id != DownloadQueue.mainQueueID,
+              queues.contains(where: { $0.id == id }) else {
+            return
+        }
+
+        for index in downloads.indices where validQueueID(downloads[index].queueID) == id {
+            downloads[index].queueID = nil
+        }
+        queues.removeAll { $0.id == id }
+        engineMessage = "Removed queue. Downloads remain in Unfinished."
+        saveDownloads()
+    }
+
     func moveDownload(_ itemID: UUID, before targetID: UUID, in queueID: UUID) {
         let queueID = normalizedQueueID(queueID)
         guard itemID != targetID,
-              let source = downloads.firstIndex(where: { $0.id == itemID && normalizedQueueID($0.queueID) == queueID }),
-              let target = downloads.firstIndex(where: { $0.id == targetID && normalizedQueueID($0.queueID) == queueID }) else {
+              let source = downloads.firstIndex(where: { $0.id == itemID && validQueueID($0.queueID) == queueID }),
+              let target = downloads.firstIndex(where: { $0.id == targetID && validQueueID($0.queueID) == queueID }) else {
             return
         }
 
@@ -506,20 +544,26 @@ final class DownloadController: ObservableObject {
             guard FileManager.default.fileExists(atPath: storageURL.path) else { return false }
             let data = try Data(contentsOf: storageURL)
             let state: StoredDownloadState
+            let isLegacyDownloadList: Bool
             if let storedState = try? JSONDecoder().decode(StoredDownloadState.self, from: data) {
                 state = storedState
+                isLegacyDownloadList = false
             } else {
                 state = StoredDownloadState(
                     queues: [.main],
                     downloads: try JSONDecoder().decode([DownloadItem].self, from: data)
                 )
+                isLegacyDownloadList = true
             }
 
             var shouldResumeRecoveredDownloads = false
             self.queues = normalizedQueues(state.queues)
             self.downloads = state.downloads.map { item in
                 var adjusted = item
-                adjusted.queueID = normalizedQueueID(adjusted.queueID)
+                adjusted.queueID = validQueueID(adjusted.queueID)
+                if isLegacyDownloadList, item.queueID == nil {
+                    adjusted.queueID = DownloadQueue.mainQueueID
+                }
                 if adjusted.status == .downloading {
                     adjusted.status = .queued
                     adjusted.message = "Recovered after restart. Resuming from partial file."
@@ -546,8 +590,12 @@ final class DownloadController: ObservableObject {
     }
 
     private func normalizedQueueID(_ id: UUID?) -> UUID {
+        validQueueID(id) ?? DownloadQueue.mainQueueID
+    }
+
+    private func validQueueID(_ id: UUID?) -> UUID? {
         guard let id, queues.contains(where: { $0.id == id }) else {
-            return DownloadQueue.mainQueueID
+            return nil
         }
         return id
     }

@@ -175,8 +175,8 @@ struct ContentView: View {
             controller.downloads.filter { $0.status == .downloading }
         case .completed:
             controller.downloads.filter { $0.status == .completed }
-        case .failed:
-            controller.downloads.filter { $0.status == .failed }
+        case .unfinished:
+            controller.downloads.filter { $0.status != .completed }
         case .category(let category):
             controller.downloads.filter { $0.category == category }
         }

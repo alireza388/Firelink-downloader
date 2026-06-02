@@ -1,11 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum DownloadSidebarFilter: Hashable {
     case all
     case queued
     case active
     case completed
-    case failed
+    case unfinished
     case category(DownloadCategory)
 
     var title: String {
@@ -14,7 +15,7 @@ enum DownloadSidebarFilter: Hashable {
         case .queued: "Queue"
         case .active: "Active"
         case .completed: "Completed"
-        case .failed: "Failed"
+        case .unfinished: "Unfinished"
         case .category(let category): category.rawValue
         }
     }
@@ -30,6 +31,7 @@ struct SidebarView: View {
     @EnvironmentObject private var controller: DownloadController
     @Binding var selection: SidebarSelection
     @State private var queueBeingRenamed: DownloadQueue?
+    @State private var queueBeingRemoved: DownloadQueue?
     @State private var queueName = ""
 
     var body: some View {
@@ -44,32 +46,20 @@ struct SidebarView: View {
                 Label("Completed", systemImage: "checkmark.circle")
                     .badge(controller.completedCount)
                     .tag(SidebarSelection.downloads(.completed))
-                Label("Failed", systemImage: "exclamationmark.triangle")
-                    .badge(controller.failedCount)
-                    .tag(SidebarSelection.downloads(.failed))
+                Label("Unfinished", systemImage: "circle.dashed")
+                    .badge(controller.unfinishedCount)
+                    .tag(SidebarSelection.downloads(.unfinished))
             }
 
             Section("Folders") {
                 ForEach(DownloadCategory.allCases, id: \.self) { category in
-                    Label(category.rawValue, systemImage: category.symbolName)
-                        .badge(controller.downloads.filter { $0.category == category }.count)
-                        .tag(SidebarSelection.downloads(.category(category)))
+                    folderRow(for: category)
                 }
             }
 
             Section("Queues") {
                 ForEach(controller.queues) { queue in
-                    Label(queue.name, systemImage: queue.isMain ? "list.bullet.rectangle" : "list.bullet")
-                        .badge(controller.queueCount(for: queue.id))
-                        .tag(SidebarSelection.queue(queue.id))
-                        .contextMenu {
-                            if !queue.isMain {
-                                Button("Rename") {
-                                    queueBeingRenamed = queue
-                                    queueName = queue.name
-                                }
-                            }
-                        }
+                    queueRow(for: queue)
                 }
 
                 Button {
@@ -101,6 +91,31 @@ struct SidebarView: View {
                 queueBeingRenamed = nil
             }
         }
+        .confirmationDialog(
+            "Delete Queue",
+            isPresented: Binding(
+                get: { queueBeingRemoved != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        queueBeingRemoved = nil
+                    }
+                }
+            ),
+            presenting: queueBeingRemoved
+        ) { queue in
+            Button("Delete Queue", role: .destructive) {
+                controller.removeQueue(id: queue.id)
+                if selection == .queue(queue.id) {
+                    selection = .downloads(.unfinished)
+                }
+                queueBeingRemoved = nil
+            }
+            Button("Cancel", role: .cancel) {
+                queueBeingRemoved = nil
+            }
+        } message: { queue in
+            Text("Downloads in \(queue.name) will stay in All and Unfinished, but no longer belong to a queue.")
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
                 Divider()
@@ -125,5 +140,71 @@ struct SidebarView: View {
             }
             .background(.bar)
         }
+    }
+
+    private func folderRow(for category: DownloadCategory) -> some View {
+        Label(category.rawValue, systemImage: category.symbolName)
+            .badge(controller.downloads.filter { $0.category == category }.count)
+            .tag(SidebarSelection.downloads(.category(category)))
+    }
+
+    private func queueRow(for queue: DownloadQueue) -> some View {
+        Label(queue.name, systemImage: queue.isMain ? "list.bullet.rectangle" : "list.bullet")
+            .badge(controller.queueCount(for: queue.id))
+            .tag(SidebarSelection.queue(queue.id))
+            .onDrop(
+                of: [.text],
+                delegate: QueueSidebarDropDelegate(
+                    queueID: queue.id,
+                    selection: $selection,
+                    controller: controller
+                )
+            )
+            .contextMenu {
+                if !queue.isMain {
+                    Button("Rename") {
+                        queueBeingRenamed = queue
+                        queueName = queue.name
+                    }
+                    Button("Delete", role: .destructive) {
+                        queueBeingRemoved = queue
+                    }
+                }
+            }
+    }
+}
+
+private struct QueueSidebarDropDelegate: DropDelegate {
+    let queueID: UUID
+    @Binding var selection: SidebarSelection
+    let controller: DownloadController
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else {
+            return false
+        }
+
+        provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
+            guard let itemIDs = Self.itemIDs(from: item), !itemIDs.isEmpty else { return }
+            Task { @MainActor in
+                controller.assignToQueue(itemIDs: itemIDs, queueID: queueID)
+                selection = .queue(queueID)
+            }
+        }
+        return true
+    }
+
+    nonisolated private static func itemIDs(from item: NSSecureCoding?) -> Set<UUID>? {
+        let text: String?
+        if let data = item as? Data {
+            text = String(data: data, encoding: .utf8)
+        } else {
+            text = item as? String
+        }
+
+        guard let text else { return nil }
+        return Set(text
+            .split(whereSeparator: { $0 == "\n" || $0 == "," || $0 == " " })
+            .compactMap { UUID(uuidString: String($0)) })
     }
 }

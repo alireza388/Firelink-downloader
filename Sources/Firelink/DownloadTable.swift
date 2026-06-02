@@ -239,7 +239,7 @@ struct DownloadTable: View {
         }
         .onDrag {
             draggedItemID = item.id
-            return NSItemProvider(object: item.id.uuidString as NSString)
+            return NSItemProvider(object: dragPayload(for: item) as NSString)
         }
         .onDrop(
             of: [.text],
@@ -361,10 +361,15 @@ struct DownloadTable: View {
             }
         }
 
-        if targetItems.contains(where: { $0.status != .downloading && $0.status != .queued }) {
-            Button {
-                for target in targetItems where target.status != .downloading && target.status != .queued {
-                    controller.queue(target)
+        if targetItems.contains(where: { $0.status != .completed && $0.status != .downloading }) {
+            Menu {
+                ForEach(controller.queues) { queue in
+                    Button(queue.name) {
+                        controller.assignToQueue(
+                            itemIDs: Set(targetItems.map(\.id)),
+                            queueID: queue.id
+                        )
+                    }
                 }
             } label: {
                 Label("Add to Queue", systemImage: "list.bullet")
@@ -480,6 +485,13 @@ struct DownloadTable: View {
             return nil
         }
         return index + 1
+    }
+
+    private func dragPayload(for item: DownloadItem) -> String {
+        let draggedIDs = selection.contains(item.id) ? selection : [item.id]
+        return draggedIDs
+            .map(\.uuidString)
+            .joined(separator: "\n")
     }
 
     private func compare<T: Comparable>(_ lhs: T, _ rhs: T) -> ComparisonResult {

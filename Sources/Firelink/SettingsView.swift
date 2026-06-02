@@ -6,6 +6,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     case locations = "Locations"
     case siteLogins = "Site Logins"
     case power = "Power"
+    case engine = "Engine"
 
     var symbolName: String {
         switch self {
@@ -14,6 +15,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .locations: "folder"
         case .siteLogins: "key.fill"
         case .power: "moon.zzz"
+        case .engine: "terminal"
         }
     }
 }
@@ -73,7 +75,52 @@ struct SettingsView: View {
             SiteLoginsSettingsPane()
         case .power:
             PowerSettingsPane()
+        case .engine:
+            EngineSettingsPane()
         }
+    }
+}
+
+private struct EngineSettingsPane: View {
+    private var executableURL: URL? {
+        Aria2DownloadEngine.findExecutable()
+    }
+
+    private var version: String {
+        Aria2DownloadEngine.versionString() ?? "Unavailable"
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Status") {
+                    Label(
+                        executableURL == nil ? "Missing" : "Ready",
+                        systemImage: executableURL == nil ? "exclamationmark.triangle.fill" : "checkmark.seal.fill"
+                    )
+                    .foregroundStyle(executableURL == nil ? .orange : .green)
+                }
+
+                LabeledContent("Binary") {
+                    Text(executableURL?.path ?? "Not found")
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+
+                LabeledContent("Version") {
+                    Text(version)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+
+                if executableURL == nil {
+                    Text("Install aria2 with Homebrew or bundle aria2c inside the app resources.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

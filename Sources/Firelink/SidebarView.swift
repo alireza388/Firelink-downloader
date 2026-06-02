@@ -56,14 +56,6 @@ struct SidebarView: View {
                         .tag(SidebarSelection.downloads(.category(category)))
                 }
             }
-
-            Section("Engine") {
-                HStack {
-                    Image(systemName: controller.hasAria2 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(controller.hasAria2 ? .green : .orange)
-                    Text(controller.hasAria2 ? "aria2c ready" : "aria2c missing")
-                }
-            }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {

@@ -57,6 +57,32 @@ final class Aria2DownloadEngine {
         return nil
     }
 
+    static func versionString() -> String? {
+        guard let executableURL = findExecutable() else { return nil }
+
+        let process = Process()
+        let outputPipe = Pipe()
+        process.executableURL = executableURL
+        process.arguments = ["--version"]
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return output
+                .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                .first
+                .map(String.init)
+        } catch {
+            return nil
+        }
+    }
+
     func start(
         item: DownloadItem,
         proxyConfiguration: DownloadProxyConfiguration,

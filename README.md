@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Firelink</h1>
+  <h1><img src="Resources/AppIcon.png" alt="Firelink Icon" width="40" height="40" style="vertical-align: middle; margin-right: 10px;" />Firelink</h1>
   <p><strong>A clean, native SwiftUI download manager for Apple Silicon macOS</strong></p>
 
   [![Swift Version](https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white)](https://swift.org)
@@ -106,7 +106,8 @@ git push origin v0.1.0
 - [ ] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
 - [ ] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox.
 - [ ] **Advanced Transfer Features:** Checksum validation, cookie/header ingestion, and smart mirror failovers.
-- [ ] **Distribution:** Notarized release builds, automated Sparkle updates, and Homebrew formulae.
+- [x] **Updates & Releases:** GitHub Actions DMG release pipeline and built-in update checker.
+- [ ] **Distribution:** Notarized `.app` releases and Homebrew formulae.
 
 ---
 

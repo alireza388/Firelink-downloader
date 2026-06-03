@@ -98,12 +98,22 @@ git push origin v0.4.1
 
 ---
 
+## 🧩 Browser Extension
+
+The browser extension for Firelink is developed in a separate repository. You can find the extension source code, track its development, and download releases at:
+
+👉 **[nimbold/Firelink-Extension](https://github.com/nimbold/Firelink-Extension)**
+
+For local development parity, this repository tracks the extension via a Git Submodule located in the `Extensions/` directory.
+
+---
+
 ## 🗺️ Roadmap
 
 - [x] **Data Persistence:** Store history, column layout preferences, and active queues across restarts.
 - [x] **Zero-Config Setup:** Automatically bundle and configure `aria2c` inside the `.app` bundle.
 - [x] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
-- [ ] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox.
+- [x] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox. (See [Firelink-Extension](https://github.com/nimbold/Firelink-Extension) repository)
 - [x] **Advanced Transfer Features:** Checksum validation, cookie/header ingestion, and smart mirror failovers.
 - [x] **Updates & Releases:** GitHub Actions DMG release pipeline and built-in update checker.
 - [ ] **Distribution:** Notarized `.app` releases and Homebrew formulae.

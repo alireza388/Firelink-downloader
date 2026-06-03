@@ -690,15 +690,23 @@ private struct IntegrationSettingsPane: View {
                 .padding(.vertical, 4)
             }
             
-            Section {
-                Button {
-                    showExtensionInFinder()
-                } label: {
-                    Label("Show Extension Folder in Finder", systemImage: "folder.fill")
+            Section("Installation") {
+                HStack {
+                    Button {
+                        showExtensionInFinder()
+                    } label: {
+                        Label("Show Extension Folder", systemImage: "folder.fill")
+                    }
+                    
+                    Button {
+                        openFirefoxDebugging()
+                    } label: {
+                        Label("Open Firefox Debugging", systemImage: "link")
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 
-                Text("Because the extension is not yet published to the Mozilla Add-on store, you must load it manually. Open Firefox, go to 'about:debugging', click 'This Firefox', select 'Load Temporary Add-on', and choose the manifest.json file from the folder above.")
+                Text("Since the extension isn't published to the Mozilla Add-on Store yet, you must load it manually:\n1. Click 'Show Extension Folder' to reveal the extension files.\n2. Click 'Open Firefox Debugging' to launch Firefox's extension debugger.\n3. Click 'Load Temporary Add-on' and select the manifest.json file from the revealed folder.\n\n⚠️ Note: You must repeat this process every time you restart Firefox until the official extension is released.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -715,6 +723,12 @@ private struct IntegrationSettingsPane: View {
     private func showExtensionInFinder() {
         if let folderURL = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) {
             NSWorkspace.shared.activateFileViewerSelecting([folderURL])
+        }
+    }
+
+    private func openFirefoxDebugging() {
+        if let url = URL(string: "about:debugging#/runtime/this-firefox") {
+            NSWorkspace.shared.open(url)
         }
     }
 }

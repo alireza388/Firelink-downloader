@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var controller: DownloadController
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
     @State private var selection: Set<DownloadItem.ID> = []
     @State private var sidebarSelection: SidebarSelection = .downloads(.all)
@@ -12,8 +13,12 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $sidebarSelection)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
+                .scrollContentBackground(.hidden)
+                .background(settings.appTheme.theme.secondaryBackground ?? Color(NSColor.windowBackgroundColor))
         } detail: {
             detailView
+                .scrollContentBackground(.hidden)
+                .background(settings.appTheme.theme.background ?? Color(NSColor.windowBackgroundColor))
         }
     }
 

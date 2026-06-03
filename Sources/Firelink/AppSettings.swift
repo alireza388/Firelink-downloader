@@ -65,6 +65,10 @@ struct DownloadProxyConfiguration: Equatable, Sendable {
 
 @MainActor
 final class AppSettings: ObservableObject {
+    @Published var appTheme: AppTheme = .system {
+        didSet { save() }
+    }
+
     @Published var perServerConnections: Int {
         didSet {
             let clamped = min(max(perServerConnections, 1), 16)
@@ -129,6 +133,7 @@ final class AppSettings: ObservableObject {
 
         if let data = defaults.data(forKey: storageKey),
            let stored = try? JSONDecoder().decode(StoredSettings.self, from: data) {
+            appTheme = stored.appTheme ?? .system
             perServerConnections = min(max(stored.perServerConnections, 1), 16)
             maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             globalSpeedLimitKiBPerSecond = min(max(stored.globalSpeedLimitKiBPerSecond ?? 0, 0), 10_485_760)
@@ -137,6 +142,7 @@ final class AppSettings: ObservableObject {
             siteLogins = stored.siteLogins
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
+            appTheme = .system
             perServerConnections = 16
             maxConcurrentDownloads = 3
             globalSpeedLimitKiBPerSecond = 0
@@ -218,6 +224,7 @@ final class AppSettings: ObservableObject {
 
     private func save() {
         let stored = StoredSettings(
+            appTheme: appTheme,
             perServerConnections: perServerConnections,
             maxConcurrentDownloads: maxConcurrentDownloads,
             globalSpeedLimitKiBPerSecond: globalSpeedLimitKiBPerSecond,
@@ -277,6 +284,7 @@ final class AppSettings: ObservableObject {
 }
 
 private struct StoredSettings: Codable {
+    var appTheme: AppTheme?
     var perServerConnections: Int
     var maxConcurrentDownloads: Int?
     var globalSpeedLimitKiBPerSecond: Int?

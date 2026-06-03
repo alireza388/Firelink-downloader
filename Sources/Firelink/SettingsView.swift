@@ -4,6 +4,7 @@ import SwiftUI
 private enum SettingsSection: String, CaseIterable, Hashable {
     case downloads = "Downloads"
     case locations = "Locations"
+    case lookAndFeel = "Look and feel"
     case network = "Network"
     case siteLogins = "Site Logins"
     case power = "Power"
@@ -13,6 +14,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     static let orderedCases: [SettingsSection] = [
         .downloads,
         .locations,
+        .lookAndFeel,
         .network,
         .siteLogins,
         .power,
@@ -23,6 +25,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     var symbolName: String {
         switch self {
         case .downloads: "arrow.down.circle"
+        case .lookAndFeel: "paintpalette"
         case .network: "network"
         case .locations: "folder"
         case .siteLogins: "key.fill"
@@ -43,6 +46,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
 }
 
 struct SettingsView: View {
+    @EnvironmentObject private var settings: AppSettings
     @State private var selection: SettingsSection = .downloads
 
     var body: some View {
@@ -69,6 +73,7 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(settings.appTheme.theme.background ?? Color(NSColor.windowBackgroundColor))
     }
 
     private var settingsSidebar: some View {
@@ -96,6 +101,8 @@ struct SettingsView: View {
         switch selection {
         case .downloads:
             DownloadSettingsPane()
+        case .lookAndFeel:
+            LookAndFeelSettingsPane()
         case .network:
             NetworkSettingsPane()
         case .locations:
@@ -109,6 +116,29 @@ struct SettingsView: View {
         case .about:
             AboutSettingsPane()
         }
+    }
+}
+
+private struct LookAndFeelSettingsPane: View {
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        Form {
+            Section("App Theme") {
+                Picker("Theme", selection: $settings.appTheme) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.rawValue)
+                            .tag(theme)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                
+                Text("Select a color palette for the app's user interface.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

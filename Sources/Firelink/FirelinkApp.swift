@@ -20,6 +20,7 @@ struct FirelinkApp: App {
                 .environmentObject(controller)
                 .environmentObject(settings)
                 .environmentObject(schedulerController)
+                .modifier(AppThemeModifier(theme: settings.appTheme))
                 .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
         }
         .windowStyle(.titleBar)
@@ -28,6 +29,7 @@ struct FirelinkApp: App {
             AddDownloadsView()
                 .environmentObject(controller)
                 .environmentObject(settings)
+                .modifier(AppThemeModifier(theme: settings.appTheme))
         }
         .windowResizability(.contentSize)
 
@@ -36,8 +38,10 @@ struct FirelinkApp: App {
                 DownloadPropertiesWindow(downloadID: downloadID)
                     .environmentObject(controller)
                     .environmentObject(settings)
+                    .modifier(AppThemeModifier(theme: settings.appTheme))
             } else {
                 ContentUnavailableView("Download Not Found", systemImage: "questionmark.circle")
+                    .modifier(AppThemeModifier(theme: settings.appTheme))
             }
         }
         .windowResizability(.contentSize)

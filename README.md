@@ -102,7 +102,7 @@ git push origin v0.4.1
 
 - [x] **Data Persistence:** Store history, column layout preferences, and active queues across restarts.
 - [x] **Zero-Config Setup:** Automatically bundle and configure `aria2c` inside the `.app` bundle.
-- [ ] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
+- [x] **Bandwidth Limits:** Add global and per-download speed caps and calendar schedules.
 - [ ] **Browser Extensions:** Capture links directly from Safari, Chrome, and Firefox.
 - [x] **Advanced Transfer Features:** Checksum validation, cookie/header ingestion, and smart mirror failovers.
 - [x] **Updates & Releases:** GitHub Actions DMG release pipeline and built-in update checker.

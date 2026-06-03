@@ -15,7 +15,7 @@ struct FirelinkApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(controller)
                 .environmentObject(settings)
@@ -49,6 +49,11 @@ struct FirelinkApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
+        }
+
+        MenuBarExtra("Firelink", systemImage: "arrow.down.circle") {
+            TrayMenuView()
+                .environmentObject(controller)
         }
     }
 }

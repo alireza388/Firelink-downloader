@@ -670,10 +670,6 @@ private struct PowerSettingsPane: View {
 }
 
 private struct IntegrationSettingsPane: View {
-    @State private var isInstalling = false
-    @State private var firefoxApps: [URL] = []
-    @State private var showAppPicker = false
-    
     var body: some View {
         Form {
             Section {
@@ -695,33 +691,14 @@ private struct IntegrationSettingsPane: View {
             }
             
             Section {
-                HStack {
-                    Button {
-                        handleInstallClick()
-                    } label: {
-                        Label("Install to Firefox", systemImage: "puzzlepiece.extension.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isInstalling)
-                    .confirmationDialog("Select Firefox Edition", isPresented: $showAppPicker, titleVisibility: .visible) {
-                        ForEach(firefoxApps, id: \.self) { appURL in
-                            Button(appURL.deletingPathExtension().lastPathComponent) {
-                                installExtension(with: appURL)
-                            }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("Multiple Firefox installations were found. Which one would you like to install the extension to?")
-                    }
-                    
-                    Button {
-                        showExtensionInFinder()
-                    } label: {
-                        Label("Show in Finder", systemImage: "folder")
-                    }
+                Button {
+                    showExtensionInFinder()
+                } label: {
+                    Label("Show Extension Folder in Finder", systemImage: "folder.fill")
                 }
+                .buttonStyle(.borderedProminent)
                 
-                Text("Note: Mozilla strictly enforces add-on signing. Standard Firefox and Beta will block unsigned extensions. You must either use Firefox Developer Edition/Nightly (with xpinstall.signatures.required set to false) or load it temporarily via about:debugging.")
+                Text("Because the extension is not yet published to the Mozilla Add-on store, you must load it manually. Open Firefox, go to 'about:debugging', click 'This Firefox', select 'Load Temporary Add-on', and choose the manifest.json file from the folder above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -736,62 +713,8 @@ private struct IntegrationSettingsPane: View {
     }
     
     private func showExtensionInFinder() {
-        guard let xpiURL = Bundle.main.url(forResource: "firelink", withExtension: "xpi") else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([xpiURL])
-    }
-    
-    private func handleInstallClick() {
-        let apps = findFirefoxApps()
-        if apps.isEmpty {
-            // Fallback to default macOS open behavior
-            installExtension(with: nil)
-        } else if apps.count == 1 {
-            installExtension(with: apps[0])
-        } else {
-            firefoxApps = apps.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-            showAppPicker = true
-        }
-    }
-    
-    private func findFirefoxApps() -> [URL] {
-        let directories = [
-            URL(fileURLWithPath: "/Applications"),
-            URL(fileURLWithPath: NSHomeDirectory() + "/Applications")
-        ]
-        
-        var apps: [URL] = []
-        for dir in directories {
-            if let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-                for url in urls where url.pathExtension == "app" && url.lastPathComponent.lowercased().contains("firefox") {
-                    apps.append(url)
-                }
-            }
-        }
-        return apps
-    }
-    
-    private func installExtension(with appURL: URL?) {
-        guard let xpiURL = Bundle.main.url(forResource: "firelink", withExtension: "xpi") else {
-            print("Failed to find firelink.xpi in app bundle.")
-            return
-        }
-        
-        isInstalling = true
-        Task {
-            do {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                if let appURL {
-                    process.arguments = ["-a", appURL.path, xpiURL.path]
-                } else {
-                    process.arguments = [xpiURL.path] // Default open
-                }
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                print("Failed to launch Firefox to install extension: \(error)")
-            }
-            isInstalling = false
+        if let folderURL = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) {
+            NSWorkspace.shared.activateFileViewerSelecting([folderURL])
         }
     }
 }

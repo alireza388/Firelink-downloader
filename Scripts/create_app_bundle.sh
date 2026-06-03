@@ -22,7 +22,10 @@ cp "$ROOT_DIR/Resources/$ICON_NAME.icns" "$RESOURCES_DIR/$ICON_NAME.icns"
 cp "$ROOT_DIR/Sources/Firelink/Assets.xcassets/MenuBarIcon.imageset/MenuBarIconTemplate.png" "$RESOURCES_DIR/MenuBarIconTemplate.png"
 
 echo "Packaging Firefox extension..."
-(cd "$ROOT_DIR/Extensions/Firefox" && zip -r -q "$RESOURCES_DIR/firelink.xpi" . -x "*.DS_Store")
+cp -r "$ROOT_DIR/Extensions/Firefox" "$RESOURCES_DIR/FirefoxExtension"
+# Also remove .DS_Store if any
+find "$RESOURCES_DIR/FirefoxExtension" -name ".DS_Store" -delete
+
 
 ARIA2C_PATH=$(which aria2c || true)
 if [[ -n "$ARIA2C_PATH" && -x "$ARIA2C_PATH" ]]; then

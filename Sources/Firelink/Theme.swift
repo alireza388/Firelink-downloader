@@ -1,6 +1,38 @@
 import SwiftUI
 import AppKit
 
+enum AppFontSize: String, Codable, CaseIterable, Identifiable, Sendable {
+    case small = "Small"
+    case standard = "Standard"
+    case large = "Large"
+
+    var id: String { rawValue }
+
+    var dynamicTypeSize: DynamicTypeSize {
+        switch self {
+        case .small: return .small
+        case .standard: return .medium
+        case .large: return .xLarge
+        }
+    }
+}
+
+enum ListRowDensity: String, Codable, CaseIterable, Identifiable, Sendable {
+    case compact = "Compact"
+    case standard = "Standard"
+    case relaxed = "Relaxed"
+
+    var id: String { rawValue }
+
+    var verticalPadding: CGFloat {
+        switch self {
+        case .compact: return 4
+        case .standard: return 8
+        case .relaxed: return 14
+        }
+    }
+}
+
 enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case system = "System Default"
     case light = "Light"

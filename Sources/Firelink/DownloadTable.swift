@@ -526,6 +526,7 @@ struct DownloadTable: View {
 }
 
 private struct DownloadRow: View {
+    @EnvironmentObject private var settings: AppSettings
     let item: DownloadItem
     let priorityNumber: Int?
     let visibleColumns: [DownloadColumn]
@@ -537,7 +538,7 @@ private struct DownloadRow: View {
             ForEach(visibleColumns) { column in
                 cell(for: column)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, settings.listRowDensity.verticalPadding)
                     .frame(width: columnWidth(column), alignment: alignment(for: column))
                     .clipped()
             }

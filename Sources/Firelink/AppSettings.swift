@@ -68,6 +68,18 @@ final class AppSettings: ObservableObject {
     @Published var appTheme: AppTheme = .system {
         didSet { save() }
     }
+    
+    @Published var appFontSize: AppFontSize = .standard {
+        didSet { save() }
+    }
+    
+    @Published var listRowDensity: ListRowDensity = .standard {
+        didSet { save() }
+    }
+    
+    @Published var showMenuBarIcon: Bool = true {
+        didSet { save() }
+    }
 
     @Published var perServerConnections: Int {
         didSet {
@@ -134,6 +146,9 @@ final class AppSettings: ObservableObject {
         if let data = defaults.data(forKey: storageKey),
            let stored = try? JSONDecoder().decode(StoredSettings.self, from: data) {
             appTheme = stored.appTheme ?? .system
+            appFontSize = stored.appFontSize ?? .standard
+            listRowDensity = stored.listRowDensity ?? .standard
+            showMenuBarIcon = stored.showMenuBarIcon ?? true
             perServerConnections = min(max(stored.perServerConnections, 1), 16)
             maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             globalSpeedLimitKiBPerSecond = min(max(stored.globalSpeedLimitKiBPerSecond ?? 0, 0), 10_485_760)
@@ -143,6 +158,9 @@ final class AppSettings: ObservableObject {
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             appTheme = .system
+            appFontSize = .standard
+            listRowDensity = .standard
+            showMenuBarIcon = true
             perServerConnections = 16
             maxConcurrentDownloads = 3
             globalSpeedLimitKiBPerSecond = 0
@@ -225,6 +243,9 @@ final class AppSettings: ObservableObject {
     private func save() {
         let stored = StoredSettings(
             appTheme: appTheme,
+            appFontSize: appFontSize,
+            listRowDensity: listRowDensity,
+            showMenuBarIcon: showMenuBarIcon,
             perServerConnections: perServerConnections,
             maxConcurrentDownloads: maxConcurrentDownloads,
             globalSpeedLimitKiBPerSecond: globalSpeedLimitKiBPerSecond,
@@ -285,6 +306,9 @@ final class AppSettings: ObservableObject {
 
 private struct StoredSettings: Codable {
     var appTheme: AppTheme?
+    var appFontSize: AppFontSize?
+    var listRowDensity: ListRowDensity?
+    var showMenuBarIcon: Bool?
     var perServerConnections: Int
     var maxConcurrentDownloads: Int?
     var globalSpeedLimitKiBPerSecond: Int?

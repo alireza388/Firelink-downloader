@@ -727,8 +727,24 @@ private struct IntegrationSettingsPane: View {
     }
 
     private func openFirefoxDebugging() {
-        if let url = URL(string: "about:debugging#/runtime/this-firefox") {
-            NSWorkspace.shared.open(url)
+        guard let url = URL(string: "about:debugging#/runtime/this-firefox") else { return }
+        
+        let bundleIDs = [
+            "org.mozilla.firefoxdeveloperedition",
+            "org.mozilla.firefox",
+            "org.mozilla.nightly"
+        ]
+        
+        let workspace = NSWorkspace.shared
+        for id in bundleIDs {
+            if let appURL = workspace.urlForApplication(withBundleIdentifier: id) {
+                let config = NSWorkspace.OpenConfiguration()
+                workspace.open([url], withApplicationAt: appURL, configuration: config, completionHandler: nil)
+                return
+            }
         }
+        
+        // Fallback
+        workspace.open(url)
     }
 }

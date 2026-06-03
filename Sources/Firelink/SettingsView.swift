@@ -706,7 +706,7 @@ private struct IntegrationSettingsPane: View {
                 }
                 .buttonStyle(.borderedProminent)
                 
-                Text("Since the extension isn't published to the Mozilla Add-on Store yet, you must load it manually:\n1. Click 'Show Extension Folder' to reveal the extension files.\n2. Click 'Open Firefox Debugging' to launch Firefox's extension debugger.\n3. Click 'Load Temporary Add-on' and select the manifest.json file from the revealed folder.\n\n⚠️ Note: You must repeat this process every time you restart Firefox until the official extension is released.")
+                Text("Since the extension isn't published to the Mozilla Add-on Store yet, you must load it manually:\n1. Click 'Show Extension Folder' to reveal the extension files.\n2. Click 'Open Firefox Debugging' to launch Firefox's extension debugger.\n3. Click 'This Firefox' on the left sidebar.\n4. Click 'Load Temporary Add-on' and select the manifest.json file from the revealed folder.\n\n⚠️ Note: You must repeat this process every time you restart Firefox until the official extension is released.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -738,14 +738,14 @@ private struct IntegrationSettingsPane: View {
             if let appURL = workspace.urlForApplication(withBundleIdentifier: id) {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                process.arguments = ["-a", appURL.path, "about:debugging#/runtime/this-firefox"]
+                process.arguments = ["-a", appURL.path, "about:debugging"]
                 try? process.run()
                 return
             }
         }
         
         // Fallback
-        if let fallbackURL = URL(string: "about:debugging#/runtime/this-firefox") {
+        if let fallbackURL = URL(string: "about:debugging") {
             workspace.open(fallbackURL)
         }
     }

@@ -116,6 +116,7 @@ final class DownloadController: ObservableObject {
         overrideDirectory: URL?,
         startImmediately: Bool,
         queueID: UUID = DownloadQueue.mainQueueID,
+        credentials: DownloadCredentials? = nil,
         transferOptions: DownloadTransferOptions = DownloadTransferOptions(),
         speedLimitKiBPerSecond: Int? = nil
     ) {
@@ -130,7 +131,7 @@ final class DownloadController: ObservableObject {
                 category: pending.category,
                 destinationDirectory: overrideDirectory ?? pending.defaultDirectory,
                 connectionsPerServer: clampedConnections,
-                credentials: settings.credentials(for: pending.url),
+                credentials: credentials ?? settings.credentials(for: pending.url),
                 checksum: transferOptions.checksum,
                 requestHeaders: transferOptions.requestHeaders,
                 cookieHeader: transferOptions.cookieHeader,

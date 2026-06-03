@@ -21,6 +21,10 @@ struct AddDownloadsView: View {
     @State private var headerText = ""
     @State private var cookieText = ""
     @State private var mirrorText = ""
+    @State private var useAuthorization = false
+    @State private var authUsername = ""
+    @State private var authPassword = ""
+    @State private var saveLogin = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -136,6 +140,30 @@ struct AddDownloadsView: View {
                             step: 128
                         )
                         .disabled(!speedLimitEnabled)
+                    }
+                }
+            }
+
+            GridRow(alignment: .top) {
+                Label("Authorization", systemImage: "lock.shield")
+                    .font(.headline)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Use authorization", isOn: $useAuthorization)
+                        .toggleStyle(.switch)
+                    
+                    if useAuthorization {
+                        HStack(spacing: 10) {
+                            TextField("Username", text: $authUsername)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+                            SecureField("Password", text: $authPassword)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+                        }
+                        Toggle("Save login for this website", isOn: $saveLogin)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -365,6 +393,13 @@ struct AddDownloadsView: View {
             )
         }
 
+        if let firstURL = urls.first, let creds = settings.credentials(for: firstURL) {
+            useAuthorization = true
+            authUsername = creds.username
+            authPassword = creds.password
+            saveLogin = false
+        }
+
         metadataTask = Task {
             var loaded: [PendingDownload] = []
             for url in urls {
@@ -400,12 +435,30 @@ struct AddDownloadsView: View {
     }
 
     private func addDownloads(start: Bool) {
+        var explicitCredentials: DownloadCredentials? = nil
+        if useAuthorization {
+            let cleanUsername = authUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleanUsername.isEmpty {
+                explicitCredentials = DownloadCredentials(username: cleanUsername, password: authPassword)
+                if saveLogin {
+                    var savedHosts = Set<String>()
+                    for item in pendingDownloads {
+                        if let host = item.url.host, !savedHosts.contains(host) {
+                            settings.addSiteLogin(urlPattern: "*.\(host)", username: cleanUsername, password: authPassword)
+                            savedHosts.insert(host)
+                        }
+                    }
+                }
+            }
+        }
+
         controller.addPendingDownloads(
             pendingDownloads,
             connectionsPerServer: Int(connectionsPerServer),
             overrideDirectory: overrideDirectory,
             startImmediately: start,
             queueID: targetQueueID,
+            credentials: explicitCredentials,
             transferOptions: transferOptions,
             speedLimitKiBPerSecond: speedLimitEnabled ? speedLimitKiBPerSecond : nil
         )

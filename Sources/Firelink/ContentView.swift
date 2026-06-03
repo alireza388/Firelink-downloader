@@ -18,6 +18,9 @@ struct ContentView: View {
             detailView
                 .themeBackground(settings.appTheme.theme.background)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenAddDownloadsWindow"))) { _ in
+            openWindow(id: "add-downloads")
+        }
     }
 
     @ViewBuilder

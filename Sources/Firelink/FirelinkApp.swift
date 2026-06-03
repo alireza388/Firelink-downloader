@@ -6,6 +6,9 @@ struct FirelinkApp: App {
     @StateObject private var controller: DownloadController
     @StateObject private var schedulerController: SchedulerController
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
+    
+    // Server must be retained to keep listening
+    private let extensionServer: LocalExtensionServer?
 
     init() {
         let settings = AppSettings()
@@ -13,6 +16,9 @@ struct FirelinkApp: App {
         _settings = StateObject(wrappedValue: settings)
         _controller = StateObject(wrappedValue: controller)
         _schedulerController = StateObject(wrappedValue: SchedulerController(downloadController: controller))
+        
+        extensionServer = LocalExtensionServer(downloadController: controller)
+        extensionServer?.start()
     }
 
     var body: some Scene {

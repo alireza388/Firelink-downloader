@@ -9,6 +9,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
     case siteLogins = "Site Logins"
     case power = "Power"
     case engine = "Engine"
+    case integration = "Integrations"
     case about = "About"
 
     static let orderedCases: [SettingsSection] = [
@@ -19,6 +20,7 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         .siteLogins,
         .power,
         .engine,
+        .integration,
         .about
     ]
 
@@ -31,13 +33,14 @@ private enum SettingsSection: String, CaseIterable, Hashable {
         case .siteLogins: "key.fill"
         case .power: "moon.zzz"
         case .engine: "terminal"
+        case .integration: "puzzlepiece.extension"
         case .about: "info.circle"
         }
     }
 
     var groupTitle: String {
         switch self {
-        case .engine, .about:
+        case .engine, .integration, .about:
             "App"
         default:
             "Preferences"
@@ -113,6 +116,8 @@ struct SettingsView: View {
             PowerSettingsPane()
         case .engine:
             EngineSettingsPane()
+        case .integration:
+            IntegrationSettingsPane()
         case .about:
             AboutSettingsPane()
         }
@@ -661,5 +666,132 @@ private struct PowerSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct IntegrationSettingsPane: View {
+    @State private var isInstalling = false
+    @State private var firefoxApps: [URL] = []
+    @State private var showAppPicker = false
+    
+    var body: some View {
+        Form {
+            Section {
+                HStack(alignment: .center, spacing: 14) {
+                    Image(systemName: "safari")
+                        .resizable()
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Firefox Extension")
+                            .font(.title2.weight(.semibold))
+                        Text("Capture downloads directly from your browser.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            
+            Section {
+                HStack {
+                    Button {
+                        handleInstallClick()
+                    } label: {
+                        Label("Install to Firefox", systemImage: "puzzlepiece.extension.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isInstalling)
+                    .confirmationDialog("Select Firefox Edition", isPresented: $showAppPicker, titleVisibility: .visible) {
+                        ForEach(firefoxApps, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                installExtension(with: appURL)
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Multiple Firefox installations were found. Which one would you like to install the extension to?")
+                    }
+                    
+                    Button {
+                        showExtensionInFinder()
+                    } label: {
+                        Label("Show in Finder", systemImage: "folder")
+                    }
+                }
+                
+                Text("Note: Mozilla strictly enforces add-on signing. Standard Firefox and Beta will block unsigned extensions. You must either use Firefox Developer Edition/Nightly (with xpinstall.signatures.required set to false) or load it temporarily via about:debugging.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Permissions & Privacy") {
+                Text("The Firelink extension requests minimal permissions. It only reads your current tab when you explicitly click 'Download with Firelink' from the right-click menu, keeping your browsing history completely private.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+    
+    private func showExtensionInFinder() {
+        guard let xpiURL = Bundle.main.url(forResource: "firelink", withExtension: "xpi") else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([xpiURL])
+    }
+    
+    private func handleInstallClick() {
+        let apps = findFirefoxApps()
+        if apps.isEmpty {
+            // Fallback to default macOS open behavior
+            installExtension(with: nil)
+        } else if apps.count == 1 {
+            installExtension(with: apps[0])
+        } else {
+            firefoxApps = apps.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+            showAppPicker = true
+        }
+    }
+    
+    private func findFirefoxApps() -> [URL] {
+        let directories = [
+            URL(fileURLWithPath: "/Applications"),
+            URL(fileURLWithPath: NSHomeDirectory() + "/Applications")
+        ]
+        
+        var apps: [URL] = []
+        for dir in directories {
+            if let urls = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                for url in urls where url.pathExtension == "app" && url.lastPathComponent.lowercased().contains("firefox") {
+                    apps.append(url)
+                }
+            }
+        }
+        return apps
+    }
+    
+    private func installExtension(with appURL: URL?) {
+        guard let xpiURL = Bundle.main.url(forResource: "firelink", withExtension: "xpi") else {
+            print("Failed to find firelink.xpi in app bundle.")
+            return
+        }
+        
+        isInstalling = true
+        Task {
+            do {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                if let appURL {
+                    process.arguments = ["-a", appURL.path, xpiURL.path]
+                } else {
+                    process.arguments = [xpiURL.path] // Default open
+                }
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                print("Failed to launch Firefox to install extension: \(error)")
+            }
+            isInstalling = false
+        }
     }
 }

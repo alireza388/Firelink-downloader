@@ -34,5 +34,8 @@ struct TrayMenuView: View {
         Button("Exit") {
             NSApplication.shared.terminate(nil)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenAddDownloadsWindow"))) { _ in
+            openWindow(id: "add-downloads")
+        }
     }
 }

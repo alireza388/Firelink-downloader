@@ -21,6 +21,9 @@ cp ".build/$CONFIGURATION/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/$ICON_NAME.icns" "$RESOURCES_DIR/$ICON_NAME.icns"
 cp "$ROOT_DIR/Sources/Firelink/Assets.xcassets/MenuBarIcon.imageset/MenuBarIconTemplate.png" "$RESOURCES_DIR/MenuBarIconTemplate.png"
 
+echo "Packaging Firefox extension..."
+(cd "$ROOT_DIR/Extensions/Firefox" && zip -r -q "$RESOURCES_DIR/firelink.xpi" . -x "*.DS_Store")
+
 ARIA2C_PATH=$(which aria2c || true)
 if [[ -n "$ARIA2C_PATH" && -x "$ARIA2C_PATH" ]]; then
   echo "Bundling aria2c from $ARIA2C_PATH..."

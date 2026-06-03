@@ -1,9 +1,10 @@
 import SwiftUI
+import AppKit
 
 enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case system = "System Default"
     case light = "Light"
-    case dark = "Modern Dark"
+    case dark = "Dark"
     case dracula = "Dracula"
     case nord = "Nord"
 
@@ -11,12 +12,10 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var theme: Theme {
         switch self {
-        case .system:
+        case .system, .dark:
             return Theme.system
         case .light:
             return Theme.modernLight
-        case .dark:
-            return Theme.modernDark
         case .dracula:
             return Theme.dracula
         case .nord:
@@ -24,11 +23,11 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var colorScheme: ColorScheme? {
+    var appearance: NSAppearance? {
         switch self {
         case .system: return nil
-        case .light: return .light
-        case .dark, .dracula, .nord: return .dark
+        case .light: return NSAppearance(named: .aqua)
+        case .dark, .dracula, .nord: return NSAppearance(named: .darkAqua)
         }
     }
 }
@@ -56,14 +55,6 @@ struct Theme: Equatable, Sendable {
         accent: Color.accentColor
     )
 
-    static let modernDark = Theme(
-        background: Color(nsColor: NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.10, alpha: 1.0)),
-        secondaryBackground: Color(nsColor: NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.14, alpha: 1.0)),
-        text: Color(nsColor: NSColor(calibratedRed: 0.9, green: 0.9, blue: 0.95, alpha: 1.0)),
-        secondaryText: Color(nsColor: NSColor(calibratedRed: 0.6, green: 0.6, blue: 0.65, alpha: 1.0)),
-        accent: Color(nsColor: NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.95, alpha: 1.0))
-    )
-
     static let dracula = Theme(
         background: Color(nsColor: NSColor(calibratedRed: 0.16, green: 0.16, blue: 0.21, alpha: 1.0)),
         secondaryBackground: Color(nsColor: NSColor(calibratedRed: 0.27, green: 0.28, blue: 0.35, alpha: 1.0)),
@@ -86,11 +77,12 @@ struct AppThemeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .preferredColorScheme(theme.colorScheme)
             .tint(theme.theme.accent)
-            // Apply custom background only if it's not system.
-            // Using .background() on the root view might not cover the whole window. 
-            // In macOS, it's often better to just set the color scheme and tint, 
-            // and let specific views (like Sidebar, Content) use the theme colors explicitly.
+            .onAppear {
+                NSApp.appearance = theme.appearance
+            }
+            .onChange(of: theme) { _, newTheme in
+                NSApp.appearance = newTheme.appearance
+            }
     }
 }

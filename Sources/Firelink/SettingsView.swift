@@ -727,8 +727,6 @@ private struct IntegrationSettingsPane: View {
     }
 
     private func openFirefoxDebugging() {
-        guard let url = URL(string: "about:debugging#/runtime/this-firefox") else { return }
-        
         let bundleIDs = [
             "org.mozilla.firefoxdeveloperedition",
             "org.mozilla.firefox",
@@ -738,13 +736,17 @@ private struct IntegrationSettingsPane: View {
         let workspace = NSWorkspace.shared
         for id in bundleIDs {
             if let appURL = workspace.urlForApplication(withBundleIdentifier: id) {
-                let config = NSWorkspace.OpenConfiguration()
-                workspace.open([url], withApplicationAt: appURL, configuration: config, completionHandler: nil)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                process.arguments = ["-a", appURL.path, "about:debugging#/runtime/this-firefox"]
+                try? process.run()
                 return
             }
         }
         
         // Fallback
-        workspace.open(url)
+        if let fallbackURL = URL(string: "about:debugging#/runtime/this-firefox") {
+            workspace.open(fallbackURL)
+        }
     }
 }

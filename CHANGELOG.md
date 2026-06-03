@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-03
+
+### Changes
+- Reorganized Settings sections so related download preferences sit together and app diagnostics live under App.
+- Hardened the release workflow with explicit macOS 26 SDK checks, newer GitHub Actions, and app signature verification.
+- Prefer the bundled `aria2c` binary inside release builds.
+
+### Fixes
+- Fixed queue-specific starts so one queue no longer starts unrelated queued downloads.
+- Fixed scheduler completion handling so empty queues do not trigger post-download system actions.
+- Fixed queue drag reordering when moving items downward.
+- Fixed scheduler Automation permission prompting.
+
+### Features added
+- Added scheduler controls with explicit Automation permission UI.
+- Added global and per-download speed limits.
+- Added advanced transfer options for checksums, headers, cookies, and mirror URLs.
+
 ## [0.3.0] - 2026-06-02
 
 ### Added

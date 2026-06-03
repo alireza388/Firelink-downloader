@@ -92,8 +92,8 @@ make dmg
 ### Release
 GitHub Actions builds and publishes the macOS ARM64 DMG when a version tag is pushed:
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
 ---
@@ -107,6 +107,12 @@ git push origin v0.1.0
 - [x] **Advanced Transfer Features:** Checksum validation, cookie/header ingestion, and smart mirror failovers.
 - [x] **Updates & Releases:** GitHub Actions DMG release pipeline and built-in update checker.
 - [ ] **Distribution:** Notarized `.app` releases and Homebrew formulae.
+
+---
+
+## 🏆 Credits
+
+Firelink relies on [aria2](https://aria2.github.io/) as its underlying multi-protocol and multi-source command-line download utility. Special thanks to the aria2 contributors for their excellent engine.
 
 ---
 

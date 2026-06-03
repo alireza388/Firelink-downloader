@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-03
+
+### Features added
+- Added app theming engine with Look and Feel settings.
+- Added Font Size, List Row Density, and Menu Bar Icon settings.
+- Added tray icon and context menu for main window and queues.
+- Added site logins integration directly into the Add Downloads window.
+
+### Changes
+- Updated the paste hint to use a visual Command icon.
+
+### Fixes
+- Resolved SwiftUI infinite layout freeze caused by MenuBarExtra binding.
+- Fixed a bug with Light/System theme appearance.
+- Fixed phantom state issues with Menu Bar Icon setting and conditionally applied theme backgrounds to preserve native macOS translucency.
+
 ## [0.4.0] - 2026-06-03
 
 ### Changes

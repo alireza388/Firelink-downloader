@@ -121,6 +121,7 @@ struct SettingsView: View {
 
 private struct LookAndFeelSettingsPane: View {
     @EnvironmentObject private var settings: AppSettings
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     var body: some View {
         Form {
@@ -153,9 +154,9 @@ private struct LookAndFeelSettingsPane: View {
             }
             
             Section("Menu Bar") {
-                Toggle("Show menu bar icon", isOn: $settings.showMenuBarIcon)
+                Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
                 
-                Text("Provides quick access to downloads and queues from the macOS menu bar.")
+                Text("Provides quick access to downloads and queues from the macOS menu bar. Restart required if hiding.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

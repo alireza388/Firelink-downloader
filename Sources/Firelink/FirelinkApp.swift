@@ -5,6 +5,7 @@ struct FirelinkApp: App {
     @StateObject private var settings: AppSettings
     @StateObject private var controller: DownloadController
     @StateObject private var schedulerController: SchedulerController
+    @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
 
     init() {
         let settings = AppSettings()
@@ -59,7 +60,7 @@ struct FirelinkApp: App {
             }
         }
 
-        MenuBarExtra("Firelink", systemImage: "arrow.down.circle", isInserted: $settings.showMenuBarIcon) {
+        MenuBarExtra("Firelink", systemImage: "arrow.down.circle", isInserted: $showMenuBarIcon) {
             TrayMenuView()
                 .environmentObject(controller)
         }

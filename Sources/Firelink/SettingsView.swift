@@ -73,7 +73,7 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(settings.appTheme.theme.background ?? Color(NSColor.windowBackgroundColor))
+        .themeBackground(settings.appTheme.theme.background)
     }
 
     private var settingsSidebar: some View {

@@ -118,3 +118,23 @@ struct AppThemeModifier: ViewModifier {
             }
     }
 }
+
+struct ThemeBackgroundModifier: ViewModifier {
+    let color: Color?
+
+    func body(content: Content) -> some View {
+        if let color {
+            content
+                .scrollContentBackground(.hidden)
+                .background(color)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func themeBackground(_ color: Color?) -> some View {
+        modifier(ThemeBackgroundModifier(color: color))
+    }
+}

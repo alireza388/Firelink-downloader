@@ -13,12 +13,10 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $sidebarSelection)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 260)
-                .scrollContentBackground(.hidden)
-                .background(settings.appTheme.theme.secondaryBackground ?? Color(NSColor.windowBackgroundColor))
+                .themeBackground(settings.appTheme.theme.secondaryBackground)
         } detail: {
             detailView
-                .scrollContentBackground(.hidden)
-                .background(settings.appTheme.theme.background ?? Color(NSColor.windowBackgroundColor))
+                .themeBackground(settings.appTheme.theme.background)
         }
     }
 

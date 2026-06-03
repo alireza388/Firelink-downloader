@@ -76,10 +76,6 @@ final class AppSettings: ObservableObject {
     @Published var listRowDensity: ListRowDensity = .standard {
         didSet { save() }
     }
-    
-    @Published var showMenuBarIcon: Bool = true {
-        didSet { save() }
-    }
 
     @Published var perServerConnections: Int {
         didSet {
@@ -148,7 +144,6 @@ final class AppSettings: ObservableObject {
             appTheme = stored.appTheme ?? .system
             appFontSize = stored.appFontSize ?? .standard
             listRowDensity = stored.listRowDensity ?? .standard
-            showMenuBarIcon = stored.showMenuBarIcon ?? true
             perServerConnections = min(max(stored.perServerConnections, 1), 16)
             maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             globalSpeedLimitKiBPerSecond = min(max(stored.globalSpeedLimitKiBPerSecond ?? 0, 0), 10_485_760)
@@ -160,7 +155,6 @@ final class AppSettings: ObservableObject {
             appTheme = .system
             appFontSize = .standard
             listRowDensity = .standard
-            showMenuBarIcon = true
             perServerConnections = 16
             maxConcurrentDownloads = 3
             globalSpeedLimitKiBPerSecond = 0
@@ -245,7 +239,6 @@ final class AppSettings: ObservableObject {
             appTheme: appTheme,
             appFontSize: appFontSize,
             listRowDensity: listRowDensity,
-            showMenuBarIcon: showMenuBarIcon,
             perServerConnections: perServerConnections,
             maxConcurrentDownloads: maxConcurrentDownloads,
             globalSpeedLimitKiBPerSecond: globalSpeedLimitKiBPerSecond,
@@ -308,7 +301,6 @@ private struct StoredSettings: Codable {
     var appTheme: AppTheme?
     var appFontSize: AppFontSize?
     var listRowDensity: ListRowDensity?
-    var showMenuBarIcon: Bool?
     var perServerConnections: Int
     var maxConcurrentDownloads: Int?
     var globalSpeedLimitKiBPerSecond: Int?

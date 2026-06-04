@@ -20,28 +20,22 @@
 Dark mode is shown by default. Light mode is tucked away below so the README stays easy to scan.
 
 <div align="center">
-  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window in dark theme with sample downloads" width="88%" />
+  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window in dark theme with sample downloads" width="32%" />
+  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window in dark theme" width="32%" />
+  <img src="Resources/Screenshots/Dark/Settings.png" alt="Firefox integration settings in dark theme" width="32%" />
   <br/>
-  <sub>Main window with active, queued, and completed downloads</sub>
-  <br/><br/>
-  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window in dark theme" width="43%" />
-  <img src="Resources/Screenshots/Dark/Settings.png" alt="Firefox integration settings in dark theme" width="43%" />
-  <br/>
-  <sub>Batch link intake and the Firefox integration setup pane</sub>
+  <sub>Main window, batch link intake, and Firefox integration setup</sub>
 </div>
 
 <details>
 <summary><b>☀️ View Light Theme Screenshots</b></summary>
 <br/>
 <div align="center">
-  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window in light theme with sample downloads" width="88%" />
+  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window in light theme with sample downloads" width="32%" />
+  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window in light theme" width="32%" />
+  <img src="Resources/Screenshots/Light/Settings.png" alt="Firefox integration settings in light theme" width="32%" />
   <br/>
-  <sub>Main window in light theme</sub>
-  <br/><br/>
-  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window in light theme" width="43%" />
-  <img src="Resources/Screenshots/Light/Settings.png" alt="Firefox integration settings in light theme" width="43%" />
-  <br/>
-  <sub>Temporary extension installation flow in light theme</sub>
+  <sub>Main window, batch link intake, and Firefox integration setup in light theme</sub>
 </div>
 </details>
 

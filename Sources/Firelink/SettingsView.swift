@@ -12,9 +12,13 @@ struct SettingsPaneContainer: View {
                         Button {
                             activeTab = filter
                         } label: {
-                            Text(filter.rawValue)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
+                            HStack(spacing: 6) {
+                                Image(systemName: filter.symbolName)
+                                Text(filter.rawValue)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .font(.system(size: 13, weight: .medium))
                         }
                         .buttonStyle(.plain)
                         .background(activeTab == filter ? Color.accentColor : Color.clear)

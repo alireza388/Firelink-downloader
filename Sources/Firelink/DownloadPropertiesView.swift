@@ -158,6 +158,12 @@ struct DownloadPropertiesView: View {
                     ProgressView(value: item.progress)
                     InfoGrid(item: item)
                 }
+
+                if item.status == .downloading && item.rpcPort != nil {
+                    Section("Chunk Map") {
+                        ChunkMapView(item: item)
+                    }
+                }
             }
             .formStyle(.grouped)
 

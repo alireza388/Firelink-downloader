@@ -496,6 +496,8 @@ final class DownloadController: ObservableObject {
             )
             activeHandles[item.id] = handle
             update(item.id) {
+                $0.rpcPort = handle.rpcPort
+                $0.rpcSecret = handle.rpcSecret
                 $0.message = "Process \(handle.processIdentifier)"
             }
             saveDownloads()

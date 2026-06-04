@@ -38,8 +38,8 @@ struct AddDownloadsView: View {
                 }
                 .padding(12)
             }
-
-            Divider()
+        }
+        .toolbar {
             actionBar
         }
         .frame(minWidth: 640, idealWidth: 680, minHeight: 500, idealHeight: 540)
@@ -218,16 +218,35 @@ struct AddDownloadsView: View {
         }
     }
 
-    private var actionBar: some View {
-        HStack {
-            Text(actionMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer()
+    @ToolbarContentBuilder
+    private var actionBar: some ToolbarContent {
+        ToolbarItem(placement: .status) {
+            HStack {
+                Text(actionMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                
+                if metadataTask != nil {
+                    Button {
+                        metadataTask?.cancel()
+                        metadataTask = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+
+        ToolbarItem(placement: .cancellationAction) {
             Button("Cancel") {
                 dismiss()
             }
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 addDownloads(start: false)
             } label: {
@@ -243,8 +262,6 @@ struct AddDownloadsView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!canAddDownloads)
         }
-        .padding(10)
-        .background(.bar)
     }
 
     private var advancedTransferSection: some View {
@@ -413,6 +430,9 @@ struct AddDownloadsView: View {
                         }
                     }
                 }
+            }
+            await MainActor.run {
+                metadataTask = nil
             }
         }
     }

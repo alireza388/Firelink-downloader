@@ -21,6 +21,30 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenAddDownloadsWindow"))) { _ in
             openWindow(id: "add-downloads")
         }
+        .onDrop(of: [.url, .fileURL, .plainText], isTargeted: nil) { providers in
+            for provider in providers {
+                if provider.canLoadObject(ofClass: URL.self) {
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        if let url = url {
+                            DispatchQueue.main.async {
+                                controller.pendingPasteboardText = url.absoluteString
+                                openWindow(id: "add-downloads")
+                            }
+                        }
+                    }
+                } else if provider.canLoadObject(ofClass: String.self) {
+                    _ = provider.loadObject(ofClass: String.self) { text, _ in
+                        if let text = text {
+                            DispatchQueue.main.async {
+                                controller.pendingPasteboardText = text
+                                openWindow(id: "add-downloads")
+                            }
+                        }
+                    }
+                }
+            }
+            return true
+        }
     }
 
     @ViewBuilder
@@ -115,12 +139,6 @@ struct ContentView: View {
                         } label: {
                             Label("Start", systemImage: "play.fill")
                         }
-                    }
-
-                    Button(role: .destructive) {
-                        showDeleteConfirmation = true
-                    } label: {
-                        Label("Delete", systemImage: "trash")
                     }
                 }
             }

@@ -118,6 +118,12 @@ final class LocalExtensionServer: @unchecked Sendable {
             return .notFound
         }
 
+        let host = request.header(named: "host") ?? ""
+        let isLocalhost = host.hasPrefix("127.0.0.1:") || host.hasPrefix("localhost:") || host == "127.0.0.1" || host == "localhost"
+        guard isLocalhost else {
+            return .forbidden
+        }
+
         if request.method == "OPTIONS" {
             return isAllowedExtensionOrigin(request.header(named: "origin") ?? "") ? .noContent : .forbidden
         }

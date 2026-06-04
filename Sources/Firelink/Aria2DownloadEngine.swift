@@ -1,10 +1,27 @@
 import Foundation
 import CFNetwork
+import Network
 
 final class Aria2DownloadEngine {
     struct Handle {
         let processIdentifier: Int32
+        let rpcPort: Int
+        let rpcSecret: String
         let cancel: @Sendable () -> Void
+    }
+
+    static func findFreePort() -> Int {
+        var port: UInt16 = 6800
+        let parameters = NWParameters.tcp
+        for p in 6800...6900 {
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(p))!)
+            if let listener = try? NWListener(using: parameters) {
+                listener.cancel()
+                port = UInt16(p)
+                break
+            }
+        }
+        return Int(port)
     }
 
     enum EngineError: LocalizedError {
@@ -57,30 +74,38 @@ final class Aria2DownloadEngine {
         return nil
     }
 
-    static func versionString() -> String? {
+    static func versionString() async -> String? {
         guard let executableURL = findExecutable() else { return nil }
 
-        let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = executableURL
-        process.arguments = ["--version"]
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
+        return await Task.detached {
+            let process = Process()
+            let outputPipe = Pipe()
+            process.executableURL = executableURL
+            process.arguments = ["--version"]
+            process.standardOutput = outputPipe
+            process.standardError = nil
+            process.standardInput = nil // ensure no stdin is inherited that could cause blocking
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
+            do {
+                try process.run()
+                // Close the write file handle in the parent process immediately
+                // This guarantees readToEnd() won't hang waiting for the parent itself
+                outputPipe.fileHandleForWriting.closeFile()
+                
+                let data = try? outputPipe.fileHandleForReading.readToEnd()
+                process.waitUntilExit()
+                
+                guard process.terminationStatus == 0, let data = data else { return nil }
 
-            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            return output
-                .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-                .first
-                .map(String.init)
-        } catch {
-            return nil
-        }
+                let output = String(data: data, encoding: .utf8) ?? ""
+                return output
+                    .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                    .first
+                    .map(String.init)
+            } catch {
+                return nil
+            }
+        }.value
     }
 
     func start(
@@ -99,12 +124,17 @@ final class Aria2DownloadEngine {
             withIntermediateDirectories: true
         )
 
+        let rpcPort = Self.findFreePort()
+        let rpcSecret = UUID().uuidString
+
         let process = Process()
         process.executableURL = executableURL
         process.arguments = try arguments(
             for: item,
             proxyConfiguration: proxyConfiguration,
-            speedLimitKiBPerSecond: speedLimitKiBPerSecond
+            speedLimitKiBPerSecond: speedLimitKiBPerSecond,
+            rpcPort: rpcPort,
+            rpcSecret: rpcSecret
         )
 
         let inputPipe = Pipe()
@@ -165,7 +195,7 @@ final class Aria2DownloadEngine {
             throw EngineError.launchFailed(error.localizedDescription)
         }
 
-        return Handle(processIdentifier: process.processIdentifier) {
+        return Handle(processIdentifier: process.processIdentifier, rpcPort: rpcPort, rpcSecret: rpcSecret) {
             if process.isRunning {
                 process.terminate()
             }
@@ -175,7 +205,9 @@ final class Aria2DownloadEngine {
     private func arguments(
         for item: DownloadItem,
         proxyConfiguration: DownloadProxyConfiguration,
-        speedLimitKiBPerSecond: Int?
+        speedLimitKiBPerSecond: Int?,
+        rpcPort: Int,
+        rpcSecret: String
     ) throws -> [String] {
         var arguments = [
             "--continue=true",
@@ -191,7 +223,11 @@ final class Aria2DownloadEngine {
             "--connect-timeout=30",
             "--timeout=60",
             "--uri-selector=adaptive",
-            "--input-file=-"
+            "--input-file=-",
+            "--enable-rpc=true",
+            "--rpc-listen-port=\(rpcPort)",
+            "--rpc-secret=\(rpcSecret)",
+            "--rpc-listen-all=false"
         ]
 
         if let speedLimitKiBPerSecond, speedLimitKiBPerSecond > 0 {
@@ -342,6 +378,11 @@ final class Aria2DownloadEngine {
 final class LockedDataBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = Data()
+    private let maxBytes: Int
+
+    init(maxBytes: Int = 512 * 1024) {
+        self.maxBytes = maxBytes
+    }
 
     var data: Data {
         lock.withLock { storage }
@@ -350,6 +391,9 @@ final class LockedDataBuffer: @unchecked Sendable {
     func append(_ data: Data) {
         lock.withLock {
             storage.append(data)
+            if storage.count > maxBytes {
+                storage.removeFirst(storage.count - maxBytes)
+            }
         }
     }
 }

@@ -29,6 +29,10 @@ struct FirelinkApp: App {
                 .environmentObject(schedulerController)
                 .modifier(AppThemeModifier(theme: settings.appTheme))
                 .modifier(AppFontSizeModifier(fontSize: settings.appFontSize))
+                .onOpenURL { url in
+                    controller.pendingPasteboardText = url.absoluteString
+                    NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
+                }
                 .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
         }
         .windowStyle(.titleBar)

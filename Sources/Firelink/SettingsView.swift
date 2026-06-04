@@ -299,12 +299,10 @@ private struct AboutSettingsPane: View {
 }
 
 private struct EngineSettingsPane: View {
+    @State private var version = "Checking..."
+
     private var executableURL: URL? {
         Aria2DownloadEngine.findExecutable()
-    }
-
-    private var version: String {
-        Aria2DownloadEngine.versionString() ?? "Unavailable"
     }
 
     var body: some View {
@@ -338,6 +336,9 @@ private struct EngineSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .task {
+            version = await Aria2DownloadEngine.versionString() ?? "Unavailable"
+        }
     }
 }
 
@@ -448,18 +449,21 @@ private struct LocationsSettingsPane: View {
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(DownloadCategory.allCases, id: \.self) { category in
-                DirectoryPickerRow(category: category)
-            }
+        Form {
+            Section {
+                ForEach(DownloadCategory.allCases, id: \.self) { category in
+                    DirectoryPickerRow(category: category)
+                }
 
-            HStack {
-                Spacer()
-                Button("Reset Defaults") {
-                    settings.resetDirectories()
+                HStack {
+                    Spacer()
+                    Button("Reset Defaults") {
+                        settings.resetDirectories()
+                    }
                 }
             }
         }
+        .formStyle(.grouped)
     }
 }
 
@@ -470,25 +474,26 @@ private struct DirectoryPickerRow: View {
     @State private var path = ""
 
     var body: some View {
-        HStack(spacing: 10) {
-            Label(category.rawValue, systemImage: category.symbolName)
-                .frame(width: 125, alignment: .leading)
+        LabeledContent {
+            HStack(spacing: 8) {
+                TextField("Folder path", text: Binding(
+                    get: { settings.downloadDirectories[category] ?? path },
+                    set: { newValue in
+                        path = newValue
+                        settings.setDirectory(newValue, for: category)
+                    }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
 
-            TextField("Folder path", text: Binding(
-                get: { settings.downloadDirectories[category] ?? path },
-                set: { newValue in
-                    path = newValue
-                    settings.setDirectory(newValue, for: category)
+                Button {
+                    selectFolder()
+                } label: {
+                    Label("Select", systemImage: "folder.badge.plus")
                 }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .font(.system(.body, design: .monospaced))
-
-            Button {
-                selectFolder()
-            } label: {
-                Label("Select", systemImage: "folder.badge.plus")
             }
+        } label: {
+            Label(category.rawValue, systemImage: category.symbolName)
         }
     }
 
@@ -513,62 +518,56 @@ private struct SiteLoginsSettingsPane: View {
     @State private var password = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
-                GridRow {
-                    Text("URL Pattern")
-                    TextField("*.github.com", text: $urlPattern)
-                        .textFieldStyle(.roundedBorder)
-                }
+        Form {
+            Section("Add Login") {
+                TextField("URL Pattern (e.g., *.github.com)", text: $urlPattern)
+                TextField("Username", text: $username)
+                SecureField("Password", text: $password)
 
-                GridRow {
-                    Text("Username")
-                    TextField("Username", text: $username)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                GridRow {
-                    Text("Password")
-                    SecureField("Password", text: $password)
-                        .textFieldStyle(.roundedBorder)
-                }
-            }
-
-            HStack {
-                Text(settings.message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                Button {
-                    settings.addSiteLogin(urlPattern: urlPattern, username: username, password: password)
-                    if settings.message.hasPrefix("Added") {
-                        urlPattern = ""
-                        username = ""
-                        password = ""
+                HStack {
+                    Text(settings.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button {
+                        settings.addSiteLogin(urlPattern: urlPattern, username: username, password: password)
+                        if settings.message.hasPrefix("Added") {
+                            urlPattern = ""
+                            username = ""
+                            password = ""
+                        }
+                    } label: {
+                        Label("Add Login", systemImage: "plus")
                     }
-                } label: {
-                    Label("Add Login", systemImage: "plus")
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             }
 
-            List {
-                ForEach(settings.siteLogins) { login in
-                    HStack {
-                        Image(systemName: "key.horizontal")
-                            .foregroundStyle(.secondary)
-                        Text(login.urlPattern)
-                            .font(.system(.body, design: .monospaced))
-                        Spacer()
-                        Text(login.username)
-                            .foregroundStyle(.secondary)
+            Section("Saved Logins") {
+                if settings.siteLogins.isEmpty {
+                    Text("No saved logins.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    List {
+                        ForEach(settings.siteLogins) { login in
+                            HStack {
+                                Image(systemName: "key.horizontal")
+                                    .foregroundStyle(.secondary)
+                                Text(login.urlPattern)
+                                    .font(.system(.body, design: .monospaced))
+                                Spacer()
+                                Text(login.username)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .onDelete(perform: settings.deleteSiteLogins)
                     }
+                    .frame(minHeight: 180)
                 }
-                .onDelete(perform: settings.deleteSiteLogins)
             }
-            .frame(minHeight: 180)
         }
+        .formStyle(.grouped)
     }
 }
 

@@ -186,6 +186,8 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var lastTryAt: Date?
     var autoResumeOnLaunch: Bool?
     var queueID: UUID?
+    var rpcPort: Int?
+    var rpcSecret: String?
 
     var destinationPath: String {
         destinationDirectory.appendingPathComponent(fileName).path

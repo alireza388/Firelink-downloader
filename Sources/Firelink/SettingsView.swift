@@ -666,7 +666,7 @@ private struct IntegrationSettingsPane: View {
     }
 
     private func copyExtensionToDownloads() {
-        guard let sourceURL = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) else {
+        guard let sourceURL = bundledFirefoxExtensionURL() else {
             installMessage = "The bundled Firefox extension folder was not found."
             return
         }
@@ -677,12 +677,40 @@ private struct IntegrationSettingsPane: View {
                 try FileManager.default.removeItem(at: destinationURL)
             }
 
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            try copyFirefoxExtension(from: sourceURL, to: destinationURL)
             copiedExtensionURL = destinationURL
             installMessage = "Copied to \(destinationURL.path). Select manifest.json from this folder in Firefox."
             showCopiedExtensionInFinder()
         } catch {
             installMessage = "Could not copy the extension to Downloads: \(error.localizedDescription)"
+        }
+    }
+
+    private func bundledFirefoxExtensionURL() -> URL? {
+        if let bundled = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) {
+            return bundled
+        }
+
+        let sourceFile = URL(fileURLWithPath: #filePath)
+        let projectRoot = sourceFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceTreeExtension = projectRoot.appendingPathComponent("Extensions/Firefox", isDirectory: true)
+        return FileManager.default.fileExists(atPath: sourceTreeExtension.appendingPathComponent("manifest.json").path)
+            ? sourceTreeExtension
+            : nil
+    }
+
+    private func copyFirefoxExtension(from sourceURL: URL, to destinationURL: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+
+        for component in ["background.js", "content.js", "manifest.json", "icons", "popup"] {
+            try fileManager.copyItem(
+                at: sourceURL.appendingPathComponent(component),
+                to: destinationURL.appendingPathComponent(component)
+            )
         }
     }
 

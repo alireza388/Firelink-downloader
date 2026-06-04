@@ -202,6 +202,30 @@ final class Aria2DownloadEngine {
         }
     }
 
+    static func updateSpeedLimit(handle: Handle, speedLimitKiBPerSecond: Int?) async {
+        guard let url = URL(string: "http://127.0.0.1:\(handle.rpcPort)/jsonrpc") else { return }
+
+        let limitValue = speedLimitKiBPerSecond.map { "\($0)K" } ?? "0"
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "aria2.changeGlobalOption",
+            "id": UUID().uuidString,
+            "params": [
+                "token:\(handle.rpcSecret)",
+                ["max-download-limit": limitValue]
+            ]
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        request.timeoutInterval = 3
+
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
     private func arguments(
         for item: DownloadItem,
         proxyConfiguration: DownloadProxyConfiguration,

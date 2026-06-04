@@ -1,4 +1,4 @@
-.PHONY: build app dmg run clean
+.PHONY: build app dmg run verify clean
 
 build:
 	swift build -c release
@@ -11,6 +11,9 @@ dmg: app
 
 run:
 	swift run Firelink
+
+verify:
+	Scripts/verify.sh
 
 clean:
 	swift package clean

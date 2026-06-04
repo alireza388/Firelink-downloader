@@ -57,10 +57,30 @@ enum FileClassifier {
     static func fileName(from url: URL) -> String {
         let pathName = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
         if !pathName.isEmpty, pathName != "/" {
-            return pathName
+            return sanitizedFileName(pathName)
         }
 
         let host = url.host(percentEncoded: false) ?? "download"
-        return "\(host)-download"
+        return sanitizedFileName("\(host)-download")
+    }
+
+    static func sanitizedFileName(_ rawValue: String, fallback: String = "download") -> String {
+        let separators = CharacterSet(charactersIn: "/\\")
+        let invalidCharacters = separators
+            .union(.newlines)
+            .union(.controlCharacters)
+
+        let components = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: invalidCharacters)
+            .filter { !$0.isEmpty }
+        let clean = components.joined(separator: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !clean.isEmpty, clean != ".", clean != ".." else {
+            return fallback
+        }
+
+        return String(clean.prefix(255))
     }
 }

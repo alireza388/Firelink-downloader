@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Firelink",
-            path: "Sources/Firelink"
+            path: "Sources/Firelink",
+            resources: [
+                .process("Assets.xcassets")
+            ]
         )
     ]
 )

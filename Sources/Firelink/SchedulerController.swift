@@ -35,7 +35,7 @@ struct SchedulerSettings: Codable, Equatable {
     var isEveryday: Bool = true
     var selectedDays: Set<SchedulerDay> = Set(SchedulerDay.allCases)
     var postQueueAction: PostQueueAction = .doNothing
-    var targetQueueIDs: Set<UUID> = []
+    var targetQueueIDs: Set<UUID> = [DownloadQueue.mainQueueID]
 }
 
 @MainActor
@@ -61,6 +61,9 @@ final class SchedulerController: ObservableObject {
             self.settings = stored
         } else {
             self.settings = SchedulerSettings()
+        }
+        if self.settings.targetQueueIDs.isEmpty {
+            self.settings.targetQueueIDs = [DownloadQueue.mainQueueID]
         }
 
         checkAutomationPermission()
@@ -131,7 +134,8 @@ final class SchedulerController: ObservableObject {
     }
 
     private func triggerQueues() {
-        let runnableQueueIDs = settings.targetQueueIDs.filter { queueID in
+        let targetQueueIDs = effectiveTargetQueueIDs()
+        let runnableQueueIDs = targetQueueIDs.filter { queueID in
             downloadController.queues.contains(where: { $0.id == queueID }) &&
                 downloadController.queueItems(for: queueID).contains(where: { $0.status == .queued })
         }
@@ -150,7 +154,8 @@ final class SchedulerController: ObservableObject {
     private func checkIfRunningFinished() {
         guard isRunning else { return }
         
-        let hasActiveItems = settings.targetQueueIDs.contains { queueID in
+        let targetQueueIDs = effectiveTargetQueueIDs()
+        let hasActiveItems = targetQueueIDs.contains { queueID in
             downloadController.queueItems(for: queueID).contains {
                 $0.status == .queued || $0.status == .downloading
             }
@@ -160,6 +165,10 @@ final class SchedulerController: ObservableObject {
             isRunning = false
             performPostAction()
         }
+    }
+
+    private func effectiveTargetQueueIDs() -> Set<UUID> {
+        settings.targetQueueIDs.isEmpty ? [DownloadQueue.mainQueueID] : settings.targetQueueIDs
     }
 
     private func performPostAction() {

@@ -31,6 +31,7 @@ struct FirelinkApp: App {
                 .modifier(AppFontSizeModifier(fontSize: settings.appFontSize))
                 .onOpenURL { url in
                     controller.pendingPasteboardText = url.absoluteString
+                    controller.pendingReferer = nil
                     NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
                 }
                 .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
@@ -87,7 +88,7 @@ struct FirelinkApp: App {
                 .environmentObject(controller)
         } label: {
             if let nsImage = { () -> NSImage? in
-                guard let url = Bundle.main.url(forResource: "MenuBarIconTemplate", withExtension: "png"),
+                guard let url = menuBarIconURL(),
                       let img = NSImage(contentsOf: url) else { return nil }
                 img.size = NSSize(width: 21, height: 21)
                 img.isTemplate = true
@@ -98,5 +99,20 @@ struct FirelinkApp: App {
                 Image(systemName: "arrow.down.circle")
             }
         }
+    }
+
+    private func menuBarIconURL() -> URL? {
+        if let bundled = Bundle.main.url(forResource: "MenuBarIconTemplate", withExtension: "png") {
+            return bundled
+        }
+
+        let sourceFile = URL(fileURLWithPath: #filePath)
+        let projectRoot = sourceFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceTreeIcon = projectRoot
+            .appendingPathComponent("Sources/Firelink/Assets.xcassets/MenuBarIcon.imageset/MenuBarIconTemplate.png")
+        return FileManager.default.fileExists(atPath: sourceTreeIcon.path) ? sourceTreeIcon : nil
     }
 }

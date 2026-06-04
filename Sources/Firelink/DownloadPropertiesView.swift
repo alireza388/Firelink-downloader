@@ -221,7 +221,7 @@ struct DownloadPropertiesView: View {
             return
         }
 
-        let cleanFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFileName = FileClassifier.sanitizedFileName(fileName)
         guard !cleanFileName.isEmpty else {
             errorMessage = "File name cannot be empty."
             return

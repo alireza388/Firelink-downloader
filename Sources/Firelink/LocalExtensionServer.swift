@@ -4,25 +4,30 @@ import AppKit
 
 final class LocalExtensionServer: @unchecked Sendable {
     private enum Constants {
-        static let port = NWEndpoint.Port(rawValue: 6412)!
+        static let portRange = 6412...6422
         static let maxRequestBytes = 128 * 1024
         static let maxURLCount = 200
+        static let extensionRequestHeader = "x-firelink-extension"
+        static let extensionRequestToken = "firelink-extension-v1"
         static let allowedSchemes = Set(["http", "https", "ftp", "sftp"])
     }
 
     private let listener: NWListener
     private let downloadController: DownloadController
     private let queue = DispatchQueue(label: "local.firelink.server")
+    let port: UInt16
 
     init?(downloadController: DownloadController) {
         self.downloadController = downloadController
         let parameters = NWParameters.tcp
         
         var createdListener: NWListener?
-        for portValue in 6412...6422 {
+        var selectedPort: UInt16?
+        for portValue in Constants.portRange {
             parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(portValue))!)
             do {
                 createdListener = try NWListener(using: parameters)
+                selectedPort = UInt16(portValue)
                 break
             } catch {
                 continue
@@ -35,6 +40,7 @@ final class LocalExtensionServer: @unchecked Sendable {
         }
         
         self.listener = createdListener
+        self.port = selectedPort ?? 6412
     }
 
     func start() {
@@ -95,7 +101,7 @@ final class LocalExtensionServer: @unchecked Sendable {
             headers.append("Access-Control-Allow-Origin: \(origin)")
             headers.append("Vary: Origin")
             headers.append("Access-Control-Allow-Methods: POST, OPTIONS")
-            headers.append("Access-Control-Allow-Headers: Content-Type")
+            headers.append("Access-Control-Allow-Headers: Content-Type, X-Firelink-Extension")
         }
 
         let response = headers.joined(separator: "\r\n") + "\r\n\r\n"
@@ -132,6 +138,10 @@ final class LocalExtensionServer: @unchecked Sendable {
             return .methodNotAllowed
         }
 
+        guard request.header(named: Constants.extensionRequestHeader) == Constants.extensionRequestToken else {
+            return .forbidden
+        }
+
         guard request.header(named: "content-type")?.lowercased().contains("application/json") == true else {
             return .unsupportedMediaType
         }
@@ -161,6 +171,7 @@ final class LocalExtensionServer: @unchecked Sendable {
 
             Task { @MainActor in
                 self.downloadController.pendingPasteboardText = validURLs.joined(separator: "\n")
+                self.downloadController.pendingReferer = payload.referer
                 NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
                 NSApp.activate(ignoringOtherApps: true)
             }

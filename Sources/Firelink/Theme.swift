@@ -53,6 +53,14 @@ enum ListRowDensity: String, Codable, CaseIterable, Identifiable, Sendable {
         case .relaxed: return 14
         }
     }
+
+    var minRowHeight: CGFloat {
+        switch self {
+        case .compact: return 24
+        case .standard: return 32
+        case .relaxed: return 44
+        }
+    }
 }
 
 enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {

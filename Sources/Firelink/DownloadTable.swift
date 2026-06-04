@@ -104,6 +104,7 @@ struct DownloadTable: View {
                 }
                 .width(min: 100, ideal: 155)
             }
+            .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
             .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
                 rowContextMenu(for: itemIDs)
             }

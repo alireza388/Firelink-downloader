@@ -24,12 +24,14 @@ enum ProxyType: String, Codable, CaseIterable, Sendable {
     case http
     case https
     case ftp
+    case socks5
 
     var title: String {
         switch self {
         case .http: "HTTP"
         case .https: "HTTPS"
         case .ftp: "FTP"
+        case .socks5: "SOCKS5"
         }
     }
 

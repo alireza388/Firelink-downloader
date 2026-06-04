@@ -17,21 +17,31 @@
 
 ### 📸 Screenshots
 
+Dark mode is shown by default. Light mode is tucked away below so the README stays easy to scan.
+
 <div align="center">
-  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Main Page (Dark Theme)" width="100%" />
+  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window in dark theme with sample downloads" width="88%" />
   <br/>
-  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add Window (Dark Theme)" width="49%" />
-  <img src="Resources/Screenshots/Dark/Settings.png" alt="Settings (Dark Theme)" width="49%" />
+  <sub>Main window with active, queued, and completed downloads</sub>
+  <br/><br/>
+  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window in dark theme" width="43%" />
+  <img src="Resources/Screenshots/Dark/Settings.png" alt="Firefox integration settings in dark theme" width="43%" />
+  <br/>
+  <sub>Batch link intake and the Firefox integration setup pane</sub>
 </div>
 
 <details>
 <summary><b>☀️ View Light Theme Screenshots</b></summary>
 <br/>
 <div align="center">
-  <img src="Resources/Screenshots/Light/MainPage.png" alt="Main Page (Light Theme)" width="100%" />
+  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window in light theme with sample downloads" width="88%" />
   <br/>
-  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add Window (Light Theme)" width="49%" />
-  <img src="Resources/Screenshots/Light/Settings.png" alt="Settings (Light Theme)" width="49%" />
+  <sub>Main window in light theme</sub>
+  <br/><br/>
+  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window in light theme" width="43%" />
+  <img src="Resources/Screenshots/Light/Settings.png" alt="Firefox integration settings in light theme" width="43%" />
+  <br/>
+  <sub>Temporary extension installation flow in light theme</sub>
 </div>
 </details>
 

@@ -63,6 +63,11 @@ struct FirelinkApp: App {
                     controller.startQueue()
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+
+                Button("Stop Downloads") {
+                    controller.pauseActiveDownloads()
+                }
+                .disabled(controller.activeCount == 0)
             }
         }
 

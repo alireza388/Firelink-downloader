@@ -84,6 +84,15 @@ struct ContentView: View {
                 }
             }
 
+            ToolbarItem {
+                Button {
+                    controller.pauseActiveDownloads(queueID: queueID)
+                } label: {
+                    Label("Stop Downloads", systemImage: "stop.fill")
+                }
+                .disabled(!hasActiveDownloads(in: queueID))
+            }
+
             ToolbarItemGroup {
                 if !selectedItems.isEmpty {
                     if selectedItems.contains(where: { $0.status == .downloading }) {
@@ -171,6 +180,14 @@ struct ContentView: View {
 
     private func selectAll(items: [DownloadItem]) {
         selection = Set(items.map { $0.id })
+    }
+
+    private func hasActiveDownloads(in queueID: UUID?) -> Bool {
+        if let queueID {
+            return controller.downloads.contains { $0.status == .downloading && $0.queueID == queueID }
+        }
+
+        return controller.activeCount > 0
     }
 
     private func filteredDownloads(for filter: DownloadSidebarFilter) -> [DownloadItem] {

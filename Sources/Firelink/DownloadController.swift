@@ -189,6 +189,31 @@ final class DownloadController: ObservableObject {
         pumpQueue()
     }
 
+    func pauseActiveDownloads(queueID: UUID? = nil) {
+        let targetQueueID = queueID.map(normalizedQueueID)
+        let activeItems = downloads.filter { item in
+            item.status == .downloading && (targetQueueID == nil || item.queueID == targetQueueID)
+        }
+
+        guard !activeItems.isEmpty else { return }
+
+        for item in activeItems {
+            activeHandles[item.id]?.cancel()
+            activeHandles[item.id] = nil
+            update(item.id) {
+                $0.status = .paused
+                $0.message = "Paused. Resume will continue from the partial file."
+                $0.autoResumeOnLaunch = false
+            }
+            automaticRetryCounts[item.id] = nil
+        }
+
+        engineMessage = "Paused \(activeItems.count) active download\(activeItems.count == 1 ? "" : "s")."
+        saveDownloads()
+        updateSleepActivity()
+        pumpQueue()
+    }
+
     func queue(_ item: DownloadItem) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil

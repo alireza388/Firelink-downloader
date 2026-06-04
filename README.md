@@ -15,6 +15,28 @@
 
 ---
 
+### 📸 Screenshots
+
+<div align="center">
+  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Main Page (Dark Theme)" width="100%" />
+  <br/>
+  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add Window (Dark Theme)" width="49%" />
+  <img src="Resources/Screenshots/Dark/Settings.png" alt="Settings (Dark Theme)" width="49%" />
+</div>
+
+<details>
+<summary><b>☀️ View Light Theme Screenshots</b></summary>
+<br/>
+<div align="center">
+  <img src="Resources/Screenshots/Light/MainPage.png" alt="Main Page (Light Theme)" width="100%" />
+  <br/>
+  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add Window (Light Theme)" width="49%" />
+  <img src="Resources/Screenshots/Light/Settings.png" alt="Settings (Light Theme)" width="49%" />
+</div>
+</details>
+
+---
+
 ## ✨ Key Features
 
 - ⚡ **High-Speed Downloads:** Multi-segmented download engine powered by `aria2c` for concurrent connections and optimal bandwidth utilization. Supports HTTP, HTTPS, FTP, and SFTP.

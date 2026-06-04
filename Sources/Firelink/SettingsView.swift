@@ -6,29 +6,31 @@ struct SettingsPaneContainer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(SettingsSidebarFilter.allCases, id: \.self) { filter in
-                        Button {
-                            activeTab = filter
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: filter.symbolName)
-                                Text(filter.rawValue)
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .font(.system(size: 13, weight: .medium))
+            HStack(spacing: 4) {
+                ForEach(SettingsSidebarFilter.allCases, id: \.self) { filter in
+                    Button {
+                        activeTab = filter
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: filter.symbolName)
+                                .font(.system(size: 16))
+                            Text(filter.rawValue)
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
-                        .buttonStyle(.plain)
-                        .background(activeTab == filter ? Color.accentColor : Color.clear)
-                        .foregroundStyle(activeTab == filter ? Color.white : Color.primary)
-                        .clipShape(Capsule())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .background(activeTab == filter ? Color.accentColor : Color.clear)
+                    .foregroundStyle(activeTab == filter ? Color.white : Color.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 16)
             }
+            .padding(.horizontal, 32)
+            .padding(.vertical, 16)
             
             Divider()
 

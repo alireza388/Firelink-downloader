@@ -52,6 +52,7 @@ struct AddDownloadsView: View {
             targetQueueID = controller.pendingAddQueueID ?? DownloadQueue.mainQueueID
             controller.pendingAddQueueID = nil
             if let text = controller.pendingPasteboardText {
+                applyPendingReferer()
                 linkText = text
                 controller.pendingPasteboardText = nil
             }
@@ -388,6 +389,24 @@ struct AddDownloadsView: View {
         }
     }
 
+    private func applyPendingReferer() {
+        guard let referer = controller.pendingReferer?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !referer.isEmpty,
+              URL(string: referer) != nil else {
+            controller.pendingReferer = nil
+            return
+        }
+
+        let refererHeader = "Referer: \(referer)"
+        let existingHeaders = DownloadTransferOptionParser.parseHeaders(headerText)
+        if !existingHeaders.contains(where: { $0.normalized.name.lowercased() == "referer" }) {
+            headerText = headerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? refererHeader
+                : "\(headerText.trimmingCharacters(in: .whitespacesAndNewlines))\n\(refererHeader)"
+        }
+        controller.pendingReferer = nil
+    }
+
     private func refreshMetadata(for text: String) {
         let urls = DownloadURLParser.parse(text)
         metadataTask?.cancel()
@@ -458,7 +477,7 @@ struct AddDownloadsView: View {
                     var savedHosts = Set<String>()
                     for item in pendingDownloads {
                         if let host = item.url.host, !savedHosts.contains(host) {
-                            settings.addSiteLogin(urlPattern: "*.\(host)", username: cleanUsername, password: authPassword)
+                            settings.addSiteLogin(urlPattern: host, username: cleanUsername, password: authPassword)
                             savedHosts.insert(host)
                         }
                     }

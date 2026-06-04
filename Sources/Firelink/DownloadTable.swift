@@ -37,70 +37,75 @@ struct DownloadTable: View {
 
             Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("File Name", value: \.fileName) { item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: item.category.symbolName)
-                            .font(.title3)
-                            .foregroundStyle(categoryColor(for: item.category))
-                            .frame(width: 22)
-                        Text(item.fileName)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    doubleClickableCell(for: item) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: item.category.symbolName)
+                                .font(.title3)
+                                .foregroundStyle(categoryColor(for: item.category))
+                                .frame(width: 22)
+                            Text(item.fileName)
+                                .font(.headline)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .draggable(item.id.uuidString)
                     }
                 }
                 .width(min: 200, ideal: 340)
 
                 TableColumn("Size", value: \.sortableSize) { item in
-                    Text(ByteFormatter.string(item.sizeBytes))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    doubleClickableCell(for: item) {
+                        Text(ByteFormatter.string(item.sizeBytes))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
                 .width(min: 80, ideal: 100)
 
                 TableColumn("Progress", value: \.progress) { item in
-                    progressBarCell(for: item)
+                    doubleClickableCell(for: item) {
+                        progressBarCell(for: item)
+                    }
                 }
                 .width(min: 100, ideal: 115)
 
                 TableColumn("Status", value: \.status.rawValue) { item in
-                    Text(item.status.rawValue)
+                    doubleClickableCell(for: item) {
+                        Text(item.status.rawValue)
+                    }
                 }
                 .width(min: 80, ideal: 105)
 
                 TableColumn("Speed", value: \.speedText) { item in
-                    Text(item.speedText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    doubleClickableCell(for: item) {
+                        Text(item.speedText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
                 .width(min: 70, ideal: 90)
 
                 TableColumn("ETA", value: \.etaText) { item in
-                    Text(item.etaText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    doubleClickableCell(for: item) {
+                        Text(item.etaText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
                 .width(min: 70, ideal: 90)
 
                 TableColumn("Date Added", value: \.createdAt) { item in
-                    Text(formatted(item.createdAt))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    doubleClickableCell(for: item) {
+                        Text(formatted(item.createdAt))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
                 .width(min: 100, ideal: 155)
             }
             .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
                 rowContextMenu(for: itemIDs)
-            } primaryAction: { itemIDs in
-                for itemID in itemIDs {
-                    if let item = controller.downloads.first(where: { $0.id == itemID }) {
-                        if item.status == .completed {
-                            openFile(item)
-                        } else {
-                            openWindow(value: item.id)
-                        }
-                    }
-                }
             }
             .overlay {
                 if items.isEmpty {
@@ -148,6 +153,25 @@ struct DownloadTable: View {
             } else {
                 Text("Remove \(items.count == 1 ? "this download" : "these \(items.count) downloads") from Firelink. Partial cache files are removed automatically; moving to Trash also sends any partial files there.")
             }
+        }
+    }
+
+    private func doubleClickableCell<Content: View>(
+        for item: DownloadItem,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                performPrimaryAction(for: item)
+            }
+    }
+
+    private func performPrimaryAction(for item: DownloadItem) {
+        if item.status == .completed {
+            openFile(item)
+        } else {
+            openWindow(value: item.id)
         }
     }
 

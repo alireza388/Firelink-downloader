@@ -199,7 +199,9 @@ struct SchedulerView: View {
         isEveryday = schedulerController.settings.isEveryday
         selectedDays = schedulerController.settings.selectedDays
         postQueueAction = schedulerController.settings.postQueueAction
-        targetQueueIDs = schedulerController.settings.targetQueueIDs
+        targetQueueIDs = schedulerController.settings.targetQueueIDs.isEmpty
+            ? [DownloadQueue.mainQueueID]
+            : schedulerController.settings.targetQueueIDs
     }
     
     private func saveState() {
@@ -208,7 +210,9 @@ struct SchedulerView: View {
         schedulerController.settings.isEveryday = isEveryday
         schedulerController.settings.selectedDays = selectedDays
         schedulerController.settings.postQueueAction = postQueueAction
-        schedulerController.settings.targetQueueIDs = targetQueueIDs
+        schedulerController.settings.targetQueueIDs = targetQueueIDs.isEmpty
+            ? [DownloadQueue.mainQueueID]
+            : targetQueueIDs
         schedulerController.saveSettings()
     }
 }

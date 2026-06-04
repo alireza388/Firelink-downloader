@@ -1,8 +1,9 @@
 import Foundation
 
 enum DownloadURLParser {
+    private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     static func parse(_ text: String) -> [URL] {
-        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         let detected = detector?.matches(in: text, range: range).compactMap(\.url) ?? []
 
@@ -71,8 +72,8 @@ enum DownloadMetadataFetcher {
 
             if let disposition = httpResponse.value(forHTTPHeaderField: "Content-Disposition"),
                let fileName = fileName(fromContentDisposition: disposition) {
-                pending.fileName = fileName
-                pending.category = FileClassifier.category(forFileName: fileName)
+                pending.fileName = FileClassifier.sanitizedFileName(fileName)
+                pending.category = FileClassifier.category(forFileName: pending.fileName)
                 pending.defaultDirectory = await settings.destinationDirectory(for: pending.category)
             }
 

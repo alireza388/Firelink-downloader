@@ -285,7 +285,7 @@ final class AppSettings: ObservableObject {
             return absolute.contains(normalizedPattern)
         }
 
-        return host == normalizedPattern || host.hasSuffix(".\(normalizedPattern)")
+        return host == normalizedPattern
     }
 
     private static func defaultDirectories() -> [DownloadCategory: String] {

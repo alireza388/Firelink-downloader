@@ -28,6 +28,7 @@ struct ContentView: View {
                         if let url = url {
                             DispatchQueue.main.async {
                                 controller.pendingPasteboardText = url.absoluteString
+                                controller.pendingReferer = nil
                                 openWindow(id: "add-downloads")
                             }
                         }
@@ -37,6 +38,7 @@ struct ContentView: View {
                         if let text = text {
                             DispatchQueue.main.async {
                                 controller.pendingPasteboardText = text
+                                controller.pendingReferer = nil
                                 openWindow(id: "add-downloads")
                             }
                         }
@@ -117,7 +119,7 @@ struct ContentView: View {
                 }
                 .disabled(!canStop)
 
-                let canStart = selectedItems.isEmpty ? true : selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled })
+                let canStart = selectedItems.isEmpty ? hasQueuedDownloads(in: queueID) : selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled })
                 Button {
                     if selectedItems.isEmpty {
                         controller.startQueue(queueID: queueID)
@@ -183,6 +185,7 @@ struct ContentView: View {
     private func handlePaste(queueID: UUID?) {
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
         controller.pendingPasteboardText = text
+        controller.pendingReferer = nil
         controller.pendingAddQueueID = queueID
         openWindow(id: "add-downloads")
     }
@@ -197,6 +200,14 @@ struct ContentView: View {
         }
 
         return controller.activeCount > 0
+    }
+
+    private func hasQueuedDownloads(in queueID: UUID?) -> Bool {
+        if let queueID {
+            return controller.queueItems(for: queueID).contains { $0.status == .queued }
+        }
+
+        return controller.queuedCount > 0
     }
 
     private func filteredDownloads(for filter: DownloadSidebarFilter) -> [DownloadItem] {

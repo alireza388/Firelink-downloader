@@ -9,6 +9,7 @@ final class DownloadController: ObservableObject {
     @Published var queues: [DownloadQueue] = [.main]
     @Published var engineMessage = ""
     @Published var pendingPasteboardText: String?
+    @Published var pendingReferer: String?
     var pendingAddQueueID: UUID?
 
     private let settings: AppSettings
@@ -35,6 +36,25 @@ final class DownloadController: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.updateSleepActivity()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$globalSpeedLimitKiBPerSecond
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.applySpeedLimitsToActiveDownloads()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$maxConcurrentDownloads
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.applySpeedLimitsToActiveDownloads()
+                    self?.pumpQueue()
                 }
             }
             .store(in: &cancellables)
@@ -131,10 +151,11 @@ final class DownloadController: ObservableObject {
         let speedLimitKiBPerSecond = normalizedSpeedLimit(speedLimitKiBPerSecond)
 
         let items = pendingDownloads.map { pending in
-            DownloadItem(
+            let fileName = FileClassifier.sanitizedFileName(pending.fileName)
+            return DownloadItem(
                 url: pending.url,
-                fileName: pending.fileName,
-                category: pending.category,
+                fileName: fileName,
+                category: FileClassifier.category(forFileName: fileName),
                 destinationDirectory: overrideDirectory ?? pending.defaultDirectory,
                 connectionsPerServer: clampedConnections,
                 credentials: credentials ?? settings.credentials(for: pending.url),
@@ -526,8 +547,8 @@ final class DownloadController: ObservableObject {
     ) {
         update(id) {
             $0.url = url
-            $0.fileName = fileName
-            $0.category = FileClassifier.category(forFileName: fileName)
+            $0.fileName = FileClassifier.sanitizedFileName(fileName)
+            $0.category = FileClassifier.category(forFileName: $0.fileName)
             $0.destinationDirectory = destinationDirectory
             $0.connectionsPerServer = min(max(connectionsPerServer, 1), 16)
             $0.credentials = credentials
@@ -543,6 +564,7 @@ final class DownloadController: ObservableObject {
         } else if credentials == nil {
             KeychainCredentialStore.deletePassword(for: id)
         }
+        applySpeedLimitToActiveDownload(id: id)
         saveDownloads()
     }
 
@@ -565,6 +587,24 @@ final class DownloadController: ObservableObject {
             return globalLimit
         case (.none, .none):
             return nil
+        }
+    }
+
+    private func applySpeedLimitsToActiveDownloads() {
+        for item in downloads where item.status == .downloading {
+            applySpeedLimitToActiveDownload(id: item.id)
+        }
+    }
+
+    private func applySpeedLimitToActiveDownload(id: UUID) {
+        guard let handle = activeHandles[id],
+              let item = downloads.first(where: { $0.id == id }) else {
+            return
+        }
+
+        let limit = effectiveSpeedLimitKiBPerSecond(for: item)
+        Task {
+            await Aria2DownloadEngine.updateSpeedLimit(handle: handle, speedLimitKiBPerSecond: limit)
         }
     }
 

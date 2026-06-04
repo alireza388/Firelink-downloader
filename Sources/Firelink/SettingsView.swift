@@ -670,11 +670,14 @@ private struct PowerSettingsPane: View {
 }
 
 private struct IntegrationSettingsPane: View {
+    @State private var copiedExtensionURL: URL?
+    @State private var installMessage = ""
+
     var body: some View {
         Form {
             Section {
                 HStack(alignment: .center, spacing: 14) {
-                    Image(systemName: "safari")
+                    Image(systemName: "puzzlepiece.extension")
                         .resizable()
                         .frame(width: 48, height: 48)
                         .foregroundStyle(.orange)
@@ -691,13 +694,20 @@ private struct IntegrationSettingsPane: View {
             }
             
             Section("Installation") {
-                HStack {
+                HStack(spacing: 10) {
                     Button {
-                        showExtensionInFinder()
+                        copyExtensionToDownloads()
                     } label: {
-                        Label("Show Extension Folder", systemImage: "folder.fill")
+                        Label("Copy to Downloads", systemImage: "folder.badge.plus")
                     }
                     
+                    Button {
+                        showCopiedExtensionInFinder()
+                    } label: {
+                        Label("Show Copied Folder", systemImage: "folder.fill")
+                    }
+                    .disabled(copiedExtensionURL == nil)
+
                     Button {
                         openFirefoxDebugging()
                     } label: {
@@ -705,8 +715,14 @@ private struct IntegrationSettingsPane: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+
+                if !installMessage.isEmpty {
+                    Text(installMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 
-                Text("Since the extension isn't published to the Mozilla Add-on Store yet, you must load it manually:\n1. Click 'Show Extension Folder' to reveal the extension files.\n2. Click 'Open Firefox Debugging' to launch Firefox's extension debugger.\n3. Click 'This Firefox' on the left sidebar.\n4. Click 'Load Temporary Add-on' and select the manifest.json file from the revealed folder.\n\n⚠️ Note: You must repeat this process every time you restart Firefox until the official extension is released.")
+                Text("Until the official Firefox Add-ons listing is approved, load the extension manually:\n1. Click 'Copy to Downloads'.\n2. Click 'Open Firefox Debugging'.\n3. Click 'This Firefox' on the left sidebar.\n4. Click 'Load Temporary Add-on' and select manifest.json inside Downloads/Firelink Firefox Extension.\n\nKeep the copied folder while Firefox is running. Temporary add-ons are removed when Firefox restarts, so you can delete the folder after restart or after installing the official add-on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -718,10 +734,46 @@ private struct IntegrationSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            if FileManager.default.fileExists(atPath: downloadsExtensionURL.path) {
+                copiedExtensionURL = downloadsExtensionURL
+            }
+        }
     }
     
-    private func showExtensionInFinder() {
-        if let folderURL = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) {
+    private var downloadsExtensionURL: URL {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+        return downloads.appendingPathComponent("Firelink Firefox Extension", isDirectory: true)
+    }
+
+    private func copyExtensionToDownloads() {
+        guard let sourceURL = Bundle.main.url(forResource: "FirefoxExtension", withExtension: nil) else {
+            installMessage = "The bundled Firefox extension folder was not found."
+            return
+        }
+
+        let destinationURL = downloadsExtensionURL
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            copiedExtensionURL = destinationURL
+            installMessage = "Copied to \(destinationURL.path). Select manifest.json from this folder in Firefox."
+            showCopiedExtensionInFinder()
+        } catch {
+            installMessage = "Could not copy the extension to Downloads: \(error.localizedDescription)"
+        }
+    }
+
+    private func showCopiedExtensionInFinder() {
+        let folderURL = copiedExtensionURL ?? downloadsExtensionURL
+        let manifestURL = folderURL.appendingPathComponent("manifest.json")
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([manifestURL])
+        } else if FileManager.default.fileExists(atPath: folderURL.path) {
             NSWorkspace.shared.activateFileViewerSelecting([folderURL])
         }
     }

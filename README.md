@@ -70,7 +70,7 @@ make app && open build/Firelink.app
 
 ## 🧩 Browser Extension
 
-Find the companion browser extension (Safari, Chrome, Firefox) at:
+Find the companion browser extension (Firefox) at:
 👉 **[nimbold/Firelink-Extension](https://github.com/nimbold/Firelink-Extension)**
 
 ---

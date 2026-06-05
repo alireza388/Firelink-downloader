@@ -34,6 +34,7 @@ enum DownloadMetadataFetcher {
     static func fetch(
         for url: URL,
         settings: AppSettings,
+        credentials: DownloadCredentials? = nil,
         transferOptions: DownloadTransferOptions = DownloadTransferOptions()
     ) async -> PendingDownload {
         let initialName = FileClassifier.fileName(from: url)
@@ -56,7 +57,19 @@ enum DownloadMetadataFetcher {
         request.httpMethod = "HEAD"
         request.timeoutInterval = 12
         request.setValue("Firelink/0.1", forHTTPHeaderField: "User-Agent")
-        for header in transferOptions.requestHeaders.map(\.normalized) where !header.isEmpty {
+
+        let normalizedHeaders = transferOptions.requestHeaders.map(\.normalized).filter { !$0.isEmpty }
+        let hasAuthorizationHeader = normalizedHeaders.contains { $0.name.caseInsensitiveCompare("Authorization") == .orderedSame }
+        if let credentials, !credentials.isEmpty, !hasAuthorizationHeader {
+            let token = "\(credentials.username):\(credentials.password)"
+                .data(using: .utf8)?
+                .base64EncodedString()
+            if let token {
+                request.setValue("Basic \(token)", forHTTPHeaderField: "Authorization")
+            }
+        }
+
+        for header in normalizedHeaders {
             request.setValue(header.value, forHTTPHeaderField: header.name)
         }
         if let cookieHeader = transferOptions.cookieHeader?.trimmingCharacters(in: .whitespacesAndNewlines), !cookieHeader.isEmpty {

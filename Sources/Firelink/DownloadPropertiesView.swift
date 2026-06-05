@@ -47,6 +47,7 @@ struct DownloadPropertiesView: View {
     @State private var mirrorText: String
     @State private var errorMessage = ""
     @State private var showsAdvancedTransfer = false
+    @State private var showsChunkMap = false
 
     init(item: DownloadItem) {
         self.item = item
@@ -81,39 +82,87 @@ struct DownloadPropertiesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            DownloadSummaryHeader(item: item)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+
+            Divider()
+
             Form {
-                Section("Download") {
-                    TextField("URL", text: $urlText)
-                        .font(.system(.callout, design: .monospaced))
-                    TextField("File name", text: $fileName)
-                    HStack {
-                        TextField("Save location", text: $destinationPath)
-                            .font(.system(.callout, design: .monospaced))
-                        Button {
-                            selectDestination()
-                        } label: {
-                            Label("Select", systemImage: "folder.badge.plus")
-                        }
-                    }
-                    Stepper("Connections per file: \(connections)", value: $connections, in: 1...16)
-                    Toggle("Limit speed", isOn: $speedLimitEnabled)
-                    if speedLimitEnabled {
-                        Stepper(
-                            "Speed cap: \(speedLimitKiBPerSecond) KiB/s",
-                            value: $speedLimitKiBPerSecond,
-                            in: 1...10_485_760,
-                            step: 128
-                        )
+                if let noticeText {
+                    Section {
+                        Label(noticeText, systemImage: noticeSystemImage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
-                Section("Site Login") {
+                Section("Download") {
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                        GridRow {
+                            Text("URL")
+                                .foregroundStyle(.secondary)
+                            TextField("URL", text: $urlText)
+                                .font(.system(.callout, design: .monospaced))
+                                .disabled(fileIdentityLocked)
+                        }
+
+                        GridRow {
+                            Text("File name")
+                                .foregroundStyle(.secondary)
+                            TextField("File name", text: $fileName)
+                                .disabled(fileIdentityLocked)
+                        }
+
+                        GridRow {
+                            Text("Save location")
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                TextField("Save location", text: $destinationPath)
+                                    .font(.system(.callout, design: .monospaced))
+                                    .disabled(fileIdentityLocked)
+                                Button {
+                                    selectDestination()
+                                } label: {
+                                    Label("Select", systemImage: "folder.badge.plus")
+                                }
+                                .disabled(fileIdentityLocked)
+                            }
+                        }
+
+                        GridRow {
+                            Text("Connections")
+                                .foregroundStyle(.secondary)
+                            Stepper("\(connections) per file", value: $connections, in: 1...16)
+                                .disabled(transferSettingsLocked)
+                        }
+
+                        GridRow {
+                            Text("Speed")
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Toggle("Limit", isOn: $speedLimitEnabled)
+                                if speedLimitEnabled {
+                                    Stepper(
+                                        "\(speedLimitKiBPerSecond) KiB/s",
+                                        value: $speedLimitKiBPerSecond,
+                                        in: 1...10_485_760,
+                                        step: 128
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section(item.status == .completed ? "Site Login for Redownload" : "Site Login") {
                     Picker("Login", selection: $loginMode) {
                         ForEach(LoginMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(transferSettingsLocked)
 
                     if loginMode == .matching {
                         Text(matchingLoginText)
@@ -121,48 +170,64 @@ struct DownloadPropertiesView: View {
                             .foregroundStyle(.secondary)
                     } else if loginMode == .custom {
                         TextField("Username", text: $username)
+                            .disabled(transferSettingsLocked)
                         SecureField("Password", text: $password)
+                            .disabled(transferSettingsLocked)
                     }
                 }
 
-                DisclosureGroup("Advanced Transfer", isExpanded: $showsAdvancedTransfer) {
-                    Toggle("Checksum", isOn: $checksumEnabled)
-                    if checksumEnabled {
-                        Picker("Algorithm", selection: $checksumAlgorithm) {
-                            ForEach(ChecksumAlgorithm.allCases) { algorithm in
-                                Text(algorithm.title).tag(algorithm)
+                Section {
+                    CollapsibleGroup(title: advancedTransferTitle, isExpanded: $showsAdvancedTransfer) {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                            GridRow {
+                                Text("Checksum")
+                                    .foregroundStyle(.secondary)
+                                Toggle("Verify", isOn: $checksumEnabled)
+                                .disabled(transferSettingsLocked)
+                            }
+
+                            if checksumEnabled {
+                                GridRow {
+                                    Text("Algorithm")
+                                        .foregroundStyle(.secondary)
+                                    Picker("Algorithm", selection: $checksumAlgorithm) {
+                                        ForEach(ChecksumAlgorithm.allCases) { algorithm in
+                                            Text(algorithm.title).tag(algorithm)
+                                        }
+                                    }
+                                    .disabled(transferSettingsLocked)
+                                }
+
+                                GridRow {
+                                    Text("Digest")
+                                        .foregroundStyle(.secondary)
+                                    TextField("Expected digest", text: $checksumValue)
+                                        .font(.system(.callout, design: .monospaced))
+                                        .disabled(transferSettingsLocked)
+                                }
+                            }
+
+                            GridRow {
+                                Text("Cookies")
+                                    .foregroundStyle(.secondary)
+                                TextField("Cookies", text: $cookieText)
+                                    .font(.system(.callout, design: .monospaced))
+                                    .disabled(transferSettingsLocked)
                             }
                         }
-                        TextField("Expected digest", text: $checksumValue)
-                            .font(.system(.callout, design: .monospaced))
+
+                        CompactEditor(title: "Headers", text: $headerText)
+                            .disabled(transferSettingsLocked)
+                        CompactEditor(title: "Mirrors", text: $mirrorText)
+                            .disabled(transferSettingsLocked)
                     }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Headers")
-                        TextEditor(text: $headerText)
-                            .font(.system(.callout, design: .monospaced))
-                            .frame(minHeight: 60)
-                    }
-
-                    TextField("Cookies", text: $cookieText)
-                        .font(.system(.callout, design: .monospaced))
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Mirrors")
-                        TextEditor(text: $mirrorText)
-                            .font(.system(.callout, design: .monospaced))
-                            .frame(minHeight: 60)
-                    }
-                }
-
-                Section("Progress") {
-                    ProgressView(value: item.progress)
-                    InfoGrid(item: item)
                 }
 
                 if item.status == .downloading && item.rpcPort != nil {
-                    Section("Chunk Map") {
-                        ChunkMapView(item: item)
+                    Section {
+                        CollapsibleGroup(title: "Chunk Map", isExpanded: $showsChunkMap) {
+                            ChunkMapView(item: item)
+                        }
                     }
                 }
             }
@@ -185,10 +250,82 @@ struct DownloadPropertiesView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-            .padding(14)
+            .padding(12)
             .background(.bar)
         }
-        .frame(width: 720, height: 720)
+        .frame(width: 720, height: 580)
+    }
+
+    private var fileIdentityLocked: Bool {
+        item.status == .completed || item.status == .downloading
+    }
+
+    private var transferSettingsLocked: Bool {
+        item.status == .downloading
+    }
+
+    private var noticeText: String? {
+        switch item.status {
+        case .completed:
+            return "File identity is read-only. Transfer settings are saved for redownload."
+        case .downloading:
+            return "Only the speed limit applies to the current transfer. Other settings can be changed after stopping or pausing."
+        default:
+            return nil
+        }
+    }
+
+    private var noticeSystemImage: String {
+        item.status == .completed ? "checkmark.circle" : "bolt.horizontal.circle"
+    }
+
+    private var advancedTransferTitle: String {
+        item.status == .completed ? "Advanced Transfer for Redownload" : "Advanced Transfer"
+    }
+
+    private struct CompactEditor: View {
+        let title: String
+        @Binding var text: String
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $text)
+                    .font(.system(.callout, design: .monospaced))
+                    .frame(minHeight: 44, maxHeight: 54)
+            }
+        }
+    }
+
+    private struct CollapsibleGroup<Content: View>: View {
+        let title: String
+        @Binding var isExpanded: Bool
+        @ViewBuilder var content: () -> Content
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: isExpanded ? 10 : 0) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 12)
+                        Text(title)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if isExpanded {
+                    content()
+                        .padding(.leading, 18)
+                }
+            }
+        }
     }
 
     private var matchingLoginText: String {
@@ -285,31 +422,69 @@ struct DownloadPropertiesView: View {
     }
 }
 
-private struct InfoGrid: View {
+private struct DownloadSummaryHeader: View {
     let item: DownloadItem
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-            info("Status", item.status.rawValue)
-            info("Progress", item.progress.formatted(.percent.precision(.fractionLength(0))))
-            info("Size", ByteFormatter.string(item.sizeBytes))
-            info("Speed", item.speedText)
-            info("ETA", item.etaText)
-            info("Live connections", "\(item.connectionCount)")
-            info("Speed cap", item.speedLimitText)
-            info("Date added", item.createdAt.formatted(date: .abbreviated, time: .shortened))
-            info("Last try", item.lastTryAt?.formatted(date: .abbreviated, time: .shortened) ?? "-")
-            info("Category", item.category.rawValue)
-            info("Destination", item.destinationPath)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(item.fileName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Label(item.status.rawValue, systemImage: item.category.symbolName)
+                    .foregroundStyle(statusColor)
+            }
+
+            ProgressView(value: item.progress)
+
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 5) {
+                GridRow {
+                    summary("Progress", item.progress.formatted(.percent.precision(.fractionLength(0))))
+                    summary("Size", ByteFormatter.string(item.sizeBytes))
+                    summary("Speed", item.speedText)
+                    summary("ETA", item.etaText)
+                }
+                GridRow {
+                    summary("Live connections", "\(item.connectionCount)")
+                    summary("Speed cap", item.speedLimitText)
+                    summary("Category", item.category.rawValue)
+                    summary("Last try", item.lastTryAt?.formatted(date: .abbreviated, time: .shortened) ?? "-")
+                }
+                GridRow {
+                    summary("Date added", item.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .gridCellColumns(2)
+                    summary("Destination", item.destinationPath)
+                        .gridCellColumns(2)
+                }
+            }
+            .font(.caption)
         }
     }
 
-    private func info(_ label: String, _ value: String) -> some View {
-        GridRow {
+    private var statusColor: Color {
+        switch item.status {
+        case .queued:
+            .secondary
+        case .downloading:
+            .accentColor
+        case .paused:
+            .orange
+        case .completed:
+            .green
+        case .failed, .canceled:
+            .red
+        }
+    }
+
+    private func summary(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 4) {
             Text(label)
                 .foregroundStyle(.secondary)
             Text(value)
-                .lineLimit(2)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 }

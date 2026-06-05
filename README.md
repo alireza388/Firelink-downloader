@@ -46,6 +46,7 @@ Dark mode is shown by default with privacy-safe example downloads. Light mode is
 - ⚡ **High-Speed Downloads:** Multi-segmented engine powered by `aria2c`.
 - 🎨 **Native SwiftUI:** Responsive Apple Silicon native UI.
 - 🎯 **Chunk Map Inspector:** Visually monitor active segment connections in real time.
+- 🧾 **Download Properties:** Inspect progress and tune per-download transfer settings.
 - 🗂️ **Smart Categories:** Automatic file organization (`Musics`, `Movies`, `Compressed`, etc.).
 - 🖱️ **Drag-and-Drop:** Import URLs, text files, and move queued downloads between queues.
 - 🛡️ **Reliability:** Automatic download recovery and retry handling.

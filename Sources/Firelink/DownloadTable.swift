@@ -162,6 +162,7 @@ struct DownloadTable: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
+            .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
                 performPrimaryAction(for: item)

@@ -147,6 +147,8 @@ final class Aria2DownloadEngine {
         let parser = Aria2ProgressParser()
         let outputBuffer = LockedDataBuffer()
         let errorBuffer = LockedDataBuffer()
+        let completionGate = CompletionGate(completion)
+        let completionMonitor = CompletionMonitor()
 
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -166,11 +168,12 @@ final class Aria2DownloadEngine {
         }
 
         process.terminationHandler = { finishedProcess in
+            completionMonitor.cancel()
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
 
             if finishedProcess.terminationStatus == 0 {
-                completion(.success(()))
+                completionGate.complete(.success(()))
                 return
             }
 
@@ -182,7 +185,7 @@ final class Aria2DownloadEngine {
                 .compactMap { $0 }
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
-            completion(.failure(EngineError.launchFailed(message.isEmpty ? "exit code \(finishedProcess.terminationStatus)" : message)))
+            completionGate.complete(.failure(EngineError.launchFailed(message.isEmpty ? "exit code \(finishedProcess.terminationStatus)" : message)))
         }
 
         do {
@@ -195,11 +198,102 @@ final class Aria2DownloadEngine {
             throw EngineError.launchFailed(error.localizedDescription)
         }
 
+        completionMonitor.set(
+            Self.monitorCompletion(
+                rpcPort: rpcPort,
+                rpcSecret: rpcSecret,
+                process: process,
+                completionGate: completionGate
+            )
+        )
+
         return Handle(processIdentifier: process.processIdentifier, rpcPort: rpcPort, rpcSecret: rpcSecret) {
+            completionMonitor.cancel()
             if process.isRunning {
                 process.terminate()
             }
         }
+    }
+
+    private static func monitorCompletion(
+        rpcPort: Int,
+        rpcSecret: String,
+        process: Process,
+        completionGate: CompletionGate
+    ) -> Task<Void, Never> {
+        Task.detached {
+            while !Task.isCancelled && process.isRunning {
+                if await completedDownloadStatus(rpcPort: rpcPort, rpcSecret: rpcSecret) {
+                    completionGate.complete(.success(()))
+                    if process.isRunning {
+                        process.terminate()
+                    }
+                    return
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private static func completedDownloadStatus(rpcPort: Int, rpcSecret: String) async -> Bool {
+        guard let stopped = await rpcCall(
+            rpcPort: rpcPort,
+            rpcSecret: rpcSecret,
+            method: "aria2.tellStopped",
+            arguments: [0, 10, ["status", "errorCode", "completedLength", "totalLength"]]
+        ) as? [[String: Any]] else {
+            return false
+        }
+
+        if stopped.contains(where: { item in
+            (item["status"] as? String) == "complete"
+        }) {
+            return true
+        }
+
+        return stopped.contains { item in
+            guard (item["status"] as? String) == "error",
+                  (item["errorCode"] as? String) == "0",
+                  let completedLength = Int64(item["completedLength"] as? String ?? ""),
+                  let totalLength = Int64(item["totalLength"] as? String ?? ""),
+                  totalLength > 0 else {
+                return false
+            }
+            return completedLength >= totalLength
+        }
+    }
+
+    private static func rpcCall(
+        rpcPort: Int,
+        rpcSecret: String,
+        method: String,
+        arguments: [Any]
+    ) async -> Any? {
+        guard let url = URL(string: "http://127.0.0.1:\(rpcPort)/jsonrpc") else { return nil }
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": UUID().uuidString,
+            "params": ["token:\(rpcSecret)"] + arguments
+        ]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        request.timeoutInterval = 3
+
+        guard let (responseData, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
+            return nil
+        }
+        return json["result"]
     }
 
     static func updateSpeedLimit(handle: Handle, speedLimitKiBPerSecond: Int?) async {
@@ -419,6 +513,47 @@ final class LockedDataBuffer: @unchecked Sendable {
                 storage.removeFirst(storage.count - maxBytes)
             }
         }
+    }
+}
+
+final class CompletionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didComplete = false
+    private let completion: @Sendable (Result<Void, Error>) -> Void
+
+    init(_ completion: @escaping @Sendable (Result<Void, Error>) -> Void) {
+        self.completion = completion
+    }
+
+    func complete(_ result: Result<Void, Error>) {
+        lock.lock()
+        let shouldComplete = !didComplete
+        if shouldComplete {
+            didComplete = true
+        }
+        lock.unlock()
+
+        guard shouldComplete else { return }
+        completion(result)
+    }
+}
+
+final class CompletionMonitor: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: Task<Void, Never>?
+
+    func set(_ task: Task<Void, Never>) {
+        lock.lock()
+        self.task = task
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let task = self.task
+        self.task = nil
+        lock.unlock()
+        task?.cancel()
     }
 }
 

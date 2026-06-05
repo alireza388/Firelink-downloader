@@ -43,9 +43,13 @@ struct AddDownloadsView: View {
                 .padding(16)
                 .background(.background)
         }
-        .frame(minWidth: 640, idealWidth: 680, minHeight: 500, idealHeight: 540)
+        .frame(minWidth: 640, idealWidth: 680, minHeight: 470, idealHeight: 500)
         .onChange(of: linkText) { _, newValue in
             scheduleMetadataRefresh(for: newValue)
+        }
+        .onChange(of: metadataRequestSignature) { _, _ in
+            guard !DownloadURLParser.parse(linkText).isEmpty else { return }
+            scheduleMetadataRefresh(for: linkText)
         }
         .onAppear {
             connectionsPerServer = Double(settings.perServerConnections)
@@ -72,7 +76,7 @@ struct AddDownloadsView: View {
                 .scrollContentBackground(.hidden)
                 .background(.quaternary.opacity(0.35))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .frame(minHeight: 82)
+                .frame(minHeight: 72)
 
             HStack {
                 Text("\(pendingDownloads.count) valid link\(pendingDownloads.count == 1 ? "" : "s") detected")
@@ -108,10 +112,22 @@ struct AddDownloadsView: View {
                     Button {
                         selectDestination()
                     } label: {
-                        Label("Select", systemImage: "folder.badge.plus")
+                        Label("Select...", systemImage: "folder.badge.plus")
                     }
                     .disabled(!overrideDestination)
                 }
+            }
+
+            GridRow(alignment: .firstTextBaseline) {
+                Label("Queue", systemImage: "tray.full")
+                    .font(.subheadline.weight(.semibold))
+                Picker("Queue", selection: $targetQueueID) {
+                    ForEach(controller.queues) { queue in
+                        Text(queue.name).tag(queue.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 220, alignment: .leading)
             }
 
             GridRow(alignment: .firstTextBaseline) {
@@ -129,11 +145,11 @@ struct AddDownloadsView: View {
             }
 
             GridRow(alignment: .firstTextBaseline) {
-                Label("Speed Limit", systemImage: "speedometer")
+                Label("Speed Limit per File", systemImage: "speedometer")
                     .font(.subheadline.weight(.semibold))
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Toggle("Limit this batch", isOn: $speedLimitEnabled)
+                        Toggle("Limit each file", isOn: $speedLimitEnabled)
                             .toggleStyle(.switch)
                         Stepper(
                             "\(speedLimitKiBPerSecond) KiB/s",
@@ -173,12 +189,14 @@ struct AddDownloadsView: View {
     }
 
     private var summarySection: some View {
-        HStack(spacing: 8) {
-            SummaryTile(title: "Files", value: "\(pendingDownloads.count)", symbolName: "doc.on.doc")
-            SummaryTile(title: "Required", value: requiredSpaceText, symbolName: "externaldrive")
-            SummaryTile(title: "Free", value: freeSpaceText, symbolName: "internaldrive")
-            SummaryTile(title: "Unknown Sizes", value: "\(unknownSizeCount)", symbolName: "questionmark.circle")
-        }
+        CompactSummaryStrip(
+            metrics: [
+                SummaryMetric(title: "Files", value: "\(pendingDownloads.count)", symbolName: "doc.on.doc"),
+                SummaryMetric(title: "Required", value: requiredSpaceText, symbolName: "externaldrive"),
+                SummaryMetric(title: "Free", value: freeSpaceText, symbolName: "internaldrive"),
+                SummaryMetric(title: "Unknown", value: "\(unknownSizeCount)", symbolName: "questionmark.circle")
+            ]
+        )
     }
 
     private var previewSection: some View {
@@ -216,7 +234,7 @@ struct AddDownloadsView: View {
                 }
                 .width(110)
             }
-            .frame(minHeight: 135)
+            .frame(minHeight: 160)
         }
     }
 
@@ -378,6 +396,26 @@ struct AddDownloadsView: View {
         )
     }
 
+    private var metadataRequestSignature: String {
+        [
+            headerText,
+            cookieText,
+            useAuthorization ? "auth" : "no-auth",
+            authUsername,
+            authPassword
+        ].joined(separator: "\u{1f}")
+    }
+
+    private func metadataCredentials(for url: URL) -> DownloadCredentials? {
+        if useAuthorization {
+            let cleanUsername = authUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanUsername.isEmpty else { return nil }
+            return DownloadCredentials(username: cleanUsername, password: authPassword)
+        }
+
+        return settings.credentials(for: url)
+    }
+
     private func scheduleMetadataRefresh(for text: String) {
         metadataTask?.cancel()
         metadataTask = Task {
@@ -434,7 +472,12 @@ struct AddDownloadsView: View {
             var loaded: [PendingDownload] = []
             for url in urls {
                 guard !Task.isCancelled else { return }
-                let item = await DownloadMetadataFetcher.fetch(for: url, settings: settings, transferOptions: transferOptions)
+                let item = await DownloadMetadataFetcher.fetch(
+                    for: url,
+                    settings: settings,
+                    credentials: metadataCredentials(for: url),
+                    transferOptions: transferOptions
+                )
                 loaded.append(item)
                 await MainActor.run {
                     for loadedItem in loaded {
@@ -554,30 +597,41 @@ struct AddDownloadsView: View {
     }
 }
 
-private struct SummaryTile: View {
+private struct SummaryMetric: Identifiable {
     let title: String
     let value: String
     let symbolName: String
 
+    var id: String { title }
+}
+
+private struct CompactSummaryStrip: View {
+    let metrics: [SummaryMetric]
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbolName)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .lineLimit(1)
+        HStack(spacing: 12) {
+            ForEach(metrics) { metric in
+                HStack(spacing: 6) {
+                    Image(systemName: metric.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(metric.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(metric.value)
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .lineLimit(1)
+                }
+
+                if metric.id != metrics.last?.id {
+                    Divider()
+                        .frame(height: 14)
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(9)
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 52)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(.quaternary.opacity(0.35))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }

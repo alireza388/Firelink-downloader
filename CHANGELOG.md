@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-06-05
+
+### New features
+- Added a compact Download Properties inspector with a persistent progress summary and redownload-aware transfer settings.
+- Added authenticated metadata probing so batch previews can use custom or saved credentials.
+
+### Changes
+- Updated Download Properties disclosure sections so their full title row opens and closes them.
+- Compacted Add Downloads with a smaller summary strip, queue picker, and clearer per-file speed limit wording.
+- Expanded download table hit areas so double-clicks register across empty cell space.
+
+### Fixes
+- Fixed active downloads that could remain stuck at 99% until manually stopped by detecting `aria2` completion through RPC.
+- Fixed Chunk Map layout overlap in Download Properties.
+- Fixed Download Properties controls that implied completed or active file identity edits would apply immediately.
+
 ## [0.5.4] - 2026-06-04
 
 ### New features

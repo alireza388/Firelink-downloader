@@ -7,8 +7,17 @@ struct LocationsSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                ForEach(DownloadCategory.allCases, id: \.self) { category in
-                    DirectoryPickerRow(category: category)
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
+                    BulkDirectoryPickerRow()
+
+                    GridRow {
+                        Divider()
+                            .gridCellColumns(2)
+                    }
+
+                    ForEach(DownloadCategory.allCases, id: \.self) { category in
+                        DirectoryPickerRow(category: category)
+                    }
                 }
 
                 HStack {
@@ -17,6 +26,8 @@ struct LocationsSettingsPane: View {
                         settings.resetDirectories()
                     }
                 }
+            } footer: {
+                Text("Folders will be created automatically when applied.")
             }
         }
         .formStyle(.grouped)
@@ -31,10 +42,14 @@ struct DirectoryPickerRow: View {
     @State private var message = ""
 
     var body: some View {
-        LabeledContent {
+        GridRow(alignment: .firstTextBaseline) {
+            Label(category.rawValue, systemImage: category.symbolName)
+                .gridColumnAlignment(.leading)
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    TextField("Folder path", text: $path)
+                    TextField("", text: $path, prompt: Text("Folder path"))
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
                         .onSubmit {
@@ -55,12 +70,12 @@ struct DirectoryPickerRow: View {
                     }
                 }
 
-                Text(message.isEmpty ? statusMessage(for: path) : message)
-                    .font(.caption)
-                    .foregroundStyle(message.isEmpty ? .secondary : .primary)
+                if let displayMessage = message.isEmpty ? statusMessage(for: path) : message, !displayMessage.isEmpty {
+                    Text(displayMessage)
+                        .font(.caption)
+                        .foregroundStyle(isErrorMessage(displayMessage) ? .red : .secondary)
+                }
             }
-        } label: {
-            Label(category.rawValue, systemImage: category.symbolName)
         }
         .onAppear {
             syncPathFromSettings()
@@ -127,7 +142,7 @@ struct DirectoryPickerRow: View {
         message = "Saved."
     }
 
-    private func statusMessage(for path: String) -> String {
+    private func statusMessage(for path: String) -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Enter a folder path." }
 
@@ -139,10 +154,136 @@ struct DirectoryPickerRow: View {
                 return "This path points to a file, not a folder."
             }
             return FileManager.default.isWritableFile(atPath: expanded)
-                ? "Ready."
+                ? nil
                 : "Firelink cannot write to this folder."
         }
 
-        return "Folder will be created when applied."
+        return nil
+    }
+
+    private func isErrorMessage(_ message: String) -> Bool {
+        message == "This path points to a file, not a folder." ||
+        message.hasPrefix("Could not create folder:") ||
+        message == "Firelink cannot write to this folder." ||
+        message == "Enter a folder path."
+    }
+}
+
+struct BulkDirectoryPickerRow: View {
+    @EnvironmentObject private var settings: AppSettings
+    @State private var path = ""
+    @State private var message = ""
+
+    var body: some View {
+        GridRow(alignment: .firstTextBaseline) {
+            Label("All Categories", systemImage: "folder.fill.badge.plus")
+                .gridColumnAlignment(.leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    TextField("", text: $path, prompt: Text("Base folder path"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                        .onSubmit {
+                            applyPath()
+                        }
+
+                    Button {
+                        applyPath()
+                    } label: {
+                        Label("Apply", systemImage: "checkmark")
+                    }
+                    .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button {
+                        selectFolder()
+                    } label: {
+                        Label("Select", systemImage: "folder.badge.plus")
+                    }
+                }
+
+                if !message.isEmpty {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(isErrorMessage(message) ? .red : .secondary)
+                } else {
+                    Text("Automatically creates all category folders in the selected path.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func selectFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+
+        if panel.runModal() == .OK, let url = panel.url {
+            path = url.path
+            applyPath()
+        }
+    }
+
+    private func applyPath() {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            message = "Enter a base folder path."
+            return
+        }
+
+        let expanded = NSString(string: trimmed).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+
+        if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else {
+                message = "This path points to a file, not a folder."
+                return
+            }
+        } else {
+            do {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: expanded, isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+            } catch {
+                message = "Could not create folder: \(error.localizedDescription)"
+                return
+            }
+        }
+
+        guard FileManager.default.isWritableFile(atPath: expanded) else {
+            message = "Firelink cannot write to this folder."
+            return
+        }
+
+        for category in DownloadCategory.allCases {
+            let categoryPath = (expanded as NSString).appendingPathComponent(category.rawValue)
+            do {
+                try FileManager.default.createDirectory(
+                    at: URL(fileURLWithPath: categoryPath, isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+                settings.setDirectory(categoryPath, for: category)
+            } catch {
+                message = "Could not create category folder \(category.rawValue): \(error.localizedDescription)"
+                return
+            }
+        }
+
+        message = "Created all categories in base folder."
+        path = ""
+    }
+
+    private func isErrorMessage(_ message: String) -> Bool {
+        message == "This path points to a file, not a folder." ||
+        message.hasPrefix("Could not create folder:") ||
+        message.hasPrefix("Could not create category folder") ||
+        message == "Firelink cannot write to this folder." ||
+        message == "Enter a base folder path."
     }
 }

@@ -818,6 +818,11 @@ final class DownloadController: ObservableObject {
                     adjusted.credentials?.password = storedPassword
                 }
 
+                if adjusted.status == .completed && adjusted.progress != 1 {
+                    adjusted.progress = 1
+                    shouldRewriteStoredDownloads = true
+                }
+
                 if adjusted.status == .downloading {
                     adjusted.status = .queued
                     adjusted.message = "Recovered after restart. Resuming from partial file."

@@ -437,11 +437,11 @@ private struct DownloadSummaryHeader: View {
                     .foregroundStyle(statusColor)
             }
 
-            ProgressView(value: item.progress)
+            ProgressView(value: item.status == .completed ? 1.0 : item.progress)
 
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 5) {
                 GridRow {
-                    summary("Progress", item.progress.formatted(.percent.precision(.fractionLength(0))))
+                    summary("Progress", (item.status == .completed ? 1.0 : item.progress).formatted(.percent.precision(.fractionLength(0))))
                     summary("Size", ByteFormatter.string(item.sizeBytes))
                     summary("Speed", item.speedText)
                     summary("ETA", item.etaText)

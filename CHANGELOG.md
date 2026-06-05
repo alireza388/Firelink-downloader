@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-06-05
+
+### New features
+- Added the official transparent GitHub icon to the Source Code link in the About page.
+
+### Changes
+- Compacted the About settings pane to reduce vertical padding, placing the app identity and updates prominently at the top.
+- Consolidated developer, credits, and legal links into a single unified footer section in the About pane.
+
+### Fixes
+- Fixed a build script bug that prevented bundled images (like the GitHub icon) from being copied into the final app bundle.
+
 ## [0.5.5] - 2026-06-05
 
 ### New features

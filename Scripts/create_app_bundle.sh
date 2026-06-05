@@ -20,6 +20,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp ".build/$CONFIGURATION/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/$ICON_NAME.icns" "$RESOURCES_DIR/$ICON_NAME.icns"
 cp "$ROOT_DIR/Sources/Firelink/Assets.xcassets/MenuBarIcon.imageset/MenuBarIconTemplate.png" "$RESOURCES_DIR/MenuBarIconTemplate.png"
+cp "$ROOT_DIR/Resources/GitHubTemplate.png" "$RESOURCES_DIR/GitHubTemplate.png"
 
 echo "Packaging Firefox extension..."
 mkdir -p "$RESOURCES_DIR/FirefoxExtension"

@@ -21,95 +21,103 @@ struct AboutSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                HStack(alignment: .center, spacing: 14) {
+                HStack(alignment: .center, spacing: 16) {
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
-                        .frame(width: 56, height: 56)
+                        .frame(width: 64, height: 64)
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Firelink")
-                            .font(.title2.weight(.semibold))
-                        Text("Version \(appVersion)")
+                            .font(.title2.weight(.bold))
+                        Text("Version \(appVersion) (\(buildNumber))")
                             .foregroundStyle(.secondary)
                         Text("A native macOS download manager for fast, organized, segmented transfers.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
             }
 
             Section("Updates") {
-                LabeledContent("Status") {
-                    Label(updateChecker.status.message, systemImage: updateStatusSymbol)
-                        .foregroundStyle(updateStatusColor)
-                }
-
-                if let lastChecked = updateChecker.lastChecked {
-                    LabeledContent("Last checked") {
-                        Text(lastChecked, format: .dateTime.month().day().hour().minute())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack {
-                    Button {
-                        Task {
-                            await updateChecker.checkForUpdates(currentVersion: appVersion)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label(updateChecker.status.message, systemImage: updateStatusSymbol)
+                            .foregroundStyle(updateStatusColor)
+                        
+                        Spacer()
+                        
+                        if let lastChecked = updateChecker.lastChecked {
+                            Text("Last checked: \(lastChecked, format: .dateTime.month().day().hour().minute())")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                    } label: {
-                        Label("Check for Updates", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(updateChecker.status == .checking)
-
-                    Button {
-                        openReleasesPage()
-                    } label: {
-                        Label("Open Releases", systemImage: "arrow.up.right.square")
                     }
 
-                    Spacer()
-                }
+                    HStack(spacing: 12) {
+                        Button {
+                            Task {
+                                await updateChecker.checkForUpdates(currentVersion: appVersion)
+                            }
+                        } label: {
+                            Label("Check for Updates", systemImage: "arrow.clockwise")
+                        }
+                        .disabled(updateChecker.status == .checking)
 
-                if case .updateAvailable(_, let releaseURL) = updateChecker.status {
-                    Button {
-                        NSWorkspace.shared.open(releaseURL)
-                    } label: {
-                        Label("Download Latest Version", systemImage: "square.and.arrow.down")
+                        if case .updateAvailable(_, let releaseURL) = updateChecker.status {
+                            Button {
+                                NSWorkspace.shared.open(releaseURL)
+                            } label: {
+                                Label("Download Latest Version", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else {
+                            Button {
+                                openReleasesPage()
+                            } label: {
+                                Label("Open Releases", systemImage: "arrow.up.right.square")
+                            }
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
                 }
+                .padding(.vertical, 4)
             }
 
-            Section("Developer") {
-                LabeledContent("Created by") {
-                    Text("NimBold")
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Created by NimBold")
+                        Spacer()
+                        Link(destination: projectURL) {
+                            HStack(spacing: 4) {
+                                if let imgPath = Bundle.main.path(forResource: "GitHubTemplate", ofType: "png"),
+                                   let nsImage = NSImage(contentsOfFile: imgPath) {
+                                    Image(nsImage: nsImage)
+                                        .resizable()
+                                        .renderingMode(.template)
+                                        .frame(width: 14, height: 14)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("Source Code")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    HStack {
+                        Text("Powered by")
+                        Link("aria2", destination: aria2URL)
+                        Spacer()
+                        Link("MIT License", destination: licenseURL)
+                    }
+
+                    Text("Copyright © 2026 NimBold. All rights reserved.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-
-                LabeledContent("Source") {
-                    Link("nimbold/Firelink", destination: projectURL)
-                }
-            }
-
-            Section("Credits") {
-                LabeledContent("Download engine") {
-                    Link("aria2", destination: aria2URL)
-                }
-
-                Text("Firelink uses aria2c for segmented HTTP, HTTPS, FTP, and SFTP downloads.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Legal") {
-                LabeledContent("License") {
-                    Link("MIT License", destination: licenseURL)
-                }
-
-                Text("Copyright © 2026 NimBold. Firelink is released under the MIT License.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .font(.caption)
+                .padding(.vertical, 4)
             }
         }
         .formStyle(.grouped)

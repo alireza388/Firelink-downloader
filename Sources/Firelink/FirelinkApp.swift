@@ -91,7 +91,7 @@ struct FirelinkApp: App {
             if let nsImage = { () -> NSImage? in
                 guard let url = menuBarIconURL(),
                       let img = NSImage(contentsOf: url) else { return nil }
-                img.size = NSSize(width: 21, height: 21)
+                img.size = NSSize(width: 23, height: 23)
                 img.isTemplate = true
                 return img
             }() {

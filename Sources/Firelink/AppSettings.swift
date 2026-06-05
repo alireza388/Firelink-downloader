@@ -29,14 +29,19 @@ enum ProxyType: String, Codable, CaseIterable, Sendable {
     var title: String {
         switch self {
         case .http: "HTTP"
-        case .https: "HTTPS"
-        case .ftp: "FTP"
+        case .https: "HTTPS (legacy)"
+        case .ftp: "FTP (legacy)"
         case .socks5: "SOCKS5"
         }
     }
 
     var uriScheme: String {
-        rawValue
+        switch self {
+        case .http, .https, .ftp:
+            "http"
+        case .socks5:
+            "socks5"
+        }
     }
 }
 
@@ -50,6 +55,9 @@ struct ProxySettings: Codable, Equatable, Sendable {
         var copy = self
         copy.host = copy.host.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.port = min(max(copy.port, 1), 65_535)
+        if copy.type != .http {
+            copy.type = .http
+        }
         return copy
     }
 
@@ -195,6 +203,10 @@ final class AppSettings: ObservableObject {
     }
 
     func addSiteLogin(urlPattern: String, username: String, password: String) {
+        saveSiteLogin(id: nil, urlPattern: urlPattern, username: username, password: password)
+    }
+
+    func saveSiteLogin(id: UUID?, urlPattern: String, username: String, password: String) {
         let pattern = urlPattern.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -203,12 +215,39 @@ final class AppSettings: ObservableObject {
             return
         }
 
-        let login = SiteLogin(urlPattern: pattern, username: cleanUsername)
-        guard KeychainCredentialStore.setPassword(password, for: login.id) else {
-            message = "Could not save the password to Keychain."
+        if let id,
+           siteLogins.contains(where: { $0.id != id && $0.urlPattern.caseInsensitiveCompare(pattern) == .orderedSame }) {
+            message = "A login for \(pattern) already exists."
             return
         }
 
+        if let index = siteLogins.firstIndex(where: { login in
+            if let id {
+                return login.id == id
+            }
+            return login.urlPattern.caseInsensitiveCompare(pattern) == .orderedSame
+        }) {
+            let loginID = siteLogins[index].id
+            if !password.isEmpty, !KeychainCredentialStore.setPassword(password, for: loginID) {
+                message = "Could not save the password to Keychain."
+                return
+            }
+            siteLogins[index].urlPattern = pattern
+            siteLogins[index].username = cleanUsername
+            message = "Updated login for \(pattern)."
+            return
+        }
+
+        guard !password.isEmpty else {
+            message = "Add a password."
+            return
+        }
+
+        let login = SiteLogin(urlPattern: pattern, username: cleanUsername)
+        if !KeychainCredentialStore.setPassword(password, for: login.id) {
+            message = "Could not save the password to Keychain."
+            return
+        }
         siteLogins.append(login)
         message = "Added login for \(pattern)."
     }

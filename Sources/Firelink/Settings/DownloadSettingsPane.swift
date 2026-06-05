@@ -36,7 +36,7 @@ struct DownloadSettingsPane: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("Set to 0 for unlimited speed. This limit is divided across all active parallel downloads.")
+                Text("Set to 0 for unlimited speed. This limit is divided across currently active downloads.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

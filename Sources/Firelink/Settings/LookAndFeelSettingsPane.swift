@@ -37,7 +37,7 @@ struct LookAndFeelSettingsPane: View {
             Section("Menu Bar") {
                 Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
                 
-                Text("Provides quick access to downloads and queues from the macOS menu bar. Restart required if hiding.")
+                Text("Provides quick access to downloads and queues from the macOS menu bar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

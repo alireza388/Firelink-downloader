@@ -19,6 +19,7 @@ struct FirelinkApp: App {
         
         extensionServer = LocalExtensionServer(downloadController: controller)
         extensionServer?.start()
+        controller.extensionServerPort = extensionServer?.port
     }
 
     var body: some Scene {

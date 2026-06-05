@@ -15,13 +15,6 @@ struct NetworkSettingsPane: View {
                 .pickerStyle(.radioGroup)
 
                 if settings.proxySettings.mode == .custom {
-                    Picker("Proxy type", selection: proxyBinding(\.type)) {
-                        ForEach(ProxyType.allCases, id: \.self) { type in
-                            Text(type.title)
-                                .tag(type)
-                        }
-                    }
-
                     Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                         GridRow {
                             Text("IP or Host")
@@ -42,6 +35,12 @@ struct NetworkSettingsPane: View {
                 Text(networkSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if settings.proxySettings.mode == .custom {
+                    Text("aria2 uses an HTTP-style proxy for all protocols. SOCKS proxies are not supported by aria2.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)

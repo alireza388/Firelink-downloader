@@ -212,7 +212,7 @@ final class Aria2DownloadEngine {
             "id": UUID().uuidString,
             "params": [
                 "token:\(handle.rpcSecret)",
-                ["max-download-limit": limitValue]
+                ["max-overall-download-limit": limitValue]
             ]
         ]
 
@@ -255,7 +255,7 @@ final class Aria2DownloadEngine {
         ]
 
         if let speedLimitKiBPerSecond, speedLimitKiBPerSecond > 0 {
-            arguments.append("--max-download-limit=\(speedLimitKiBPerSecond)K")
+            arguments.append("--max-overall-download-limit=\(speedLimitKiBPerSecond)K")
         }
 
         arguments.append(contentsOf: try proxyArguments(for: item, configuration: proxyConfiguration))

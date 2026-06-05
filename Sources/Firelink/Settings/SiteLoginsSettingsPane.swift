@@ -5,13 +5,14 @@ struct SiteLoginsSettingsPane: View {
     @State private var urlPattern = ""
     @State private var username = ""
     @State private var password = ""
+    @State private var editingLoginID: UUID?
 
     var body: some View {
         Form {
-            Section("Add Login") {
+            Section(editingLoginID == nil ? "Add Login" : "Edit Login") {
                 TextField("URL Pattern (e.g., *.github.com)", text: $urlPattern)
                 TextField("Username", text: $username)
-                SecureField("Password", text: $password)
+                SecureField(editingLoginID == nil ? "Password" : "Password (leave blank to keep current)", text: $password)
 
                 HStack {
                     Text(settings.message)
@@ -19,15 +20,23 @@ struct SiteLoginsSettingsPane: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer()
+                    if editingLoginID != nil {
+                        Button("Cancel Edit") {
+                            resetForm()
+                        }
+                    }
                     Button {
-                        settings.addSiteLogin(urlPattern: urlPattern, username: username, password: password)
-                        if settings.message.hasPrefix("Added") {
-                            urlPattern = ""
-                            username = ""
-                            password = ""
+                        settings.saveSiteLogin(
+                            id: editingLoginID,
+                            urlPattern: urlPattern,
+                            username: username,
+                            password: password
+                        )
+                        if settings.message.hasPrefix("Added") || settings.message.hasPrefix("Updated") {
+                            resetForm()
                         }
                     } label: {
-                        Label("Add Login", systemImage: "plus")
+                        Label(editingLoginID == nil ? "Add Login" : "Save Login", systemImage: editingLoginID == nil ? "plus" : "checkmark")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -49,6 +58,13 @@ struct SiteLoginsSettingsPane: View {
                                 Spacer()
                                 Text(login.username)
                                     .foregroundStyle(.secondary)
+                                Button {
+                                    edit(login)
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
                             }
                         }
                         .onDelete(perform: settings.deleteSiteLogins)
@@ -58,5 +74,19 @@ struct SiteLoginsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func edit(_ login: SiteLogin) {
+        editingLoginID = login.id
+        urlPattern = login.urlPattern
+        username = login.username
+        password = ""
+    }
+
+    private func resetForm() {
+        editingLoginID = nil
+        urlPattern = ""
+        username = ""
+        password = ""
     }
 }

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct IntegrationSettingsPane: View {
+    @EnvironmentObject private var controller: DownloadController
     @State private var copiedExtensionURL: URL?
     @State private var installMessage = ""
 
@@ -54,9 +55,31 @@ struct IntegrationSettingsPane: View {
                         .foregroundStyle(.secondary)
                 }
                 
-                Text("Until the official Firefox Add-ons listing is approved, load the extension manually:\n1. Click 'Copy to Downloads'.\n2. Click 'Open Firefox Debugging'.\n3. Click 'This Firefox' on the left sidebar.\n4. Click 'Load Temporary Add-on' and select manifest.json inside Downloads/Firelink Firefox Extension.\n\nKeep the copied folder while Firefox is running. Temporary add-ons are removed when Firefox restarts, so you can delete the folder after restart or after installing the official add-on.")
+                Text("Firelink Companion has been submitted to Mozilla and is awaiting review. Until it is approved, load the extension manually:\n1. Click 'Copy to Downloads'.\n2. Click 'Open Firefox Debugging'.\n3. Click 'This Firefox' on the left sidebar.\n4. Click 'Load Temporary Add-on' and select manifest.json inside Downloads/Firelink Firefox Extension.\n\nKeep the copied folder while Firefox is running. Temporary add-ons are removed when Firefox restarts, so you can delete the folder after restart or after installing the approved add-on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Diagnostics") {
+                LabeledContent("Local receiver") {
+                    if let port = controller.extensionServerPort {
+                        Label("Listening on 127.0.0.1:\(port)", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Not listening", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                LabeledContent("Copied folder") {
+                    if FileManager.default.fileExists(atPath: downloadsExtensionURL.appendingPathComponent("manifest.json").path) {
+                        Label("Ready", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Not copied", systemImage: "folder.badge.questionmark")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             
             Section("Permissions & Privacy") {

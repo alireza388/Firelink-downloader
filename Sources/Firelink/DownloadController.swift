@@ -10,6 +10,7 @@ final class DownloadController: ObservableObject {
     @Published var engineMessage = ""
     @Published var pendingPasteboardText: String?
     @Published var pendingReferer: String?
+    @Published var extensionServerPort: UInt16?
     var pendingAddQueueID: UUID?
 
     private let settings: AppSettings
@@ -217,6 +218,7 @@ final class DownloadController: ObservableObject {
         }
         automaticRetryCounts[item.id] = nil
         saveDownloads()
+        applySpeedLimitsToActiveDownloads()
         updateSleepActivity()
         pumpQueue()
     }
@@ -242,6 +244,7 @@ final class DownloadController: ObservableObject {
 
         engineMessage = "Paused \(activeItems.count) active download\(activeItems.count == 1 ? "" : "s")."
         saveDownloads()
+        applySpeedLimitsToActiveDownloads()
         updateSleepActivity()
         pumpQueue()
     }
@@ -262,6 +265,7 @@ final class DownloadController: ObservableObject {
         }
         automaticRetryCounts[item.id] = nil
         saveDownloads()
+        applySpeedLimitsToActiveDownloads()
         updateSleepActivity()
     }
 
@@ -330,6 +334,7 @@ final class DownloadController: ObservableObject {
         }
         automaticRetryCounts[item.id] = nil
         saveDownloads()
+        applySpeedLimitsToActiveDownloads()
         updateSleepActivity()
         pumpQueue()
     }
@@ -353,6 +358,7 @@ final class DownloadController: ObservableObject {
         downloads.removeAll { $0.id == item.id }
         automaticRetryCounts[item.id] = nil
         saveDownloads()
+        applySpeedLimitsToActiveDownloads()
         updateSleepActivity()
     }
 
@@ -511,6 +517,7 @@ final class DownloadController: ObservableObject {
                         }
 
                         self.pumpQueue()
+                        self.applySpeedLimitsToActiveDownloads()
                         self.updateSleepActivity()
                     }
                 }
@@ -522,9 +529,11 @@ final class DownloadController: ObservableObject {
                 $0.message = "Process \(handle.processIdentifier)"
             }
             saveDownloads()
+            applySpeedLimitsToActiveDownloads()
             updateSleepActivity()
         } catch {
             handleDownloadFailure(itemID: item.id, error: error)
+            applySpeedLimitsToActiveDownloads()
             updateSleepActivity()
             pumpQueue()
         }
@@ -569,25 +578,15 @@ final class DownloadController: ObservableObject {
     }
 
     private func normalizedSpeedLimit(_ value: Int?) -> Int? {
-        guard let value, value > 0 else { return nil }
-        return min(value, 10_485_760)
+        SpeedLimitPolicy.normalized(value)
     }
 
     private func effectiveSpeedLimitKiBPerSecond(for item: DownloadItem) -> Int? {
-        let itemLimit = normalizedSpeedLimit(item.speedLimitKiBPerSecond)
-        let globalLimit = normalizedSpeedLimit(settings.globalSpeedLimitKiBPerSecond)
-            .map { max(1, $0 / max(settings.maxConcurrentDownloads, 1)) }
-
-        switch (itemLimit, globalLimit) {
-        case let (.some(itemLimit), .some(globalLimit)):
-            return min(itemLimit, globalLimit)
-        case let (.some(itemLimit), .none):
-            return itemLimit
-        case let (.none, .some(globalLimit)):
-            return globalLimit
-        case (.none, .none):
-            return nil
-        }
+        SpeedLimitPolicy.effectiveLimit(
+            itemLimit: item.speedLimitKiBPerSecond,
+            globalLimit: settings.globalSpeedLimitKiBPerSecond,
+            activeDownloadCount: activeCount
+        )
     }
 
     private func applySpeedLimitsToActiveDownloads() {
@@ -884,6 +883,36 @@ final class DownloadController: ObservableObject {
 private struct StoredDownloadState: Codable {
     var queues: [DownloadQueue]
     var downloads: [DownloadItem]
+}
+
+enum SpeedLimitPolicy {
+    static let maximumKiBPerSecond = 10_485_760
+
+    static func normalized(_ value: Int?) -> Int? {
+        guard let value, value > 0 else { return nil }
+        return min(value, maximumKiBPerSecond)
+    }
+
+    static func effectiveLimit(
+        itemLimit: Int?,
+        globalLimit: Int?,
+        activeDownloadCount: Int
+    ) -> Int? {
+        let itemLimit = normalized(itemLimit)
+        let globalLimit = normalized(globalLimit)
+            .map { max(1, $0 / max(activeDownloadCount, 1)) }
+
+        switch (itemLimit, globalLimit) {
+        case let (.some(itemLimit), .some(globalLimit)):
+            return min(itemLimit, globalLimit)
+        case let (.some(itemLimit), .none):
+            return itemLimit
+        case let (.none, .some(globalLimit)):
+            return globalLimit
+        case (.none, .none):
+            return nil
+        }
+    }
 }
 
 private final class SleepActivityHandle: @unchecked Sendable {

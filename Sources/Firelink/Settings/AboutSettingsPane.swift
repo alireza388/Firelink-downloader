@@ -30,7 +30,7 @@ struct AboutSettingsPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Firelink")
                             .font(.title2.weight(.bold))
-                        Text("Version \(appVersion) (\(buildNumber))")
+                        Text("Version \(appVersion)")
                             .foregroundStyle(.secondary)
                         Text("A native macOS download manager for fast, organized, segmented transfers.")
                             .font(.caption)

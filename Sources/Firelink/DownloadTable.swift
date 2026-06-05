@@ -164,9 +164,9 @@ struct DownloadTable: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
                 performPrimaryAction(for: item)
-            }
+            })
     }
 
     private func performPrimaryAction(for item: DownloadItem) {

@@ -42,10 +42,23 @@ if [[ -n "$ARIA2C_PATH" && -x "$ARIA2C_PATH" ]]; then
   fi
   
   FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+  mkdir -p "$FRAMEWORKS_DIR"
   dylibbundler -od -b -x "$RESOURCES_DIR/aria2c" -d "$FRAMEWORKS_DIR" -p "@executable_path/../Frameworks/"
 else
   echo "WARNING: aria2c not found! It will not be bundled. Please install it first."
 fi
+
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+mkdir -p "$FRAMEWORKS_DIR"
+if [ -d ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" ]; then
+  cp -R ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" "$FRAMEWORKS_DIR/Sparkle.framework"
+fi
+if [ -d ".build/artifacts/sparkle/Sparkle/SparkleCore.xcframework/macos-arm64_x86_64/SparkleCore.framework" ]; then
+  cp -R ".build/artifacts/sparkle/Sparkle/SparkleCore.xcframework/macos-arm64_x86_64/SparkleCore.framework" "$FRAMEWORKS_DIR/SparkleCore.framework"
+fi
+
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/$APP_NAME" || true
+
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

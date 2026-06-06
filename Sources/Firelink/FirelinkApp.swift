@@ -1,7 +1,18 @@
 import SwiftUI
+import Sparkle
+
+final class SparkleUpdater: ObservableObject {
+    let controller: SPUStandardUpdaterController
+    init(controller: SPUStandardUpdaterController) {
+        self.controller = controller
+    }
+}
 
 @main
 struct FirelinkApp: App {
+    private let updaterController: SPUStandardUpdaterController
+    @StateObject private var sparkleUpdater: SparkleUpdater
+
     @StateObject private var settings: AppSettings
     @StateObject private var controller: DownloadController
     @StateObject private var schedulerController: SchedulerController
@@ -11,6 +22,11 @@ struct FirelinkApp: App {
     private let extensionServer: LocalExtensionServer?
 
     init() {
+        // Initialize Sparkle updater
+        let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        self.updaterController = updaterController
+        self._sparkleUpdater = StateObject(wrappedValue: SparkleUpdater(controller: updaterController))
+
         let settings = AppSettings()
         let controller = DownloadController(settings: settings)
         _settings = StateObject(wrappedValue: settings)
@@ -28,6 +44,7 @@ struct FirelinkApp: App {
                 .environmentObject(controller)
                 .environmentObject(settings)
                 .environmentObject(schedulerController)
+                .environmentObject(sparkleUpdater)
                 .modifier(AppThemeModifier(theme: settings.appTheme))
                 .modifier(AppFontSizeModifier(fontSize: settings.appFontSize))
                 .onOpenURL { url in
@@ -87,6 +104,7 @@ struct FirelinkApp: App {
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             TrayMenuView()
                 .environmentObject(controller)
+                .environmentObject(sparkleUpdater)
         } label: {
             if let nsImage = { () -> NSImage? in
                 guard let url = menuBarIconURL(),

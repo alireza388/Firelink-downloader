@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 struct AboutSettingsPane: View {
-    @StateObject private var updateChecker = AppUpdateChecker()
-    @State private var availableUpdate: AvailableUpdate?
+    @EnvironmentObject var sparkleUpdater: SparkleUpdater
 
     private let developerProfileURL = URL(string: "https://github.com/nimbold")!
     private let projectURL = URL(string: "https://github.com/nimbold/Firelink")!
@@ -42,42 +41,17 @@ struct AboutSettingsPane: View {
 
             Section("Updates") {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Label(updateChecker.status.message, systemImage: updateStatusSymbol)
-                            .foregroundStyle(updateStatusColor)
-                        
-                        Spacer()
-                        
-                        if let lastChecked = updateChecker.lastChecked {
-                            Text("Last checked: \(lastChecked, format: .dateTime.month().day().hour().minute())")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
                     HStack(spacing: 12) {
                         Button {
-                            Task {
-                                await updateChecker.checkForUpdates(currentVersion: appVersion)
-                            }
+                            sparkleUpdater.controller.checkForUpdates(nil)
                         } label: {
                             Label("Check for Updates", systemImage: "arrow.clockwise")
                         }
-                        .disabled(updateChecker.status == .checking)
-
-                        if case .updateAvailable(_, let releaseURL) = updateChecker.status {
-                            Button {
-                                NSWorkspace.shared.open(releaseURL)
-                            } label: {
-                                Label("Download Latest Version", systemImage: "square.and.arrow.down")
-                            }
-                            .buttonStyle(.borderedProminent)
-                        } else {
-                            Button {
-                                openReleasesPage()
-                            } label: {
-                                Label("Open Releases", systemImage: "arrow.up.right.square")
-                            }
+                        
+                        Button {
+                            NSWorkspace.shared.open(projectURL.appendingPathComponent("releases"))
+                        } label: {
+                            Label("Open Releases", systemImage: "arrow.up.right.square")
                         }
                     }
                 }
@@ -121,67 +95,5 @@ struct AboutSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: updateChecker.status) { _, status in
-            if case .updateAvailable(let latestVersion, let releaseURL) = status {
-                availableUpdate = AvailableUpdate(version: latestVersion, url: releaseURL)
-            }
-        }
-        .alert("Update Available", isPresented: Binding(
-            get: { availableUpdate != nil },
-            set: { isPresented in
-                if !isPresented {
-                    availableUpdate = nil
-                }
-            }
-        )) {
-            Button("Not Now", role: .cancel) {
-                availableUpdate = nil
-            }
-            Button("Yes") {
-                if let releaseURL = availableUpdate?.url {
-                    NSWorkspace.shared.open(releaseURL)
-                }
-                availableUpdate = nil
-            }
-        } message: {
-            Text("Firelink version \(availableUpdate?.version ?? "") is available. Do you want to open the download page?")
-        }
-    }
-
-    private var updateStatusSymbol: String {
-        switch updateChecker.status {
-        case .idle:
-            "sparkle.magnifyingglass"
-        case .checking:
-            "arrow.clockwise"
-        case .upToDate:
-            "checkmark.seal.fill"
-        case .updateAvailable:
-            "arrow.down.circle.fill"
-        case .unavailable:
-            "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var updateStatusColor: Color {
-        switch updateChecker.status {
-        case .idle, .checking:
-            .secondary
-        case .upToDate:
-            .green
-        case .updateAvailable:
-            .accentColor
-        case .unavailable:
-            .orange
-        }
-    }
-
-    private func openReleasesPage() {
-        NSWorkspace.shared.open(updateChecker.releasesURL)
-    }
-
-    private struct AvailableUpdate: Equatable {
-        var version: String
-        var url: URL
     }
 }

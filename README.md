@@ -50,6 +50,7 @@ Dark mode is shown by default with privacy-safe example downloads. Light mode is
 - 🗂️ **Smart Categories:** Automatic file organization (`Musics`, `Movies`, `Compressed`, etc.).
 - 🖱️ **Drag-and-Drop:** Import URLs, text files, and move queued downloads between queues.
 - 🛡️ **Reliability:** Automatic download recovery and retry handling.
+- 🔄 **Sparkle Updates:** Secure, automatic in-app updates using EdDSA cryptographic signatures.
 - 🔒 **Keychain Security:** Local macOS Keychain integration for site credentials.
 - ⚙️ **Power & Settings:** Cross-platform styled Settings UI, live Speed Limiter, and system sleep prevention during active downloads.
 

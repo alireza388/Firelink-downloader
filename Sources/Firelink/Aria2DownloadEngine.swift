@@ -126,6 +126,14 @@ final class Aria2DownloadEngine {
 
         let rpcPort = Self.findFreePort()
         let rpcSecret = UUID().uuidString
+        let confURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("firelink-aria2-\(UUID().uuidString).conf")
+        do {
+            let confContent = "rpc-secret=\(rpcSecret)\n"
+            try confContent.write(to: confURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: confURL.path)
+        } catch {
+            throw EngineError.launchFailed("Could not write secure configuration file: \(error.localizedDescription)")
+        }
 
         let process = Process()
         process.executableURL = executableURL
@@ -134,7 +142,7 @@ final class Aria2DownloadEngine {
             proxyConfiguration: proxyConfiguration,
             speedLimitKiBPerSecond: speedLimitKiBPerSecond,
             rpcPort: rpcPort,
-            rpcSecret: rpcSecret
+            confURL: confURL
         )
 
         let inputPipe = Pipe()
@@ -168,6 +176,7 @@ final class Aria2DownloadEngine {
         }
 
         process.terminationHandler = { finishedProcess in
+            try? FileManager.default.removeItem(at: confURL)
             completionMonitor.cancel()
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
@@ -195,6 +204,7 @@ final class Aria2DownloadEngine {
             }
             inputPipe.fileHandleForWriting.closeFile()
         } catch {
+            try? FileManager.default.removeItem(at: confURL)
             throw EngineError.launchFailed(error.localizedDescription)
         }
 
@@ -212,6 +222,7 @@ final class Aria2DownloadEngine {
             if process.isRunning {
                 process.terminate()
             }
+            try? FileManager.default.removeItem(at: confURL)
         }
     }
 
@@ -325,9 +336,10 @@ final class Aria2DownloadEngine {
         proxyConfiguration: DownloadProxyConfiguration,
         speedLimitKiBPerSecond: Int?,
         rpcPort: Int,
-        rpcSecret: String
+        confURL: URL
     ) throws -> [String] {
         var arguments = [
+            "--conf-path=\(confURL.path)",
             "--continue=true",
             "--allow-overwrite=false",
             "--auto-file-renaming=true",
@@ -344,7 +356,6 @@ final class Aria2DownloadEngine {
             "--input-file=-",
             "--enable-rpc=true",
             "--rpc-listen-port=\(rpcPort)",
-            "--rpc-secret=\(rpcSecret)",
             "--rpc-listen-all=false"
         ]
 

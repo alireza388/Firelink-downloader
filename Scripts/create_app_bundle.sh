@@ -78,6 +78,12 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>Firelink needs permission to control Finder so it can sleep, restart, or shut down your Mac after scheduled downloads finish.</string>
+  <key>SUPublicEDKey</key>
+  <string>TnontDdbFQHbKkjpWVlHaMEbMahiCugSHOcUF1MwKE0=</string>
+  <key>SUFeedURL</key>
+  <string>https://raw.githubusercontent.com/nimbold/Firelink/main/appcast.xml</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
 </dict>
 </plist>
 PLIST

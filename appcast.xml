@@ -13,9 +13,9 @@
       <enclosure url="https://github.com/nimbold/Firelink/releases/download/v0.5.7/Firelink-0.5.7-mac-arm64.dmg"
                  sparkle:version="0.5.7"
                  sparkle:shortVersionString="0.5.7"
-                 length="7855846"
+                 length="8871979"
                  type="application/octet-stream"
-                 sparkle:edSignature="WQPg1Pv0syLjVehJSn/39gmYxAPwAeHdUgJQxCXnXG4wKpqKWt9F9/UqeMilcxK4Dba0S0cn3GIk1KZJ7vR8Cw==" />
+                 sparkle:edSignature="Y4QEJqGw6IeXL5JmaRqt5U22Bmc8JD02+oLRIFoKgOJO4v6p6+AmBP9VoM3yp/MAzj+gJMWiI/Gf4aPx4x3dAg==" />
     </item>
   </channel>
 </rss>

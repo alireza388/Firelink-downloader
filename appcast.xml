@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Firelink Updates</title>
+    <link>https://github.com/nimbold/Firelink</link>
+    <description>Most recent updates for Firelink</description>
+    <language>en</language>
+    <item>
+      <title>Version 0.5.7</title>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/nimbold/Firelink/releases/tag/v0.5.7</sparkle:releaseNotesLink>
+      <pubDate>Sat, 06 Jun 2026 11:36:06 +0000</pubDate>
+      <enclosure url="https://github.com/nimbold/Firelink/releases/download/v0.5.7/Firelink-0.5.7-mac-arm64.dmg"
+                 sparkle:version="0.5.7"
+                 sparkle:shortVersionString="0.5.7"
+                 length="7855846"
+                 type="application/octet-stream"
+                 sparkle:edSignature="WQPg1Pv0syLjVehJSn/39gmYxAPwAeHdUgJQxCXnXG4wKpqKWt9F9/UqeMilcxK4Dba0S0cn3GIk1KZJ7vR8Cw==" />
+    </item>
+  </channel>
+</rss>

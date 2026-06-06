@@ -2,7 +2,23 @@
 .build/
 build/
 dist/
+*.dmg
 DerivedData/
 .vscode/
 *.xcuserdata/
 *.xcuserstate
+
+# Local secrets and exported signing keys
+.env
+.env.*
+*.key
+*.pem
+*.p8
+*.p12
+*.cer
+*.der
+*.mobileprovision
+sparkle_private_key*
+SparklePrivateKey*
+private-key*
+private_key*

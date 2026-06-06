@@ -15,10 +15,16 @@ final class SparkleUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
     
     func checkForUpdates() {
+        guard controller.updater.canCheckForUpdates else {
+            isChecking = false
+            updateStatus = "Update check is already in progress."
+            return
+        }
+
         isChecking = true
         updateStatus = "Checking for updates..."
         foundUpdateItem = nil
-        controller.updater.checkForUpdatesInBackground()
+        controller.checkForUpdates(nil)
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
@@ -46,6 +52,12 @@ final class SparkleUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
             
             self.isChecking = false
             self.updateStatus = "Update check failed: \(error.localizedDescription)"
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        DispatchQueue.main.async {
+            self.isChecking = false
         }
     }
 }

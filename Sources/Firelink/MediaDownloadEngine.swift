@@ -44,6 +44,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
         var arguments = [
             "--newline",
             "--ffmpeg-location", ffmpegURL.path,
+            "--extractor-args", "youtube:player_client=ios,tv",
             "-o", item.destinationPath
         ]
         

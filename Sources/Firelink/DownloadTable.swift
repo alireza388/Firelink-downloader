@@ -72,10 +72,10 @@ struct DownloadTable: View {
 
                 TableColumn("Status", value: \.status.rawValue) { item in
                     doubleClickableCell(for: item) {
-                        Text(item.status.rawValue)
+                        statusCell(for: item)
                     }
                 }
-                .width(min: 80, ideal: 105)
+                .width(min: 115, ideal: 170)
 
                 TableColumn("Speed", value: \.displaySpeedText) { item in
                     doubleClickableCell(for: item) {
@@ -164,9 +164,9 @@ struct DownloadTable: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
+            .onTapGesture(count: 2) {
                 performPrimaryAction(for: item)
-            })
+            }
     }
 
     private func performPrimaryAction(for item: DownloadItem) {
@@ -174,6 +174,20 @@ struct DownloadTable: View {
             openFile(item)
         } else {
             openWindow(value: item.id)
+        }
+    }
+
+    @ViewBuilder
+    private func statusCell(for item: DownloadItem) -> some View {
+        let message = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if item.status == .downloading, !message.isEmpty {
+            Text(message)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            Text(item.status.rawValue)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 

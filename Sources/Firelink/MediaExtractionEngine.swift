@@ -33,6 +33,7 @@ struct CleanFormatOption: Identifiable, Equatable, Sendable {
     let isAudioOnly: Bool
     let symbol: String
     let outputExtension: String
+    let detail: String
 }
 
 enum MediaExtractionEngine {
@@ -97,6 +98,8 @@ enum MediaExtractionEngine {
             args.append(contentsOf: ["--cookies-from-browser", browserName])
         }
 
+        appendJavaScriptRuntimeArguments(to: &args)
+
         for header in transferOptions.requestHeaders.map(\.normalized) where !header.isEmpty {
             args.append(contentsOf: ["--add-header", header.headerLine])
         }
@@ -110,14 +113,47 @@ enum MediaExtractionEngine {
             args.append(contentsOf: ["--username", credentials.username, "--password", credentials.password])
         }
     }
-    
+
+    private static func appendJavaScriptRuntimeArguments(to args: inout [String]) {
+        if let denoPath = executablePath(named: "deno", candidates: [
+            "/opt/homebrew/bin/deno",
+            "/usr/local/bin/deno"
+        ]) {
+            args.append(contentsOf: ["--js-runtimes", "deno:\(denoPath)"])
+        }
+
+        if let nodePath = executablePath(named: "node", candidates: [
+            "/opt/homebrew/bin/node",
+            "/usr/local/bin/node",
+            "/usr/bin/node"
+        ]) {
+            args.append(contentsOf: ["--js-runtimes", "node:\(nodePath)"])
+        }
+    }
+
+    private static func executablePath(named name: String, candidates: [String]) -> String? {
+        if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return path
+        }
+
+        let pathEnvironment = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for directory in pathEnvironment.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(name).path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
     private static func extractOptions(from metadata: MediaMetadata) -> [CleanFormatOption] {
         var options: [CleanFormatOption] = []
         let rawFormats = metadata.formats ?? []
-        
+
         let heights = rawFormats.compactMap { $0.height }.filter { $0 > 0 }
         let maxHeight = heights.max() ?? 0
-        
+
         let standardResolutions = [
             (2160, "4K"),
             (1440, "1440p"),
@@ -126,60 +162,75 @@ enum MediaExtractionEngine {
             (480, "480p"),
             (360, "360p")
         ]
-        
-        var addedResolutions = Set<Int>()
-        
-        for (res, name) in standardResolutions {
-            if maxHeight >= res - 100 && !addedResolutions.contains(res) { // -100 for some leeway (e.g., 1000 instead of 1080)
+
+        let availableResolutions = standardResolutions.filter { resolution, _ in
+            maxHeight == 0 || maxHeight >= resolution - 100
+        }
+        let videoQualities = [(nil as Int?, "Best")] + availableResolutions.map { (Optional($0.0), $0.1) }
+        let videoContainers = [
+            ("mp4", "MP4"),
+            ("mkv", "MKV"),
+            ("webm", "WebM")
+        ]
+
+        for (height, qualityName) in videoQualities {
+            for (container, containerName) in videoContainers {
                 options.append(CleanFormatOption(
-                    name: "Video \(name)",
-                    formatSelector: "bestvideo[height<=\(res)]+bestaudio/best",
+                    name: "\(qualityName) \(containerName)",
+                    formatSelector: videoSelector(height: height, container: container),
                     isAudioOnly: false,
                     symbol: "play.tv.fill",
-                    outputExtension: "mp4"
+                    outputExtension: container,
+                    detail: height == nil ? "Best available video" : "Up to \(qualityName)"
                 ))
-                addedResolutions.insert(res)
             }
         }
-        
-        if options.isEmpty && maxHeight > 0 {
-            // Fallback if no standard resolution matched
-            options.append(CleanFormatOption(
-                name: "Best Video",
-                formatSelector: "bestvideo+bestaudio/best",
-                isAudioOnly: false,
-                symbol: "play.tv.fill",
-                outputExtension: "mp4"
-            ))
-        } else if options.isEmpty {
-            // If we really don't have height info, just offer best
-            options.append(CleanFormatOption(
-                name: "Default Video",
-                formatSelector: "best",
-                isAudioOnly: false,
-                symbol: "play.tv.fill",
-                outputExtension: "mp4"
-            ))
-        }
-        
-        // Add Audio options
+
         options.append(CleanFormatOption(
             name: "Audio MP3",
-            formatSelector: "bestaudio/best", // Actual extraction to MP3 needs ffmpeg, which we have. We will handle the conversion flags later in the download engine.
+            formatSelector: "bestaudio/best",
             isAudioOnly: true,
             symbol: "music.note",
-            outputExtension: "mp3"
+            outputExtension: "mp3",
+            detail: "Converted with ffmpeg"
         ))
-        
+
         options.append(CleanFormatOption(
             name: "Audio M4A",
             formatSelector: "bestaudio[ext=m4a]/bestaudio/best",
             isAudioOnly: true,
             symbol: "waveform",
-            outputExtension: "m4a"
+            outputExtension: "m4a",
+            detail: "Prefer native M4A"
         ))
-        
+
+        options.append(CleanFormatOption(
+            name: "Audio Opus",
+            formatSelector: "bestaudio[ext=webm]/bestaudio/best",
+            isAudioOnly: true,
+            symbol: "waveform",
+            outputExtension: "opus",
+            detail: "Efficient audio"
+        ))
+
         return options
+    }
+
+    private static func videoSelector(height: Int?, container: String) -> String {
+        let filter = heightFilter(height)
+        switch container {
+        case "mp4":
+            return "bestvideo\(filter)[ext=mp4]+bestaudio[ext=m4a]/best\(filter)[ext=mp4]/bestvideo\(filter)+bestaudio/best\(filter)"
+        case "webm":
+            return "bestvideo\(filter)[ext=webm]+bestaudio[ext=webm]/best\(filter)[ext=webm]/bestvideo\(filter)+bestaudio/best\(filter)"
+        default:
+            return "bestvideo\(filter)+bestaudio/best\(filter)"
+        }
+    }
+
+    private static func heightFilter(_ height: Int?) -> String {
+        guard let height else { return "" }
+        return "[height<=\(height)]"
     }
 }
 

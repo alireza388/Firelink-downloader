@@ -17,6 +17,14 @@ struct MediaInspectorCard: View {
     @State private var errorMessage: String?
     @State private var loadTask: Task<Void, Never>?
 
+    private var videoOptions: [CleanFormatOption] {
+        options.filter { !$0.isAudioOnly }
+    }
+
+    private var audioOptions: [CleanFormatOption] {
+        options.filter(\.isAudioOnly)
+    }
+
     var body: some View {
         ZStack {
             // Blurred Background
@@ -54,9 +62,12 @@ struct MediaInspectorCard: View {
                                 .font(.headline)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(statusText)
-                                .font(.headline)
-                                .foregroundStyle(.secondary)
+                            VStack(spacing: 6) {
+                                Text(statusText)
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                                cookieStatusLabel
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -135,26 +146,15 @@ struct MediaInspectorCard: View {
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.tertiary)
                     }
+
+                    cookieStatusLabel
                 }
                 Spacer()
             }
 
             Divider()
 
-            // Format Picker
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Select Format")
-                    .font(.subheadline.weight(.semibold))
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(options) { option in
-                            formatCard(for: option)
-                        }
-                    }
-                    .padding(.bottom, 4) // For shadow
-                }
-            }
+            formatPickerSection
 
             Spacer()
 
@@ -175,6 +175,50 @@ struct MediaInspectorCard: View {
     }
 
     @ViewBuilder
+    private var cookieStatusLabel: some View {
+        if let browserName = cookieSource.ytDlpBrowserName {
+            Label("Using \(browserName.capitalized) cookies", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        } else {
+            Label("Browser cookies off", systemImage: "circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var formatPickerSection: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if !videoOptions.isEmpty {
+                    formatGroup(title: "Video Quality and Container", options: videoOptions)
+                }
+
+                if !audioOptions.isEmpty {
+                    formatGroup(title: "Audio", options: audioOptions)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 2)
+        }
+        .frame(minHeight: 180)
+    }
+
+    @ViewBuilder
+    private func formatGroup(title: String, options: [CleanFormatOption]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(options) { option in
+                    formatCard(for: option)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func formatCard(for option: CleanFormatOption) -> some View {
         let isSelected = selectedOptionID == option.id
 
@@ -185,14 +229,22 @@ struct MediaInspectorCard: View {
         } label: {
             VStack(spacing: 8) {
                 Image(systemName: option.symbol)
-                    .font(.system(size: 24))
+                    .font(.system(size: 22))
                     .foregroundStyle(isSelected ? .white : .accentColor)
 
-                Text(option.name)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(isSelected ? .white : .primary)
+                VStack(spacing: 2) {
+                    Text(option.name)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(option.detail)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .foregroundStyle(isSelected ? .white.opacity(0.8) : .secondary)
+                }
+                .foregroundStyle(isSelected ? .white : .primary)
             }
-            .frame(width: 100, height: 80)
+            .frame(maxWidth: .infinity, minHeight: 82)
+            .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(isSelected ? Color.accentColor : Color(NSColor.controlBackgroundColor))
@@ -215,9 +267,9 @@ struct MediaInspectorCard: View {
         loadTask = Task {
             do {
                 await MainActor.run {
-                    statusText = "Checking Media Engine..."
+                    statusText = "Checking yt-dlp..."
                 }
-                try await MediaEngineManager.shared.ensureInstalled()
+                try await MediaEngineManager.shared.ensureAvailable(addons: [.ytDlp])
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {

@@ -75,30 +75,62 @@ final class MediaEngineManager: ObservableObject {
         return try JSONDecoder().decode(GatekeeperConfig.self, from: data)
     }
 
-    func ensureInstalled() async throws {
-        // Simple helper for the "Extract" button flow
-        // Fetches config and installs if not installed or out of date
+    func ensureInstalled(addons requiredAddons: Set<AddonType> = Set(AddonType.allCases)) async throws {
         let config = try await fetchLatestConfig()
 
-        // Use task group to download both if needed
         try await withThrowingTaskGroup(of: Void.self) { group in
-            if case .notInstalled = ytDlpState {
-                group.addTask { try await self.install(addon: .ytDlp, from: config) }
-            } else if case .failed = ytDlpState {
-                group.addTask { try await self.install(addon: .ytDlp, from: config) }
-            } else if case let .installed(version) = ytDlpState, let configVersion = config.ytDlp?.version, version != configVersion {
-                group.addTask { try await self.install(addon: .ytDlp, from: config) }
-            }
-
-            if case .notInstalled = ffmpegState {
-                group.addTask { try await self.install(addon: .ffmpeg, from: config) }
-            } else if case .failed = ffmpegState {
-                group.addTask { try await self.install(addon: .ffmpeg, from: config) }
-            } else if case let .installed(version) = ffmpegState, let configVersion = config.ffmpeg?.version, version != configVersion {
-                group.addTask { try await self.install(addon: .ffmpeg, from: config) }
+            for addon in requiredAddons where shouldInstall(addon: addon, config: config) {
+                group.addTask {
+                    try await self.install(addon: addon, from: config)
+                }
             }
 
             try await group.waitForAll()
+        }
+    }
+
+    func ensureAvailable(addons requiredAddons: Set<AddonType>) async throws {
+        checkLocalInstallation()
+        let missingAddons = requiredAddons.filter { addon in
+            switch state(for: addon) {
+            case .installed, .downloading:
+                return false
+            case .notInstalled, .failed:
+                return true
+            }
+        }
+
+        guard !missingAddons.isEmpty else { return }
+        try await ensureInstalled(addons: missingAddons)
+    }
+
+    private func shouldInstall(addon: AddonType, config: GatekeeperConfig) -> Bool {
+        let state: AddonState
+        let configVersion: String?
+        switch addon {
+        case .ytDlp:
+            state = ytDlpState
+            configVersion = config.ytDlp?.version
+        case .ffmpeg:
+            state = ffmpegState
+            configVersion = config.ffmpeg?.version
+        }
+
+        switch state {
+        case .notInstalled, .failed:
+            return true
+        case .downloading:
+            return false
+        case .installed(let version):
+            guard let configVersion else { return false }
+            return version != configVersion
+        }
+    }
+
+    private func state(for addon: AddonType) -> AddonState {
+        switch addon {
+        case .ytDlp: return ytDlpState
+        case .ffmpeg: return ffmpegState
         }
     }
 

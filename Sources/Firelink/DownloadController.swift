@@ -210,7 +210,6 @@ final class DownloadController: ObservableObject {
         var item = item
         item.fileName = FileClassifier.sanitizedFileName(item.fileName)
         item.category = FileClassifier.category(forFileName: item.fileName)
-        item.connectionsPerServer = 1
         item.speedLimitKiBPerSecond = normalizedSpeedLimit(item.speedLimitKiBPerSecond)
         item.queueID = normalizedQueueID(item.queueID ?? DownloadQueue.mainQueueID)
 
@@ -531,6 +530,15 @@ final class DownloadController: ObservableObject {
         if item.mediaFormatSelector != nil {
             Task {
                 do {
+                    update(item.id) {
+                        guard $0.status == .downloading else { return }
+                        $0.message = "Checking media add-ons..."
+                    }
+                    try await MediaEngineManager.shared.ensureAvailable(addons: [.ytDlp, .ffmpeg])
+                    update(item.id) {
+                        guard $0.status == .downloading else { return }
+                        $0.message = "Starting yt-dlp..."
+                    }
                     let handle = try await mediaEngine.start(
                         item: item,
                         cookieSource: settings.mediaCookieSource,
@@ -633,6 +641,12 @@ final class DownloadController: ObservableObject {
                 $0.etaText = "-"
                 $0.message = "Saved to \($0.destinationPath)"
                 $0.autoResumeOnLaunch = false
+                
+                if let attr = try? FileManager.default.attributesOfItem(atPath: $0.destinationPath),
+                   let size = attr[.size] as? Int64 {
+                    $0.sizeBytes = size
+                    $0.bytesText = ByteFormatter.string(size)
+                }
             }
             self.saveDownloads()
             self.showNotification(title: "Download Completed", body: item.fileName)

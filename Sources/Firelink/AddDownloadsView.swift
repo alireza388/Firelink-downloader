@@ -80,7 +80,7 @@ struct AddDownloadsView: View {
                                 fileName: fileName,
                                 category: category,
                                 destinationDirectory: overrideDirectory ?? settings.destinationDirectory(for: category),
-                                connectionsPerServer: 1,
+                                connectionsPerServer: Int(connectionsPerServer),
                                 credentials: explicitCredentials(for: [mediaURL]) ?? settings.credentials(for: mediaURL),
                                 checksum: transferOptions.checksum,
                                 requestHeaders: transferOptions.requestHeaders,

@@ -55,7 +55,8 @@ final class MediaDownloadEngine: @unchecked Sendable {
                 let audioFormat = item.fileName.fileExtension(defaultValue: "mp3")
                 arguments.append(contentsOf: ["-x", "--audio-format", audioFormat, "--audio-quality", "0"])
             } else {
-                arguments.append(contentsOf: ["--merge-output-format", "mp4"])
+                let mergeFormat = item.fileName.fileExtension(defaultValue: "mp4")
+                arguments.append(contentsOf: ["--merge-output-format", mergeFormat])
             }
         }
 
@@ -73,7 +74,9 @@ final class MediaDownloadEngine: @unchecked Sendable {
         if let speedLimitKiBPerSecond, speedLimitKiBPerSecond > 0 {
             arguments.append(contentsOf: ["--limit-rate", "\(speedLimitKiBPerSecond)K"])
         }
-        
+
+        appendParallelDownloadArguments(to: &arguments, connectionsPerServer: item.connectionsPerServer)
+
         arguments.append(item.url.absoluteString)
         process.arguments = arguments
         
@@ -81,23 +84,20 @@ final class MediaDownloadEngine: @unchecked Sendable {
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        
+
         let parser = YTDLPProgressParser()
         let errorBuffer = LockedDataBuffer()
         let completionGate = CompletionGate(completion)
-        
+        let outputHandler = YTDLPOutputHandler(
+            parser: parser,
+            progress: progress,
+            messageUpdate: messageUpdate
+        )
+
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            
-            for line in text.split(whereSeparator: \.isNewline) {
-                let stringLine = String(line)
-                if let update = parser.parse(stringLine) {
-                    progress(update)
-                } else if stringLine.contains("[Merger]") || stringLine.contains("[ExtractAudio]") {
-                    messageUpdate("Processing Media...")
-                }
-            }
+            outputHandler.handle(text)
         }
 
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -105,12 +105,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
             guard !data.isEmpty else { return }
             errorBuffer.append(data)
             if let text = String(data: data, encoding: .utf8) {
-                for line in text.split(whereSeparator: \.isNewline) {
-                    let stringLine = String(line)
-                    if stringLine.contains("[Merger]") || stringLine.contains("[ExtractAudio]") {
-                        messageUpdate("Processing Media...")
-                    }
-                }
+                outputHandler.handle(text)
             }
         }
         
@@ -122,11 +117,12 @@ final class MediaDownloadEngine: @unchecked Sendable {
                 completionGate.complete(.success(()))
             } else {
                 let errorString = String(data: errorBuffer.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
-                completionGate.complete(.failure(EngineError.launchFailed(errorString.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : errorString)))
+                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: finishedProcess.terminationStatus))))
             }
         }
         
         try process.run()
+        messageUpdate("Fetching YouTube data...")
         outputPipe.fileHandleForWriting.closeFile()
         errorPipe.fileHandleForWriting.closeFile()
         
@@ -135,6 +131,94 @@ final class MediaDownloadEngine: @unchecked Sendable {
                 process.terminate()
             }
         })
+    }
+
+    private static func cleanErrorMessage(_ message: String, status: Int32) -> String {
+        guard !message.isEmpty else {
+            return "Exit code \(status)"
+        }
+
+        if message.localizedCaseInsensitiveContains("Sign in to confirm") ||
+            message.localizedCaseInsensitiveContains("not a bot") ||
+            message.localizedCaseInsensitiveContains("Use --cookies-from-browser") {
+            return "YouTube requires browser cookies for this video. Choose a browser in Settings > Engine, then retry."
+        }
+
+        if message.localizedCaseInsensitiveContains("n challenge solving failed") ||
+            message.localizedCaseInsensitiveContains("supported JavaScript runtime") {
+            return "YouTube challenge solving failed. Install Deno or Node, then retry."
+        }
+
+        return message
+    }
+
+    private func appendParallelDownloadArguments(to arguments: inout [String], connectionsPerServer: Int) {
+        let connections = min(max(connectionsPerServer, 1), 16)
+        guard connections > 1 else { return }
+
+        arguments.append(contentsOf: ["--concurrent-fragments", "\(connections)"])
+
+        guard let aria2URL = Aria2DownloadEngine.findExecutable() else {
+            return
+        }
+
+        arguments.append(contentsOf: [
+            "--downloader", aria2URL.path,
+            "--downloader-args", "aria2c:-x \(connections) -s \(connections) -k 1M --file-allocation=none"
+        ])
+    }
+}
+
+final class YTDLPOutputHandler: @unchecked Sendable {
+    private let parser: YTDLPProgressParser
+    private let progress: @Sendable (DownloadProgress) -> Void
+    private let messageUpdate: @Sendable (String) -> Void
+
+    init(
+        parser: YTDLPProgressParser,
+        progress: @escaping @Sendable (DownloadProgress) -> Void,
+        messageUpdate: @escaping @Sendable (String) -> Void
+    ) {
+        self.parser = parser
+        self.progress = progress
+        self.messageUpdate = messageUpdate
+    }
+
+    func handle(_ text: String) {
+        for line in text.split(whereSeparator: \.isNewline) {
+            let stringLine = String(line)
+            if let update = parser.parse(stringLine) {
+                progress(update)
+                messageUpdate("Downloading Media")
+            } else if let message = statusMessage(for: stringLine) {
+                messageUpdate(message)
+            }
+        }
+    }
+
+    private func statusMessage(for line: String) -> String? {
+        if line.contains("[Merger]") || line.contains("[ExtractAudio]") || line.contains("[Fixup") {
+            return "Processing Media..."
+        }
+        if line.contains("[youtube]") && line.localizedCaseInsensitiveContains("Downloading") {
+            return "Fetching YouTube data..."
+        }
+        if line.contains("[info]") && line.localizedCaseInsensitiveContains("Downloading") {
+            return "Preparing media stream..."
+        }
+        if line.localizedCaseInsensitiveContains("Sign in to confirm") ||
+            line.localizedCaseInsensitiveContains("not a bot") ||
+            line.localizedCaseInsensitiveContains("Use --cookies-from-browser") {
+            return "YouTube requires browser cookies"
+        }
+        if line.localizedCaseInsensitiveContains("n challenge solving failed") ||
+            line.localizedCaseInsensitiveContains("supported JavaScript runtime") {
+            return "YouTube challenge solver unavailable"
+        }
+        if line.contains("Destination:") {
+            return "Starting media download..."
+        }
+        return nil
     }
 }
 
@@ -152,20 +236,35 @@ final class YTDLPProgressParser: @unchecked Sendable {
     private let sizeRegex = try? NSRegularExpression(pattern: #"of\s+~?([0-9.]+[a-zA-Z]+)"#)
     
     func parse(_ line: String) -> DownloadProgress? {
-        guard line.contains("[download]") && line.contains("%") else { return nil }
-        
-        let fraction = (Double(firstCapture(in: line, regex: percentageRegex) ?? "0") ?? 0) / 100.0
-        let speed = firstCapture(in: line, regex: speedRegex) ?? "-"
-        let eta = firstCapture(in: line, regex: etaRegex) ?? "-"
-        let size = firstCapture(in: line, regex: sizeRegex) ?? "-"
-        
-        return DownloadProgress(
-            fraction: min(max(fraction, 0), 1),
-            bytesText: size,
-            speedText: speed,
-            etaText: eta,
-            connectionCount: 1
-        )
+        if line.contains("[download]") && line.contains("%") {
+            let fraction = (Double(firstCapture(in: line, regex: percentageRegex) ?? "0") ?? 0) / 100.0
+            let speed = firstCapture(in: line, regex: speedRegex) ?? "-"
+            let eta = firstCapture(in: line, regex: etaRegex) ?? "-"
+            let size = firstCapture(in: line, regex: sizeRegex) ?? "-"
+            
+            return DownloadProgress(
+                fraction: min(max(fraction, 0), 1),
+                bytesText: size,
+                speedText: speed,
+                etaText: eta,
+                connectionCount: 1
+            )
+        } else if line.contains("[#") && line.contains("DL:") {
+            let fraction = (Double(firstCapture(in: line, regex: try? NSRegularExpression(pattern: #"\(([\d.]+)%\)"#)) ?? "0") ?? 0) / 100.0
+            let speed = firstCapture(in: line, regex: try? NSRegularExpression(pattern: #"DL:([^\s\]]+)"#)) ?? "-"
+            let eta = firstCapture(in: line, regex: try? NSRegularExpression(pattern: #"ETA:([^\]]+)"#)) ?? "-"
+            let size = firstCapture(in: line, regex: try? NSRegularExpression(pattern: #"/([^\s\(]+)\("#)) ?? "-"
+            let cn = Int(firstCapture(in: line, regex: try? NSRegularExpression(pattern: #"CN:(\d+)"#)) ?? "1") ?? 1
+            
+            return DownloadProgress(
+                fraction: min(max(fraction, 0), 1),
+                bytesText: size,
+                speedText: speed,
+                etaText: eta,
+                connectionCount: cn
+            )
+        }
+        return nil
     }
     
     private func firstCapture(in text: String, regex: NSRegularExpression?) -> String? {

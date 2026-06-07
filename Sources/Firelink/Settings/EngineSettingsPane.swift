@@ -84,12 +84,23 @@ struct EngineSettingsPane: View {
                     Spacer()
                 }
                 
-                Picker("Extract Cookies from", selection: $settings.mediaCookieSource) {
+                Picker("Browser Cookies", selection: $settings.mediaCookieSource) {
                     ForEach(BrowserCookieSource.allCases, id: \.self) { source in
                         Text(source.rawValue).tag(source)
                     }
                 }
-                Text("Allows downloading restricted media from sites requiring login. Requires Full Disk Access for Safari.")
+
+                LabeledContent("Cookie Status") {
+                    if settings.mediaCookieSource == .none {
+                        Label(settings.mediaCookieSource.statusTitle, systemImage: "circle")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Label(settings.mediaCookieSource.statusTitle, systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                Text(settings.mediaCookieSource.statusDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

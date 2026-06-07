@@ -36,6 +36,26 @@ enum BrowserCookieSource: String, Codable, CaseIterable, Sendable {
             rawValue.lowercased()
         }
     }
+
+    var statusTitle: String {
+        switch self {
+        case .none:
+            "Not using browser cookies"
+        case .safari, .chrome, .firefox, .edge, .brave:
+            "Using \(rawValue) cookies"
+        }
+    }
+
+    var statusDetail: String {
+        switch self {
+        case .none:
+            "Restricted media may fail if the site requires login."
+        case .safari:
+            "yt-dlp reads Safari cookies during metadata fetch and download. Safari may require Full Disk Access."
+        case .chrome, .firefox, .edge, .brave:
+            "yt-dlp reads these browser cookies during metadata fetch and download. Firelink does not store them."
+        }
+    }
 }
 
 enum ProxyType: String, Codable, CaseIterable, Sendable {

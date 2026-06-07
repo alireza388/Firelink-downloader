@@ -26,22 +26,65 @@ struct AddDownloadsView: View {
     @State private var authPassword = ""
     @State private var saveLogin = false
 
+    @State private var isMediaMode = false
+    @State private var detectedMediaURL: URL? = nil
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     linkSection
-                    optionsSection
-                    advancedTransferSection
-                    summarySection
-                    previewSection
+                    
+                    if detectedMediaURL != nil, !isMediaMode {
+                        Button {
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                isMediaMode = true
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "sparkles")
+                                    .foregroundStyle(.yellow)
+                                Text("Media Detected: Extract Video / Audio")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.15))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
+                    if isMediaMode, let mediaURL = detectedMediaURL {
+                        MediaInspectorCard(url: mediaURL) { selectedFormat in
+                            print("Selected format: \(selectedFormat.name) with selector: \(selectedFormat.formatSelector)")
+                            // TODO: Add to queue using MediaDownloadEngine
+                            dismiss()
+                        }
+                        .transition(.scale(scale: 0.95).combined(with: .opacity))
+                    } else {
+                        optionsSection
+                        advancedTransferSection
+                        summarySection
+                        previewSection
+                    }
                 }
                 .padding(12)
             }
-            Divider()
-            actionBar
-                .padding(16)
-                .background(.background)
+            if !isMediaMode {
+                Divider()
+                actionBar
+                    .padding(16)
+                    .background(.background)
+            }
         }
         .frame(minWidth: 640, idealWidth: 680, minHeight: 470, idealHeight: 500)
         .onChange(of: linkText) { _, newValue in
@@ -448,6 +491,17 @@ struct AddDownloadsView: View {
     private func refreshMetadata(for text: String, isAutoFetch: Bool) {
         let urls = DownloadURLParser.parse(text)
         metadataTask?.cancel()
+        
+        if let first = urls.first, MediaDetector.isSupportedMedia(url: first) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                detectedMediaURL = first
+            }
+        } else {
+            withAnimation {
+                detectedMediaURL = nil
+                isMediaMode = false
+            }
+        }
 
         pendingDownloads = urls.map { url in
             let fileName = FileClassifier.fileName(from: url)

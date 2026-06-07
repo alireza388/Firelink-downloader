@@ -1,7 +1,7 @@
 <div align="center">
   <img src="Resources/AppIcon.png" alt="Firelink Icon" width="128" height="128" />
   <h1>Firelink</h1>
-  <p><strong>A clean, native SwiftUI download manager for Apple Silicon macOS</strong></p>
+  <p><strong>The modern, blazing-fast download manager built natively for Apple Silicon macOS.</strong></p>
 
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white" alt="Swift Version" /></a>
   <a href="https://apple.com"><img src="https://img.shields.io/badge/macOS-14.0%2B-blue?logo=apple&logoColor=white" alt="Platform Support" /></a>
@@ -11,48 +11,41 @@
 
 ---
 
-**Firelink** brings the efficiency of multi-segmented download managers (like IDM or FDM) to macOS with a modern, native SwiftUI interface. Designed specifically for Apple Silicon, it delivers high-speed concurrent transfers, drag-and-drop queue control, automated file organization, and Keychain-secured authentication—all in a lightweight native package.
+**Firelink** reimagines macOS file downloading by wrapping legendary open-source engines (`aria2c`, `yt-dlp`, and `ffmpeg`) in a beautifully crafted, highly polished SwiftUI interface. Enjoy high-speed segmented downloads, native media extraction, seamless browser integration, and intelligent file organization without compromising on the aesthetics of your Mac.
 
 ---
 
-### 📸 Screenshots
-
-Dark mode is shown by default with privacy-safe example downloads. Light mode is tucked away below so the README stays easy to scan.
+## 📸 Screenshots
 
 <div align="center">
-  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window in dark theme with sample downloads" width="32%" />
-  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window in dark theme" width="32%" />
-  <img src="Resources/Screenshots/Dark/Settings.png" alt="Firefox integration settings in dark theme" width="32%" />
+  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window" width="32%" />
+  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window" width="32%" />
+  <img src="Resources/Screenshots/Dark/Settings.png" alt="Settings" width="32%" />
   <br/>
-  <sub>Main window, batch link intake, and Firefox integration setup</sub>
+  <sub>A premium native experience, from batch linking to advanced settings.</sub>
 </div>
-
-<details>
-<summary><b>☀️ View Light Theme Screenshots</b></summary>
-<br/>
-<div align="center">
-  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window in light theme with sample downloads" width="32%" />
-  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window in light theme" width="32%" />
-  <img src="Resources/Screenshots/Light/Settings.png" alt="Firefox integration settings in light theme" width="32%" />
-  <br/>
-  <sub>Main window, batch link intake, and Firefox integration setup in light theme</sub>
-</div>
-</details>
 
 ---
 
 ## ✨ Features
 
-- ⚡ **High-Speed Downloads:** Multi-segmented engine powered by `aria2c`.
-- 🎨 **Native SwiftUI:** Responsive Apple Silicon native UI.
-- 🎯 **Chunk Map Inspector:** Visually monitor active segment connections in real time.
-- 🧾 **Download Properties:** Inspect progress and tune per-download transfer settings.
-- 🗂️ **Smart Categories:** Automatic file organization (`Musics`, `Movies`, `Compressed`, etc.).
-- 🖱️ **Drag-and-Drop:** Import URLs, text files, and move queued downloads between queues.
-- 🛡️ **Reliability:** Automatic download recovery and retry handling.
-- 🔄 **Sparkle Updates:** Secure, automatic in-app updates using EdDSA cryptographic signatures.
-- 🔒 **Keychain Security:** Local macOS Keychain integration for site credentials.
-- ⚙️ **Power & Settings:** Cross-platform styled Settings UI, live Speed Limiter, and system sleep prevention during active downloads.
+- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c`.
+- 🪄 **Media Downloader:** Instantly extract high-quality audio and video formats (4K, 1080p, MP3) from sites like YouTube and Twitter—backed securely by `yt-dlp` and `ffmpeg` via our Add-on Gatekeeper.
+- 🎨 **Premium Native UI:** Responsive, frosted-glass SwiftUI design tailor-made for Apple Silicon.
+- 🌐 **Seamless Integration:** Send links directly from your browser with the Firelink Companion extension.
+- 🎯 **Visual Chunk Map:** Monitor active segment connections and download progress in real time.
+- 🗂️ **Smart Organization:** Auto-categorizes files into `Musics`, `Movies`, `Compressed`, and more.
+- 🛡️ **Reliable & Secure:** Deep Keychain integration for authenticated downloads, zero-configuration setup, and automatic recovery.
+
+---
+
+## 🧩 Browser Integration
+
+We are live! Send downloads directly from your browser to the Firelink app with zero friction.
+
+👉 **[Download Firelink Companion for Firefox](https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/)**
+
+*(Check out the [Firelink-Extension source code](https://github.com/nimbold/Firelink-Extension) to contribute or learn more.)*
 
 ---
 
@@ -72,26 +65,12 @@ make app && open build/Firelink.app
 
 ---
 
-## 🧩 Browser Extension
-
-Find the companion browser extension (Firefox) at:
-👉 **[nimbold/Firelink-Extension](https://github.com/nimbold/Firelink-Extension)**
-
----
-
-## 🗺️ Roadmap
-
-- [x] Zero-Config `aria2c` bundling.
-- [x] Global & per-download Speed Limiter.
-- [x] Browser Extensions support.
-- [x] In-app integrated Settings UI.
-- [ ] Notarized `.app` releases and Homebrew formulae.
-
----
-
 ## 🏆 Credits
 
-Firelink relies on [aria2](https://aria2.github.io/) as its underlying multi-protocol and multi-source command-line download utility. Special thanks to the aria2 contributors for their excellent engine.
+Firelink stands on the shoulders of giants. A massive thank you to the contributors of these phenomenal open-source projects:
+- **[aria2](https://aria2.github.io/)** - The legendary multi-protocol download utility driving our core engine.
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** - The definitive command-line audio/video downloader.
+- **[FFmpeg](https://ffmpeg.org/)** - The industry standard for media stream manipulation and merging.
 
 ---
 

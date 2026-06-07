@@ -37,7 +37,8 @@ struct DownloadTable: View {
 
             Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("File Name", value: \.fileName) { item in
-                    HStack(alignment: .top, spacing: 8) {
+                    doubleClickableCell(for: item) {
+                        HStack(alignment: .top, spacing: 8) {
                             Image(systemName: item.category.symbolName)
                                 .font(.title3)
                                 .foregroundStyle(categoryColor(for: item.category))
@@ -47,6 +48,7 @@ struct DownloadTable: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .allowsHitTesting(false)
+                        }
                         .draggable(item.id.uuidString)
                     }
                 }
@@ -103,11 +105,6 @@ struct DownloadTable: View {
                 }
                 .width(min: 100, ideal: 155)
             }
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                if let id = selection.first, let item = controller.downloads.first(where: { $0.id == id }) {
-                    performPrimaryAction(for: item)
-                }
-            })
             .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
             .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
                 rowContextMenu(for: itemIDs)
@@ -161,11 +158,19 @@ struct DownloadTable: View {
         }
     }
 
+    private func doubleClickableCell<Content: View>(for item: DownloadItem, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                performPrimaryAction(for: item)
+            })
+    }
+
     private func performPrimaryAction(for item: DownloadItem) {
         if item.status == .completed {
             openFile(item)
         } else {
-            openWindow(id: "download-properties", value: item.id.uuidString)
+            openWindow(id: "download-properties", value: item.id)
         }
     }
 
@@ -266,7 +271,7 @@ struct DownloadTable: View {
 
             Button {
                 for target in targetItems {
-                    openWindow(value: target.id)
+                    openWindow(id: "download-properties", value: target.id)
                 }
             } label: {
                 Label(targetItems.count > 1 ? "Properties (\(targetItems.count))" : "Properties", systemImage: "info.circle")

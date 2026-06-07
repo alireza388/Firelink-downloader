@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MediaInspectorCard: View {
     let url: URL
-    let onDownload: (CleanFormatOption) -> Void
+    let onDownload: (CleanFormatOption, MediaMetadata) -> Void
     
     @State private var isLoading = true
     @State private var statusText = "Checking Media Engine..."
@@ -137,7 +137,7 @@ struct MediaInspectorCard: View {
             // Action
             Button {
                 if let selected = options.first(where: { $0.id == selectedOptionID }) {
-                    onDownload(selected)
+                    onDownload(selected, metadata)
                 }
             } label: {
                 Text("Download")

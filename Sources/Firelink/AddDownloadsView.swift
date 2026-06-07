@@ -64,9 +64,27 @@ struct AddDownloadsView: View {
                     }
                     
                     if isMediaMode, let mediaURL = detectedMediaURL {
-                        MediaInspectorCard(url: mediaURL) { selectedFormat in
-                            print("Selected format: \(selectedFormat.name) with selector: \(selectedFormat.formatSelector)")
-                            // TODO: Add to queue using MediaDownloadEngine
+                        MediaInspectorCard(url: mediaURL) { selectedFormat, metadata in
+                            let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
+                            let ext = selectedFormat.isAudioOnly ? "mp3" : "mp4"
+                            let fileName = "\(cleanTitle).\(ext)"
+                            let category = FileClassifier.category(forFileName: fileName)
+                            
+                            var item = DownloadItem(
+                                url: mediaURL,
+                                fileName: fileName,
+                                category: category,
+                                destinationDirectory: settings.destinationDirectory(for: category),
+                                connectionsPerServer: 1
+                            )
+                            item.mediaFormatSelector = selectedFormat.formatSelector
+                            item.isAudioOnlyMedia = selectedFormat.isAudioOnly
+                            item.message = "Added to queue"
+                            
+                            controller.downloads.append(item)
+                            controller.engineMessage = "Added \(fileName) to \(category.rawValue)."
+                            controller.startQueue(queueID: DownloadQueue.mainQueueID)
+                            
                             dismiss()
                         }
                         .transition(.scale(scale: 0.95).combined(with: .opacity))

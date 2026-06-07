@@ -15,7 +15,9 @@ final class DownloadController: ObservableObject {
 
     private let settings: AppSettings
     private let engine = Aria2DownloadEngine()
+    private let mediaEngine = MediaDownloadEngine()
     private var activeHandles: [UUID: Aria2DownloadEngine.Handle] = [:]
+    private var activeMediaHandles: [UUID: MediaDownloadEngine.Handle] = [:]
     private var automaticRetryCounts: [UUID: Int] = [:]
     private var restrictQueueToAutoResume = false
     private var queuePumpScope: QueuePumpScope = .idle
@@ -211,6 +213,8 @@ final class DownloadController: ObservableObject {
     func pause(_ item: DownloadItem) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
+        activeMediaHandles[item.id]?.cancel()
+        activeMediaHandles[item.id] = nil
         update(item.id) {
             $0.status = .paused
             $0.message = "Paused. Resume will continue from the partial file."
@@ -234,6 +238,8 @@ final class DownloadController: ObservableObject {
         for item in activeItems {
             activeHandles[item.id]?.cancel()
             activeHandles[item.id] = nil
+            activeMediaHandles[item.id]?.cancel()
+            activeMediaHandles[item.id] = nil
             update(item.id) {
                 $0.status = .paused
                 $0.message = "Paused. Resume will continue from the partial file."
@@ -252,6 +258,8 @@ final class DownloadController: ObservableObject {
     func queue(_ item: DownloadItem) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
+        activeMediaHandles[item.id]?.cancel()
+        activeMediaHandles[item.id] = nil
         update(item.id) {
             $0.status = .queued
             if item.status != .paused {
@@ -327,6 +335,8 @@ final class DownloadController: ObservableObject {
     func cancel(_ item: DownloadItem) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
+        activeMediaHandles[item.id]?.cancel()
+        activeMediaHandles[item.id] = nil
         update(item.id) {
             $0.status = .canceled
             $0.message = "Canceled"
@@ -349,6 +359,8 @@ final class DownloadController: ObservableObject {
     func delete(_ item: DownloadItem, deleteFiles: Bool = false) {
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
+        activeMediaHandles[item.id]?.cancel()
+        activeMediaHandles[item.id] = nil
         if deleteFiles {
             trashFiles(for: item)
         } else if item.status != .completed {
@@ -473,71 +485,122 @@ final class DownloadController: ObservableObject {
         }
         saveDownloads()
 
-        do {
-            let handle = try engine.start(
-                item: item,
-                proxyConfiguration: settings.downloadProxyConfiguration,
-                speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: item),
-                progress: { [weak self] progress in
-                    Task { @MainActor in
-                        self?.update(item.id) {
-                            guard $0.status == .downloading else { return }
-                            $0.progress = progress.fraction
-                            $0.bytesText = progress.bytesText
-                            $0.speedText = progress.speedText
-                            $0.etaText = progress.etaText
-                            $0.connectionCount = progress.connectionCount
-                            $0.message = "Downloading"
-                        }
-                    }
-                },
-                completion: { [weak self] result in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.activeHandles[item.id] = nil
-
-                        switch result {
-                        case .success:
-                            self.automaticRetryCounts[item.id] = nil
-                            self.update(item.id) {
-                                $0.status = .completed
-                                $0.progress = 1
-                                $0.speedText = "-"
-                                $0.etaText = "-"
-                                $0.message = "Saved to \($0.destinationPath)"
-                                $0.autoResumeOnLaunch = false
+        if item.mediaFormatSelector != nil {
+            Task {
+                do {
+                    let handle = try await mediaEngine.start(
+                        item: item,
+                        progress: { [weak self] progress in
+                            Task { @MainActor in
+                                self?.update(item.id) {
+                                    guard $0.status == .downloading else { return }
+                                    $0.progress = progress.fraction
+                                    $0.bytesText = progress.bytesText
+                                    $0.speedText = progress.speedText
+                                    $0.etaText = progress.etaText
+                                    $0.connectionCount = progress.connectionCount
+                                    if $0.message == "Starting" {
+                                        $0.message = "Downloading Media"
+                                    }
+                                }
                             }
-                            self.saveDownloads()
-                            self.showNotification(title: "Download Completed", body: item.fileName)
-                        case .failure(let error):
-                            if self.downloads.first(where: { $0.id == item.id })?.status == .paused ||
-                                self.downloads.first(where: { $0.id == item.id })?.status == .canceled {
-                                return
+                        },
+                        messageUpdate: { [weak self] message in
+                            Task { @MainActor in
+                                self?.update(item.id) {
+                                    guard $0.status == .downloading else { return }
+                                    $0.message = message
+                                }
                             }
-                            self.handleDownloadFailure(itemID: item.id, error: error)
+                        },
+                        completion: { [weak self] result in
+                            Task { @MainActor in
+                                self?.handleCompletion(item: item, result: result, isMedia: true)
+                            }
                         }
-
-                        self.pumpQueue()
-                        self.applySpeedLimitsToActiveDownloads()
-                        self.updateSleepActivity()
-                    }
+                    )
+                    activeMediaHandles[item.id] = handle
+                } catch {
+                    handleDownloadFailure(itemID: item.id, error: error)
+                    applySpeedLimitsToActiveDownloads()
+                    updateSleepActivity()
+                    pumpQueue()
                 }
-            )
-            activeHandles[item.id] = handle
-            update(item.id) {
-                $0.rpcPort = handle.rpcPort
-                $0.rpcSecret = handle.rpcSecret
-                $0.message = "Process \(handle.processIdentifier)"
             }
-            saveDownloads()
-            applySpeedLimitsToActiveDownloads()
-            updateSleepActivity()
-        } catch {
-            handleDownloadFailure(itemID: item.id, error: error)
-            applySpeedLimitsToActiveDownloads()
-            updateSleepActivity()
-            pumpQueue()
+        } else {
+            do {
+                let handle = try engine.start(
+                    item: item,
+                    proxyConfiguration: settings.downloadProxyConfiguration,
+                    speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: item),
+                    progress: { [weak self] progress in
+                        Task { @MainActor in
+                            self?.update(item.id) {
+                                guard $0.status == .downloading else { return }
+                                $0.progress = progress.fraction
+                                $0.bytesText = progress.bytesText
+                                $0.speedText = progress.speedText
+                                $0.etaText = progress.etaText
+                                $0.connectionCount = progress.connectionCount
+                                $0.message = "Downloading"
+                            }
+                        }
+                    },
+                    completion: { [weak self] result in
+                        Task { @MainActor in
+                            self?.handleCompletion(item: item, result: result, isMedia: false)
+                        }
+                    }
+                )
+                activeHandles[item.id] = handle
+                update(item.id) {
+                    $0.rpcPort = handle.rpcPort
+                    $0.rpcSecret = handle.rpcSecret
+                    $0.message = "Process \(handle.processIdentifier)"
+                }
+                saveDownloads()
+                applySpeedLimitsToActiveDownloads()
+                updateSleepActivity()
+            } catch {
+                handleDownloadFailure(itemID: item.id, error: error)
+                applySpeedLimitsToActiveDownloads()
+                updateSleepActivity()
+                pumpQueue()
+            }
         }
+    }
+
+    private func handleCompletion(item: DownloadItem, result: Result<Void, Error>, isMedia: Bool) {
+        if isMedia {
+            activeMediaHandles[item.id] = nil
+        } else {
+            activeHandles[item.id] = nil
+        }
+
+        switch result {
+        case .success:
+            self.automaticRetryCounts[item.id] = nil
+            self.update(item.id) {
+                $0.status = .completed
+                $0.progress = 1
+                $0.speedText = "-"
+                $0.etaText = "-"
+                $0.message = "Saved to \($0.destinationPath)"
+                $0.autoResumeOnLaunch = false
+            }
+            self.saveDownloads()
+            self.showNotification(title: "Download Completed", body: item.fileName)
+        case .failure(let error):
+            if self.downloads.first(where: { $0.id == item.id })?.status == .paused ||
+                self.downloads.first(where: { $0.id == item.id })?.status == .canceled {
+                return
+            }
+            self.handleDownloadFailure(itemID: item.id, error: error)
+        }
+
+        self.pumpQueue()
+        self.applySpeedLimitsToActiveDownloads()
+        self.updateSleepActivity()
     }
 
     private func update(_ id: UUID, mutate: (inout DownloadItem) -> Void) {

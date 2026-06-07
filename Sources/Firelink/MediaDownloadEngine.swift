@@ -1,0 +1,140 @@
+import Foundation
+
+final class MediaDownloadEngine: @unchecked Sendable {
+    struct Handle {
+        let cancel: @Sendable () -> Void
+    }
+    
+    enum EngineError: LocalizedError {
+        case missingEngine(String)
+        case launchFailed(String)
+        
+        var errorDescription: String? {
+            switch self {
+            case .missingEngine(let msg): return msg
+            case .launchFailed(let msg): return msg
+            }
+        }
+    }
+    
+    func start(
+        item: DownloadItem,
+        progress: @escaping @Sendable (DownloadProgress) -> Void,
+        messageUpdate: @escaping @Sendable (String) -> Void,
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) async throws -> Handle {
+        let ytDlpURL = await MediaEngineManager.shared.binaryPath(for: .ytDlp)
+        let ffmpegURL = await MediaEngineManager.shared.binaryPath(for: .ffmpeg)
+        
+        guard FileManager.default.fileExists(atPath: ytDlpURL.path) else {
+            throw EngineError.missingEngine("yt-dlp is not installed. Please check Settings > Add-ons.")
+        }
+        guard FileManager.default.fileExists(atPath: ffmpegURL.path) else {
+            throw EngineError.missingEngine("ffmpeg is not installed. Please check Settings > Add-ons.")
+        }
+        
+        try FileManager.default.createDirectory(at: item.destinationDirectory, withIntermediateDirectories: true)
+        
+        let process = Process()
+        process.executableURL = ytDlpURL
+        
+        var arguments = [
+            "--newline",
+            "--ffmpeg-location", ffmpegURL.path,
+            "-o", item.destinationPath
+        ]
+        
+        if let format = item.mediaFormatSelector {
+            arguments.append("-f")
+            arguments.append(format)
+            
+            if item.isAudioOnlyMedia == true {
+                arguments.append(contentsOf: ["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+            } else {
+                arguments.append(contentsOf: ["--merge-output-format", "mp4"])
+            }
+        }
+        
+        arguments.append(item.url.absoluteString)
+        process.arguments = arguments
+        
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        
+        let parser = YTDLPProgressParser()
+        let completionGate = CompletionGate(completion)
+        
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            
+            for line in text.split(whereSeparator: \.isNewline) {
+                let stringLine = String(line)
+                if let update = parser.parse(stringLine) {
+                    progress(update)
+                } else if stringLine.contains("[Merger]") || stringLine.contains("[ExtractAudio]") {
+                    messageUpdate("Processing Media...")
+                }
+            }
+        }
+        
+        process.terminationHandler = { finishedProcess in
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            
+            if finishedProcess.terminationStatus == 0 {
+                completionGate.complete(.success(()))
+            } else {
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorString = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
+                completionGate.complete(.failure(EngineError.launchFailed(errorString.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : errorString)))
+            }
+        }
+        
+        try process.run()
+        
+        return Handle(cancel: {
+            if process.isRunning {
+                process.terminate()
+            }
+        })
+    }
+}
+
+final class YTDLPProgressParser: @unchecked Sendable {
+    private let percentageRegex = try? NSRegularExpression(pattern: #"(\d+(?:\.\d+)?)%"#)
+    private let speedRegex = try? NSRegularExpression(pattern: #"at\s+([^\s]+)"#)
+    private let etaRegex = try? NSRegularExpression(pattern: #"ETA\s+([^\s]+)"#)
+    private let sizeRegex = try? NSRegularExpression(pattern: #"of\s+~?([0-9.]+[a-zA-Z]+)"#)
+    
+    func parse(_ line: String) -> DownloadProgress? {
+        guard line.contains("[download]") && line.contains("%") else { return nil }
+        
+        let fraction = (Double(firstCapture(in: line, regex: percentageRegex) ?? "0") ?? 0) / 100.0
+        let speed = firstCapture(in: line, regex: speedRegex) ?? "-"
+        let eta = firstCapture(in: line, regex: etaRegex) ?? "-"
+        let size = firstCapture(in: line, regex: sizeRegex) ?? "-"
+        
+        return DownloadProgress(
+            fraction: min(max(fraction, 0), 1),
+            bytesText: size,
+            speedText: speed,
+            etaText: eta,
+            connectionCount: 1
+        )
+    }
+    
+    private func firstCapture(in text: String, regex: NSRegularExpression?) -> String? {
+        guard let regex else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1 else {
+            return nil
+        }
+        guard let captureRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[captureRange])
+    }
+}

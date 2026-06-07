@@ -188,6 +188,8 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var queueID: UUID?
     var rpcPort: Int?
     var rpcSecret: String?
+    var mediaFormatSelector: String?
+    var isAudioOnlyMedia: Bool?
 
     var displaySpeedText: String {
         status == .downloading ? speedText : "-"

@@ -37,20 +37,18 @@ struct DownloadTable: View {
 
             Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("File Name", value: \.fileName) { item in
-                    doubleClickableCell(for: item) {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: item.category.symbolName)
-                                .font(.title3)
-                                .foregroundStyle(categoryColor(for: item.category))
-                                .frame(width: 22)
-                            Text(item.fileName)
-                                .font(.headline)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .allowsHitTesting(false)
-                        }
-                        .draggable(item.id.uuidString)
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: item.category.symbolName)
+                            .font(.title3)
+                            .foregroundStyle(categoryColor(for: item.category))
+                            .frame(width: 22)
+                        Text(item.fileName)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .allowsHitTesting(false)
                     }
+                    .draggable(item.id.uuidString)
                 }
                 .width(min: 200, ideal: 340)
 
@@ -156,14 +154,6 @@ struct DownloadTable: View {
                 Text("Remove \(items.count == 1 ? "this download" : "these \(items.count) downloads") from Firelink. Partial cache files are removed automatically; moving to Trash also sends any partial files there.")
             }
         }
-    }
-
-    private func doubleClickableCell<Content: View>(for item: DownloadItem, @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                performPrimaryAction(for: item)
-            })
     }
 
     private func performPrimaryAction(for item: DownloadItem) {

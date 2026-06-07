@@ -115,7 +115,7 @@ struct FirelinkApp: App {
         }
         .windowResizability(.contentSize)
 
-        WindowGroup("Download Properties", for: UUID.self) { $downloadID in
+        WindowGroup("Download Properties", id: "download-properties", for: UUID.self) { $downloadID in
             if let downloadID {
                 DownloadPropertiesWindow(downloadID: downloadID)
                     .environmentObject(controller)

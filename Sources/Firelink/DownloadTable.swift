@@ -46,16 +46,29 @@ struct DownloadTable: View {
                                 .font(.headline)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
+                                .allowsHitTesting(false)
                         .draggable(item.id.uuidString)
                     }
                 }
                 .width(min: 200, ideal: 340)
 
                 TableColumn("Size", value: \.sortableSize) { item in
-                    Text(ByteFormatter.string(item.sizeBytes))
+                    if let size = item.sizeBytes, size > 0 {
+                        Text(ByteFormatter.string(size))
                             .monospacedDigit()
                             .lineLimit(1)
                             .truncationMode(.tail)
+                    } else if item.bytesText != "-" && !item.bytesText.isEmpty {
+                        Text(item.bytesText)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    } else {
+                        Text("Unknown")
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
                 .width(min: 80, ideal: 100)
 
@@ -152,7 +165,7 @@ struct DownloadTable: View {
         if item.status == .completed {
             openFile(item)
         } else {
-            openWindow(value: item.id)
+            openWindow(id: "download-properties", value: item.id)
         }
     }
 

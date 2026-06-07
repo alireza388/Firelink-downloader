@@ -55,6 +55,14 @@ final class MediaDownloadEngine: @unchecked Sendable {
             }
         }
         
+        // Add cookies if configured
+        if let storedData = UserDefaults.standard.data(forKey: "Firelink.AppSettings.v1"),
+           let json = try? JSONSerialization.jsonObject(with: storedData) as? [String: Any],
+           let cookieSourceStr = json["mediaCookieSource"] as? String,
+           cookieSourceStr != "None" {
+            arguments.append(contentsOf: ["--cookies-from-browser", cookieSourceStr.lowercased()])
+        }
+        
         arguments.append(item.url.absoluteString)
         process.arguments = arguments
         

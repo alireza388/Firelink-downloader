@@ -57,7 +57,19 @@ enum MediaExtractionEngine {
         
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ytDlpPath)
-        process.arguments = ["-J", "--no-warnings", url.absoluteString]
+        
+        var args = ["-J", "--no-warnings", "--ignore-no-formats-error"]
+        
+        // Add cookies if configured
+        if let storedData = UserDefaults.standard.data(forKey: "Firelink.AppSettings.v1"),
+           let json = try? JSONSerialization.jsonObject(with: storedData) as? [String: Any],
+           let cookieSourceStr = json["mediaCookieSource"] as? String,
+           cookieSourceStr != "None" {
+            args.append(contentsOf: ["--cookies-from-browser", cookieSourceStr.lowercased()])
+        }
+        
+        args.append(url.absoluteString)
+        process.arguments = args
         
         let pipe = Pipe()
         let errorPipe = Pipe()

@@ -20,6 +20,15 @@ enum ProxyMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum BrowserCookieSource: String, Codable, CaseIterable, Sendable {
+    case none = "None"
+    case safari = "Safari"
+    case chrome = "Chrome"
+    case firefox = "Firefox"
+    case edge = "Edge"
+    case brave = "Brave"
+}
+
 enum ProxyType: String, Codable, CaseIterable, Sendable {
     case http
     case https
@@ -141,6 +150,10 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var mediaCookieSource: BrowserCookieSource {
+        didSet { save() }
+    }
+
     @Published var message = ""
 
     private let defaults: UserDefaults
@@ -161,6 +174,7 @@ final class AppSettings: ObservableObject {
             preventsSleepWhileDownloading = stored.preventsSleepWhileDownloading
             proxySettings = stored.proxySettings?.normalized ?? ProxySettings()
             siteLogins = stored.siteLogins
+            mediaCookieSource = stored.mediaCookieSource ?? .none
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             appTheme = .system
@@ -172,6 +186,7 @@ final class AppSettings: ObservableObject {
             preventsSleepWhileDownloading = true
             proxySettings = ProxySettings()
             siteLogins = []
+            mediaCookieSource = .none
             downloadDirectories = Self.defaultDirectories()
         }
 
@@ -287,7 +302,8 @@ final class AppSettings: ObservableObject {
             preventsSleepWhileDownloading: preventsSleepWhileDownloading,
             proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
-            siteLogins: siteLogins
+            siteLogins: siteLogins,
+            mediaCookieSource: mediaCookieSource
         )
         let defaults = self.defaults
         let storageKey = self.storageKey
@@ -358,4 +374,5 @@ private struct StoredSettings: Codable {
     var proxySettings: ProxySettings?
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
+    var mediaCookieSource: BrowserCookieSource?
 }

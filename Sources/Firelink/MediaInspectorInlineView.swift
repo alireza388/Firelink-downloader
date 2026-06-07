@@ -5,6 +5,7 @@ struct MediaInspectorInlineView: View {
     let cookieSource: BrowserCookieSource
     let credentials: DownloadCredentials?
     let transferOptions: DownloadTransferOptions
+    let onCancel: () -> Void
     let onDownload: (CleanFormatOption, MediaMetadata) -> Void
 
     @ObservedObject private var engineManager = MediaEngineManager.shared
@@ -119,6 +120,11 @@ struct MediaInspectorInlineView: View {
                 }
 
                 Spacer(minLength: 16)
+
+                Button("Cancel") {
+                    onCancel()
+                }
+                .keyboardShortcut(.cancelAction)
 
                 Button("Extract") {
                     if let selected = resolveSelectedOption() {

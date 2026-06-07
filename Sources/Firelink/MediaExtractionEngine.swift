@@ -66,7 +66,7 @@ enum MediaExtractionEngine {
             throw ExtractionError.processFailed("yt-dlp binary not found.")
         }
 
-        var args = ["-J", "--no-warnings", "--ignore-no-formats-error", "--no-playlist", "--extractor-args", "youtube:player_client=ios,android"]
+        var args = ["-J", "--no-warnings", "--ignore-no-formats-error", "--no-playlist", "--extractor-args", "youtube:player_client=ios,tv"]
         appendCommonArguments(to: &args, cookieSource: cookieSource, credentials: credentials, transferOptions: transferOptions)
         args.append(url.absoluteString)
 

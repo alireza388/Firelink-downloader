@@ -39,7 +39,8 @@ struct AddDownloadsView: View {
                             url: mediaURL,
                             cookieSource: settings.mediaCookieSource,
                             credentials: metadataCredentials(for: mediaURL),
-                            transferOptions: transferOptions
+                            transferOptions: transferOptions,
+                            onCancel: { dismiss() }
                         ) { selectedFormat, metadata in
                             let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
                             let ext = selectedFormat.outputExtension
@@ -79,10 +80,12 @@ struct AddDownloadsView: View {
                 }
                 .padding(12)
             }
-            Divider()
-            actionBar
-                .padding(16)
-                .background(.background)
+            if detectedMediaURL == nil {
+                Divider()
+                actionBar
+                    .padding(16)
+                    .background(.background)
+            }
         }
         .frame(minWidth: 640, idealWidth: 680, minHeight: 470, idealHeight: 500)
         .onChange(of: linkText) { _, newValue in

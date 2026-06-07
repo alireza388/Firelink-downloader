@@ -122,7 +122,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
         }
         
         try process.run()
-        messageUpdate("Fetching YouTube data...")
+        messageUpdate("Fetching media data...")
         outputPipe.fileHandleForWriting.closeFile()
         errorPipe.fileHandleForWriting.closeFile()
         
@@ -157,15 +157,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
         guard connections > 1 else { return }
 
         arguments.append(contentsOf: ["--concurrent-fragments", "\(connections)"])
-
-        guard let aria2URL = Aria2DownloadEngine.findExecutable() else {
-            return
-        }
-
-        arguments.append(contentsOf: [
-            "--downloader", aria2URL.path,
-            "--downloader-args", "aria2c:-x \(connections) -s \(connections) -k 1M --file-allocation=none"
-        ])
+        // Use yt-dlp's native concurrent downloader instead of aria2c to ensure progress parsing works via stdout
     }
 }
 

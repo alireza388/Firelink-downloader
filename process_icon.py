@@ -3,17 +3,51 @@ from PIL import Image, ImageDraw
 
 def process_images(src_path):
     img = Image.open(src_path).convert("RGBA")
+    
+    # Crop the 28px black padding
+    img = img.crop((28, 28, 1226, 1226))
     width, height = img.size
+    pixels = img.load()
     
-    # Apply a standard macOS rounded rectangle mask
-    # macOS standard radius is approx 22.5% of the width
+    # Lighter color (+1) at top, original color (0) at bottom
+    bg_color = pixels[100, 100]
+    # Use a 1.9x multiplier for a subtle, modern "lit from above" macOS effect
+    top_color = (min(255, int(bg_color[0] * 1.9)), min(255, int(bg_color[1] * 1.9)), min(255, int(bg_color[2] * 1.9)), 255)
+    bottom_color = (bg_color[0], bg_color[1], bg_color[2], 255)
+    
+    new_img = Image.new("RGBA", (width, height))
+    new_pixels = new_img.load()
+    
+    for y in range(height):
+        ratio = y / float(height - 1)
+        grad_r = int(top_color[0] * (1 - ratio) + bottom_color[0] * ratio)
+        grad_g = int(top_color[1] * (1 - ratio) + bottom_color[1] * ratio)
+        grad_b = int(top_color[2] * (1 - ratio) + bottom_color[2] * ratio)
+        grad_color = (grad_r, grad_g, grad_b, 255)
+        
+        for x in range(width):
+            p = pixels[x, y]
+            dist = max(abs(p[0]-bg_color[0]), abs(p[1]-bg_color[1]), abs(p[2]-bg_color[2]))
+            
+            # Replace pure black corners or background with gradient
+            if p[0] < 15 and p[1] < 15 and p[2] < 15:
+                new_pixels[x, y] = grad_color
+            elif dist < 15:
+                new_pixels[x, y] = grad_color
+            elif dist < 60:
+                alpha = (dist - 15) / 45.0
+                r = int(p[0] * alpha + grad_color[0] * (1 - alpha))
+                g = int(p[1] * alpha + grad_color[1] * (1 - alpha))
+                b = int(p[2] * alpha + grad_color[2] * (1 - alpha))
+                new_pixels[x, y] = (r, g, b, 255)
+            else:
+                new_pixels[x, y] = p
+                
+    img = new_img
     radius = int(width * 0.225)
-    
     mask = Image.new("L", (width, height), 0)
     draw = ImageDraw.Draw(mask)
     draw.rounded_rectangle((0, 0, width, height), radius=radius, fill=255)
-    
-    # Apply mask
     img.putalpha(mask)
 
     # Save standard png

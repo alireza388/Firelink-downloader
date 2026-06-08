@@ -14,7 +14,12 @@ final class SparkleUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     @Published var updateStatus: String?
     @Published var foundUpdateItem: SUAppcastItem?
-    @Published var releaseNotes: String?
+    @Published var releaseNotes: AttributedString?
+    @Published var automaticallyChecksForUpdates: Bool = true {
+        didSet {
+            _updater?.automaticallyChecksForUpdates = automaticallyChecksForUpdates
+        }
+    }
 
     var expectedContentLength: UInt64 = 0
     var receivedContentLength: UInt64 = 0
@@ -28,6 +33,7 @@ final class SparkleUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         self._updater = SPUUpdater(hostBundle: hostBundle, applicationBundle: hostBundle, userDriver: driver, delegate: self)
         do {
             try self._updater?.start()
+            self.automaticallyChecksForUpdates = self._updater?.automaticallyChecksForUpdates ?? true
         } catch {
             print("Failed to start Sparkle updater: \(error)")
         }

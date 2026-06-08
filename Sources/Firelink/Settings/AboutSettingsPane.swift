@@ -85,7 +85,9 @@ struct AboutSettingsPane: View {
                             }
                             
                             Button {
-                                sparkleUpdater.updateChoiceReply?(.install)
+                                let reply = sparkleUpdater.updateChoiceReply
+                                sparkleUpdater.updateChoiceReply = nil
+                                reply?(.install)
                             } label: {
                                 Label("Install and Relaunch", systemImage: "sparkles")
                                     .frame(maxWidth: .infinity)
@@ -108,7 +110,7 @@ struct AboutSettingsPane: View {
                                 }
                             }
                             
-                            if let notes = sparkleUpdater.releaseNotes, !notes.isEmpty {
+                            if let notes = sparkleUpdater.releaseNotes {
                                 DisclosureGroup("What's New") {
                                     ScrollView {
                                         Text(notes)
@@ -125,14 +127,24 @@ struct AboutSettingsPane: View {
                             
                             HStack(spacing: 12) {
                                 Button {
-                                    sparkleUpdater.updateChoiceReply?(.install)
+                                    let reply = sparkleUpdater.updateChoiceReply
+                                    sparkleUpdater.updateChoiceReply = nil
+                                    reply?(.install)
                                 } label: {
                                     Text("Download & Install")
                                 }
                                 .buttonStyle(.borderedProminent)
                                 
+                                Button("Remind Me Later") {
+                                    let reply = sparkleUpdater.updateChoiceReply
+                                    sparkleUpdater.updateChoiceReply = nil
+                                    reply?(.dismiss)
+                                }
+                                
                                 Button("Skip This Version") {
-                                    sparkleUpdater.updateChoiceReply?(.skip)
+                                    let reply = sparkleUpdater.updateChoiceReply
+                                    sparkleUpdater.updateChoiceReply = nil
+                                    reply?(.skip)
                                 }
                             }
                         }
@@ -204,6 +216,11 @@ struct AboutSettingsPane: View {
                             }
                         }
                     }
+                    
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    Toggle("Automatically check for updates", isOn: $sparkleUpdater.automaticallyChecksForUpdates)
                 }
                 .padding(.vertical, 8)
                 .animation(.easeInOut, value: sparkleUpdater.isChecking)
@@ -250,5 +267,11 @@ struct AboutSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        .onDisappear {
+            if let reply = sparkleUpdater.updateChoiceReply {
+                sparkleUpdater.updateChoiceReply = nil
+                reply(.dismiss)
+            }
+        }
     }
 }

@@ -44,7 +44,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
         var arguments = [
             "--newline",
             "--ffmpeg-location", ffmpegURL.path,
-            "--extractor-args", "youtube:player_client=ios,tv",
+            "--force-ipv4",
             "-o", item.destinationPath
         ]
 
@@ -97,30 +97,44 @@ final class MediaDownloadEngine: @unchecked Sendable {
             messageUpdate: messageUpdate
         )
 
+        let group = DispatchGroup()
+        group.enter() // output
+        group.enter() // error
+        group.enter() // process
+
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            outputHandler.handle(text)
-        }
-
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            errorBuffer.append(data)
-            if let text = String(data: data, encoding: .utf8) {
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                group.leave()
+            } else if let text = String(data: data, encoding: .utf8) {
                 outputHandler.handle(text)
             }
         }
 
-        process.terminationHandler = { finishedProcess in
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                group.leave()
+            } else {
+                errorBuffer.append(data)
+                if let text = String(data: data, encoding: .utf8) {
+                    outputHandler.handle(text)
+                }
+            }
+        }
 
-            if finishedProcess.terminationStatus == 0 {
+        process.terminationHandler = { _ in
+            group.leave()
+        }
+
+        group.notify(queue: .global()) {
+            if process.terminationStatus == 0 {
                 completionGate.complete(.success(Self.resolvedOutputURL(for: item, tracker: outputPathTracker)))
             } else {
                 let errorString = String(data: errorBuffer.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
-                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: finishedProcess.terminationStatus))))
+                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: process.terminationStatus))))
             }
         }
 

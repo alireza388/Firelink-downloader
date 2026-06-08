@@ -68,7 +68,7 @@ enum MediaExtractionEngine {
         }
         let ytDlpPath = ytDlpURL.path
 
-        var args = ["-J", "--no-warnings", "--ignore-no-formats-error", "--no-playlist", "--extractor-args", "youtube:player_client=ios,tv"]
+        var args = ["-J", "--no-warnings", "--ignore-no-formats-error", "--no-playlist", "--force-ipv4"]
         appendCommonArguments(to: &args, cookieSource: cookieSource, credentials: credentials, transferOptions: transferOptions)
         args.append(url.absoluteString)
 
@@ -117,11 +117,12 @@ enum MediaExtractionEngine {
     }
 
     private static func appendJavaScriptRuntimeArguments(to args: inout [String]) {
+        var runtimes: [String] = []
         if let denoPath = executablePath(named: "deno", candidates: [
             "/opt/homebrew/bin/deno",
             "/usr/local/bin/deno"
         ]) {
-            args.append(contentsOf: ["--js-runtimes", "deno:\(denoPath)"])
+            runtimes.append("deno:\(denoPath)")
         }
 
         if let nodePath = executablePath(named: "node", candidates: [
@@ -129,7 +130,11 @@ enum MediaExtractionEngine {
             "/usr/local/bin/node",
             "/usr/bin/node"
         ]) {
-            args.append(contentsOf: ["--js-runtimes", "node:\(nodePath)"])
+            runtimes.append("node:\(nodePath)")
+        }
+
+        if !runtimes.isEmpty {
+            args.append(contentsOf: ["--js-runtimes", runtimes.joined(separator: ",")])
         }
     }
 
@@ -375,43 +380,57 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             process.standardError = errorPipe
             process.standardInput = nil
 
+            let group = DispatchGroup()
+            group.enter() // output
+            group.enter() // error
+            group.enter() // process
+
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                guard !data.isEmpty else { return }
-                outputBuffer.append(data)
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    group.leave()
+                } else {
+                    outputBuffer.append(data)
+                }
             }
+
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                guard !data.isEmpty else { return }
-                errorBuffer.append(data)
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    group.leave()
+                } else {
+                    errorBuffer.append(data)
+                }
             }
 
             lock.withLock {
                 self.process = process
             }
 
-            process.terminationHandler = { finishedProcess in
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
+            process.terminationHandler = { _ in
+                group.leave()
+            }
 
-                if finishedProcess.terminationStatus == 0 {
+            group.notify(queue: .global()) {
+                if process.terminationStatus == 0 {
                     continuation.resume(returning: outputBuffer.data)
-                    return
-                }
-
-                let stderr = String(data: errorBuffer.data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let stdout = String(data: outputBuffer.data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let message = [stderr, stdout]
-                    .compactMap { $0 }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n")
-                continuation.resume(
-                    throwing: MediaExtractionEngine.ExtractionError.processFailed(
-                        message.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : message
+                } else {
+                    let stderr = String(data: errorBuffer.data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let stdout = String(data: outputBuffer.data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let message = [stderr, stdout]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: "\n")
+                    continuation.resume(
+                        throwing: MediaExtractionEngine.ExtractionError.processFailed(
+                            message.isEmpty ? "Exit code \(process.terminationStatus)" : message
+                        )
                     )
-                )
+                }
             }
 
             do {
@@ -421,6 +440,7 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             } catch {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
+                // We do not care about the DispatchGroup if we throw immediately here
                 continuation.resume(throwing: MediaExtractionEngine.ExtractionError.processFailed(error.localizedDescription))
             }
         }

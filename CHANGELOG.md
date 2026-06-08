@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-08
+
+### New features
+- Enhance mixed media support and add duplicate resolution.
+- Redesign settings panes and enhance update flows.
+- Improve yt-dlp fetching speed and redesign media detection UI.
+- Enhance media engine settings with cookie extraction and update checks.
+- Modernize Integration settings UI and add official install button.
+- Integrate yt-dlp to DownloadController and add global queue support.
+- Implement smart progressive disclosure UI and media extraction engine.
+- Implement gatekeeper architecture for on-demand media engine binaries.
+- Inline Sparkle update checks to avoid unnecessary modals.
+
+### Changes
+- Add backward compatibility support for extension tokens.
+- Update Firelink-Extension submodule to latest.
+- Update app icons and icon generation scripts.
+- Tone down icon gradient to 1.9x for modern subtle look.
+- Increase gradient contrast for stronger lighting effect.
+- Switch to lighter gradient (+1 to 0).
+- Revert to plain mode without gradient.
+- Apply premium gradient to the correct new icon and app icon.
+- Remove redundant version string from up-to-date message.
+- Update appcast.xml with valid signature for new framework-embedded dmg.
+
+### Fixes
+- Cap max height of download links text editor.
+- Harden media download flow.
+- Pass extractor arguments to yt-dlp download process.
+- Restore single click selection by removing simultaneousGesture.
+- Restore Download Properties routing and gestures.
+- Pass UUID as String for download properties WindowGroup to prevent routing failures.
+- Size column fallback and table row interactions.
+- Media download UX and table row selection.
+- Media downloads connections, progress parsing, file size, and selection highlight.
+- Stabilize yt-dlp metadata and add-on updates.
+- Block automatic metadata fetch for private IP addresses (security).
+- Actually update extension icons with the 1.9x gradient icon.
+- Correctly remove black padding and mask corners.
+- Harden Sparkle release metadata.
+- Correct Sparkle SUNoUpdateError code to prevent false error messages.
+
 ## [0.5.7] - 2026-06-06
 
 ### New features

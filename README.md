@@ -6,6 +6,8 @@
   <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white" alt="Swift Version" /></a>
   <a href="https://apple.com"><img src="https://img.shields.io/badge/macOS-14.0%2B-blue?logo=apple&logoColor=white" alt="Platform Support" /></a>
   <a href="https://aria2.github.io/"><img src="https://img.shields.io/badge/Engine-aria2c-red?logo=terminal&logoColor=white" alt="Engine" /></a>
+  <a href="https://github.com/yt-dlp/yt-dlp"><img src="https://img.shields.io/badge/Engine-yt--dlp-red?logo=youtube&logoColor=white" alt="yt-dlp Engine" /></a>
+  <a href="https://ffmpeg.org/"><img src="https://img.shields.io/badge/Engine-ffmpeg-red?logo=ffmpeg&logoColor=white" alt="ffmpeg Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License" /></a>
 </div>
 
@@ -24,6 +26,18 @@
   <br/>
   <sub>A premium native experience, from batch linking to advanced settings.</sub>
 </div>
+
+<details>
+<summary><b>Light Theme Screenshots</b></summary>
+<br/>
+
+<div align="center">
+  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window light theme" width="32%" />
+  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window light theme" width="32%" />
+  <img src="Resources/Screenshots/Light/Settings.png" alt="Settings light theme" width="32%" />
+</div>
+
+</details>
 
 ---
 

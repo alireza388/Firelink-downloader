@@ -84,6 +84,16 @@ struct AddDownloadsView: View {
         }
         .onDisappear {
             metadataTask?.cancel()
+            linkText = ""
+            pendingDownloads = []
+            headerText = ""
+            cookieText = ""
+            mirrorText = ""
+            useAuthorization = false
+            authUsername = ""
+            authPassword = ""
+            checksumEnabled = false
+            checksumValue = ""
         }
     }
 

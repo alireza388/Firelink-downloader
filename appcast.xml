@@ -10,13 +10,13 @@
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
       <sparkle:releaseNotesLink>https://github.com/nimbold/Firelink/releases/tag/v0.6.2</sparkle:releaseNotesLink>
-      <pubDate>Mon, 08 Jun 2026 12:54:48 +0000</pubDate>
+      <pubDate>Mon, 08 Jun 2026 13:15:04 +0000</pubDate>
       <enclosure url="https://github.com/nimbold/Firelink/releases/download/v0.6.2/Firelink-0.6.2-mac-arm64.dmg"
-                 sparkle:version="26"
+                 sparkle:version="27"
                  sparkle:shortVersionString="0.6.2"
-                 length="75882342"
+                 length="75883565"
                  type="application/octet-stream"
-                 sparkle:edSignature="vvylIjvPhUZMvs/XCvhPDISBdRxolstgLLDDmU2i2Nb6Hf5mnSf+orMRYV0VewBSREB49DN64l0tkHaZrkXVBQ==" />
+                 sparkle:edSignature="ZxDVZryK1xisBGEsvhORR3B09LxWbrzXqo/IppR2CY694JvbKzWMKPHxaZk6x68V9YxeyiiyeyBAsV8oHdeQBQ==" />
     </item>
   </channel>
 </rss>

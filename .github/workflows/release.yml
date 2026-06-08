@@ -60,6 +60,20 @@ jobs:
       - name: Install dependencies
         run: brew install aria2 dylibbundler
 
+      - name: Fetch media engines
+        run: |
+          mkdir -p Sources/Firelink
+          
+          # Download latest yt-dlp for macOS
+          curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o Sources/Firelink/yt-dlp
+          chmod +x Sources/Firelink/yt-dlp
+          
+          # Download ffmpeg (Martin Riedl's static macOS ARM64 build)
+          curl -sL "https://ffmpeg.martin-riedl.de/download/macos/arm64/1779741465_9_1_1/ffmpeg.zip" -o ffmpeg.zip
+          unzip -q -o ffmpeg.zip -d Sources/Firelink
+          rm ffmpeg.zip
+          chmod +x Sources/Firelink/ffmpeg
+
       - name: Build app bundle
         env:
           MARKETING_VERSION: ${{ steps.version.outputs.version }}

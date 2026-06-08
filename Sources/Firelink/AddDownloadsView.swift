@@ -312,7 +312,7 @@ struct AddDownloadsView: View {
             Button("Cancel") {
                 dismiss()
             }
-            .keyboardShortcut(.cancelAction)
+            .keyboardShortcut(showingDuplicates ? nil : .cancelAction)
 
             Button("Add to Queue") {
                 addDownloads(start: false)
@@ -324,7 +324,7 @@ struct AddDownloadsView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(!canAddDownloads)
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(showingDuplicates ? nil : .defaultAction)
         }
     }
 

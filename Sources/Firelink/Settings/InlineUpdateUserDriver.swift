@@ -32,19 +32,53 @@ class InlineUpdateUserDriver: NSObject, SPUUserDriver {
     }
     
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {
-        DispatchQueue.main.async {
+        DispatchQueue.global(qos: .userInitiated).async {
             if let htmlString = String(data: downloadData.data, encoding: .utf8) {
-                self.updater?.releaseNotes = self.stripHTML(htmlString)
+                let parsedText = self.fastHTMLToMarkdown(htmlString)
+                DispatchQueue.main.async {
+                    self.updater?.releaseNotes = parsedText
+                }
             }
         }
     }
     
-    private func stripHTML(_ string: String) -> String {
-        guard let data = string.data(using: .utf8) else { return string }
-        if let attributedString = try? NSAttributedString(data: data, options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue], documentAttributes: nil) {
-            return attributedString.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    nonisolated private func fastHTMLToMarkdown(_ html: String) -> String {
+        var text = html
+        text = text.replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<br/>", with: "\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<br />", with: "\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</p>", with: "\n\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<li>", with: "- ", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</li>", with: "\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<h1>", with: "# ", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</h1>", with: "\n\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<h2>", with: "## ", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</h2>", with: "\n\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<h3>", with: "### ", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</h3>", with: "\n\n", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<b>", with: "**", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</b>", with: "**", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "<strong>", with: "**", options: .caseInsensitive)
+        text = text.replacingOccurrences(of: "</strong>", with: "**", options: .caseInsensitive)
+        
+        if let regex = try? NSRegularExpression(pattern: "<[^>]+>", options: .caseInsensitive) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            text = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
         }
-        return string
+        
+        text = text.replacingOccurrences(of: "&nbsp;", with: " ")
+        text = text.replacingOccurrences(of: "&amp;", with: "&")
+        text = text.replacingOccurrences(of: "&lt;", with: "<")
+        text = text.replacingOccurrences(of: "&gt;", with: ">")
+        text = text.replacingOccurrences(of: "&quot;", with: "\"")
+        text = text.replacingOccurrences(of: "&#39;", with: "'")
+        
+        if let regex = try? NSRegularExpression(pattern: "\\n{3,}", options: []) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            text = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "\n\n")
+        }
+        
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {

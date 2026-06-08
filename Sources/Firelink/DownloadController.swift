@@ -602,7 +602,7 @@ final class DownloadController: ObservableObject {
                 update(item.id) {
                     $0.rpcPort = handle.rpcPort
                     $0.rpcSecret = handle.rpcSecret
-                    $0.message = "Process \(handle.processIdentifier)"
+                    $0.message = "Starting..."
                 }
                 saveDownloads()
                 applySpeedLimitsToActiveDownloads()

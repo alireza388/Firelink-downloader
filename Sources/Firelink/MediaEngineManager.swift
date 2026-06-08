@@ -31,11 +31,19 @@ final class MediaEngineManager: ObservableObject {
     }
 
     func binaryPath(for addon: AddonType) -> URL? {
-        for bundle in [Bundle.main, Bundle.module] {
-            if let bundled = bundle.url(forResource: addon.binaryName, withExtension: nil),
+        if let bundled = Bundle.main.url(forResource: addon.binaryName, withExtension: nil),
+           FileManager.default.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+        
+        // Prevent fatalError crash: avoid accessing Bundle.module if running in a packaged app.
+        if Bundle.main.bundleURL.pathExtension.lowercased() != "app" {
+            #if SWIFT_PACKAGE
+            if let bundled = Bundle.module.url(forResource: addon.binaryName, withExtension: nil),
                FileManager.default.isExecutableFile(atPath: bundled.path) {
                 return bundled
             }
+            #endif
         }
         return nil
     }

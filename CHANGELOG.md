@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-06-08
+
+### Fixes
+- Fix keyboard shortcut collision that caused the main window to intercept Enter/Escape keys when the duplicate resolution sheet was open.
+- Fix UI freeze when checking release notes for an update by parsing HTML asynchronously on a background thread.
+- Improve Sparkle changelog formatting by converting HTML tags to clean Markdown instead of stripping them into an unreadable block of text.
+- Change the internal `Process xxxxx` status message to a cleaner `Starting...` message when queueing a new download.
+- Fix `EXC_BREAKPOINT` crash on app launch in production builds by prioritizing `Bundle.main` over `Bundle.module` when accessing resources.
+
 ## [0.6.1] - 2026-06-08
 
 ### New Features

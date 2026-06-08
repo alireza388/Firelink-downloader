@@ -269,6 +269,11 @@ struct PendingDownload: Identifiable, Equatable, Sendable {
     var sizeBytes: Int64?
     var mimeType: String?
     var state: MetadataState = .pending
+    
+    var isMedia: Bool = false
+    var mediaOptions: [CleanFormatOption] = []
+    var selectedMediaOption: CleanFormatOption?
+    var mediaMetadata: MediaMetadata?
 
     var destinationPath: String {
         defaultDirectory.appendingPathComponent(fileName).path

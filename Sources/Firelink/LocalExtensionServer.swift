@@ -125,7 +125,7 @@ final class LocalExtensionServer: @unchecked Sendable {
         }
 
         let host = request.header(named: "host") ?? ""
-        let isLocalhost = host.hasPrefix("127.0.0.1:") || host.hasPrefix("localhost:") || host == "127.0.0.1" || host == "localhost"
+        let isLocalhost = host == "127.0.0.1:\(self.port)" || host == "localhost:\(self.port)" || host == "127.0.0.1" || host == "localhost"
         guard isLocalhost else {
             return .forbidden
         }

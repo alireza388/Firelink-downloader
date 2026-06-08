@@ -26,7 +26,9 @@ struct AddDownloadsView: View {
     @State private var authPassword = ""
     @State private var saveLogin = false
 
-    @State private var detectedMediaURL: URL? = nil
+    @State private var conflictingDownloads: [DuplicateDownloadItem] = []
+    @State private var showingDuplicates = false
+    @State private var pendingStartFlag = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,60 +36,33 @@ struct AddDownloadsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     linkSection
 
-                    if let mediaURL = detectedMediaURL {
-                        MediaInspectorInlineView(
-                            url: mediaURL,
-                            cookieSource: settings.mediaCookieSource,
-                            credentials: metadataCredentials(for: mediaURL),
-                            transferOptions: transferOptions,
-                            onCancel: { dismiss() }
-                        ) { selectedFormat, metadata in
-                            let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
-                            let ext = selectedFormat.outputExtension
-                            let fileName = "\(cleanTitle).\(ext)"
-                            let category = FileClassifier.category(forFileName: fileName)
 
-                            let item = DownloadItem(
-                                url: mediaURL,
-                                fileName: fileName,
-                                category: category,
-                                destinationDirectory: overrideDirectory ?? settings.destinationDirectory(for: category),
-                                connectionsPerServer: Int(connectionsPerServer),
-                                credentials: explicitCredentials(for: [mediaURL]) ?? settings.credentials(for: mediaURL),
-                                checksum: transferOptions.checksum,
-                                requestHeaders: transferOptions.requestHeaders,
-                                cookieHeader: transferOptions.cookieHeader,
-                                mirrorURLs: transferOptions.mirrorURLs,
-                                speedLimitKiBPerSecond: speedLimitEnabled ? speedLimitKiBPerSecond : nil,
-                                message: "Added to queue",
-                                queueID: targetQueueID,
-                                mediaFormatSelector: selectedFormat.formatSelector,
-                                isAudioOnlyMedia: selectedFormat.isAudioOnly
-                            )
-
-                            controller.addMediaDownload(item, startImmediately: true)
-                            dismiss()
-                        }
-                        .transition(.scale(scale: 0.95).combined(with: .opacity))
-                    }
                     optionsSection
                     advancedTransferSection
 
-                    if detectedMediaURL == nil {
-                        summarySection
-                        previewSection
-                    }
+                    summarySection
+                    previewSection
                 }
                 .padding(12)
             }
-            if detectedMediaURL == nil {
-                Divider()
-                actionBar
-                    .padding(16)
-                    .background(.background)
-            }
+            Divider()
+            actionBar
+                .padding(16)
+                .background(.background)
         }
         .frame(minWidth: 640, idealWidth: 680, minHeight: 470, idealHeight: 500)
+        .sheet(isPresented: $showingDuplicates) {
+            DuplicateResolutionView(
+                conflicts: $conflictingDownloads,
+                onConfirm: {
+                    showingDuplicates = false
+                    executeAddDownloads(start: pendingStartFlag, conflicts: conflictingDownloads)
+                },
+                onCancel: {
+                    showingDuplicates = false
+                }
+            )
+        }
         .onChange(of: linkText) { _, newValue in
             scheduleMetadataRefresh(for: newValue)
         }
@@ -248,8 +223,8 @@ struct AddDownloadsView: View {
             Label("Preview", systemImage: "list.bullet.rectangle")
                 .font(.subheadline.weight(.semibold))
 
-            Table(pendingDownloads) {
-                TableColumn("File") { item in
+            Table($pendingDownloads) {
+                TableColumn("File") { $item in
                     HStack {
                         Image(systemName: item.category.symbolName)
                             .foregroundStyle(categoryColor(item.category))
@@ -260,23 +235,55 @@ struct AddDownloadsView: View {
                     }
                 }
 
-                TableColumn("Size") { item in
+                TableColumn("Size") { $item in
                     Text(ByteFormatter.string(item.sizeBytes))
                         .monospacedDigit()
                 }
                 .width(86)
 
-                TableColumn("Save To") { item in
-                    Text(destinationDirectory(for: item).path)
+                TableColumn("Save To") { $item in
+                    Text(item.destinationPath)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
-                TableColumn("Status") { item in
-                    MetadataStatusView(state: item.state)
+                TableColumn("Status") { $item in
+                    if item.isMedia {
+                        if !item.mediaOptions.isEmpty {
+                            Menu {
+                                ForEach(item.mediaOptions) { option in
+                                    Button {
+                                        item.selectedMediaOption = option
+                                        if let metadata = item.mediaMetadata {
+                                            let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
+                                            item.fileName = "\(cleanTitle).\(option.outputExtension)"
+                                            item.category = FileClassifier.category(forFileName: item.fileName)
+                                        }
+                                    } label: {
+                                        Text(option.name)
+                                    }
+                                }
+                            } label: {
+                                Text(item.selectedMediaOption?.name ?? "Select Format")
+                                    .lineLimit(1)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .buttonStyle(.plain)
+                            .fixedSize()
+                        } else if case .loading = item.state {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Checking")
+                            }.foregroundStyle(.secondary)
+                        } else {
+                            MetadataStatusView(state: item.state)
+                        }
+                    } else {
+                        MetadataStatusView(state: item.state)
+                    }
                 }
-                .width(110)
+                .width(min: 110, ideal: 140, max: 200)
             }
             .frame(minHeight: 160)
         }
@@ -493,24 +500,8 @@ struct AddDownloadsView: View {
         let urls = DownloadURLParser.parse(text)
         metadataTask?.cancel()
 
-        let mediaURL: URL? = {
-            guard urls.count == 1, let first = urls.first, MediaDetector.isSupportedMedia(url: first) else {
-                return nil
-            }
-            return first
-        }()
-
-        if let mediaURL {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                detectedMediaURL = mediaURL
-            }
-        } else {
-            withAnimation {
-                detectedMediaURL = nil
-            }
-        }
-
         pendingDownloads = urls.map { url in
+            let isMedia = MediaDetector.isSupportedMedia(url: url)
             let fileName = FileClassifier.fileName(from: url)
             let category = FileClassifier.category(forFileName: fileName)
             return PendingDownload(
@@ -518,7 +509,8 @@ struct AddDownloadsView: View {
                 fileName: fileName,
                 category: category,
                 defaultDirectory: settings.destinationDirectory(for: category),
-                state: .loading
+                state: .loading,
+                isMedia: isMedia
             )
         }
 
@@ -529,26 +521,53 @@ struct AddDownloadsView: View {
             saveLogin = false
         }
 
-        guard mediaURL == nil else {
-            pendingDownloads = []
+        guard !urls.isEmpty else {
             metadataTask = nil
             return
         }
 
         metadataTask = Task {
-            var loaded: [PendingDownload] = []
-            for url in urls {
-                guard !Task.isCancelled else { return }
-                let item = await DownloadMetadataFetcher.fetch(
-                    for: url,
-                    settings: settings,
-                    credentials: metadataCredentials(for: url),
-                    transferOptions: transferOptions,
-                    isAutoFetch: isAutoFetch
-                )
-                loaded.append(item)
-                await MainActor.run {
-                    for loadedItem in loaded {
+            await withTaskGroup(of: PendingDownload.self) { group in
+                for item in pendingDownloads {
+                    group.addTask {
+                        if item.isMedia {
+                            var fetchedItem = item
+                            do {
+                                try await MediaEngineManager.shared.ensureAvailable(addons: [.ytDlp])
+                                let (metadata, options) = try await MediaExtractionEngine.fetchMetadata(
+                                    for: item.url,
+                                    cookieSource: settings.mediaCookieSource,
+                                    credentials: metadataCredentials(for: item.url),
+                                    transferOptions: transferOptions
+                                )
+                                fetchedItem.mediaMetadata = metadata
+                                fetchedItem.mediaOptions = options
+                                if let bestVideo = options.first(where: { !$0.isAudioOnly && $0.name.contains("Best") }) ?? options.first(where: { !$0.isAudioOnly }) ?? options.first {
+                                    fetchedItem.selectedMediaOption = bestVideo
+                                    let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
+                                    fetchedItem.fileName = "\(cleanTitle).\(bestVideo.outputExtension)"
+                                    fetchedItem.category = FileClassifier.category(forFileName: fetchedItem.fileName)
+                                }
+                                fetchedItem.state = .loaded
+                            } catch {
+                                fetchedItem.state = .failed(error.localizedDescription)
+                            }
+                            return fetchedItem
+                        } else {
+                            return await DownloadMetadataFetcher.fetch(
+                                for: item.url,
+                                settings: settings,
+                                credentials: metadataCredentials(for: item.url),
+                                transferOptions: transferOptions,
+                                isAutoFetch: isAutoFetch
+                            )
+                        }
+                    }
+                }
+
+                for await loadedItem in group {
+                    guard !Task.isCancelled else { break }
+                    await MainActor.run {
                         if let index = pendingDownloads.firstIndex(where: { $0.url == loadedItem.url }) {
                             pendingDownloads[index] = loadedItem
                         }
@@ -579,10 +598,69 @@ struct AddDownloadsView: View {
     }
 
     private func addDownloads(start: Bool) {
-        let explicitCredentials = explicitCredentials(for: pendingDownloads.map(\.url))
+        var conflicts: [DuplicateDownloadItem] = []
+        for pending in pendingDownloads {
+            let destURL = overrideDirectory ?? pending.defaultDirectory
+            let destPath = destURL.appendingPathComponent(pending.fileName).path
+            
+            if controller.downloads.contains(where: { $0.url == pending.url && $0.status != .canceled && $0.status != .completed }) {
+                conflicts.append(DuplicateDownloadItem(id: pending.id, pendingItem: pending, reason: .existingURL("URL already in queue")))
+            } else if controller.downloads.contains(where: { $0.destinationPath == destPath && $0.status != .canceled }) || FileManager.default.fileExists(atPath: destPath) {
+                conflicts.append(DuplicateDownloadItem(id: pending.id, pendingItem: pending, reason: .existingFile("File exists at destination")))
+            }
+        }
+        
+        if !conflicts.isEmpty {
+            conflictingDownloads = conflicts
+            pendingStartFlag = start
+            showingDuplicates = true
+            return
+        }
+        
+        executeAddDownloads(start: start)
+    }
+
+    private func executeAddDownloads(start: Bool, conflicts: [DuplicateDownloadItem]? = nil) {
+        var finalDownloads = pendingDownloads
+        
+        if let conflicts {
+            for conflict in conflicts {
+                guard let index = finalDownloads.firstIndex(where: { $0.id == conflict.id }) else { continue }
+                switch conflict.resolution {
+                case .skip:
+                    finalDownloads.remove(at: index)
+                case .rename:
+                    let destURL = overrideDirectory ?? finalDownloads[index].defaultDirectory
+                    var newName = finalDownloads[index].fileName
+                    var count = 1
+                    let base = URL(fileURLWithPath: newName).deletingPathExtension().lastPathComponent
+                    let ext = URL(fileURLWithPath: newName).pathExtension
+                    while controller.downloads.contains(where: { $0.destinationDirectory == destURL && $0.fileName == newName }) || FileManager.default.fileExists(atPath: destURL.appendingPathComponent(newName).path) {
+                        newName = "\(base) (\(count))" + (ext.isEmpty ? "" : ".\(ext)")
+                        count += 1
+                    }
+                    finalDownloads[index].fileName = newName
+                case .replace:
+                    let destURL = overrideDirectory ?? finalDownloads[index].defaultDirectory
+                    let path = destURL.appendingPathComponent(finalDownloads[index].fileName).path
+                    if let existingIndex = controller.downloads.firstIndex(where: { ($0.destinationPath == path || $0.url == finalDownloads[index].url) && $0.status != .canceled }) {
+                        controller.delete(controller.downloads[existingIndex], deleteFiles: true)
+                    } else if FileManager.default.fileExists(atPath: path) {
+                        try? FileManager.default.removeItem(atPath: path)
+                    }
+                }
+            }
+        }
+
+        guard !finalDownloads.isEmpty else {
+            dismiss()
+            return
+        }
+
+        let explicitCredentials = explicitCredentials(for: finalDownloads.map(\.url))
 
         controller.addPendingDownloads(
-            pendingDownloads,
+            finalDownloads,
             connectionsPerServer: Int(connectionsPerServer),
             overrideDirectory: overrideDirectory,
             startImmediately: start,

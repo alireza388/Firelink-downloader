@@ -187,7 +187,9 @@ final class DownloadController: ObservableObject {
                 sizeBytes: pending.sizeBytes,
                 bytesText: ByteFormatter.string(pending.sizeBytes),
                 message: startImmediately ? "Queued to start" : "Added to queue",
-                queueID: targetQueueID
+                queueID: targetQueueID,
+                mediaFormatSelector: pending.selectedMediaOption?.formatSelector,
+                isAudioOnlyMedia: pending.selectedMediaOption?.isAudioOnly
             )
         }
 

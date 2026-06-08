@@ -1,6 +1,6 @@
 import Foundation
 
-struct RawMediaFormat: Decodable, Sendable {
+struct RawMediaFormat: Decodable, Sendable, Equatable {
     let format_id: String?
     let ext: String?
     let resolution: String?
@@ -12,7 +12,7 @@ struct RawMediaFormat: Decodable, Sendable {
     let filesize_approx: Int64?
 }
 
-struct MediaMetadata: Decodable, Sendable {
+struct MediaMetadata: Decodable, Sendable, Equatable {
     let id: String?
     let title: String?
     let uploader: String?

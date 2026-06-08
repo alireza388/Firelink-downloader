@@ -99,6 +99,17 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>https://raw.githubusercontent.com/nimbold/Firelink/main/appcast.xml</string>
   <key>SUEnableAutomaticChecks</key>
   <true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>local.firelink.swiftui</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>firelink</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

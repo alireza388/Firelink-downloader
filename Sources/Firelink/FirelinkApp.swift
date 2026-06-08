@@ -102,9 +102,25 @@ struct FirelinkApp: App {
                 .modifier(AppThemeModifier(theme: settings.appTheme))
                 .modifier(AppFontSizeModifier(fontSize: settings.appFontSize))
                 .onOpenURL { url in
-                    controller.pendingPasteboardText = url.absoluteString
-                    controller.pendingReferer = nil
-                    NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
+                    if url.scheme == "firelink" {
+                        if url.host == "add",
+                           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                           let queryItems = components.queryItems,
+                           let link = queryItems.first(where: { $0.name == "url" })?.value {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                controller.pendingPasteboardText = link
+                                controller.pendingReferer = nil
+                                NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
+                            }
+                        }
+                        return
+                    }
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        controller.pendingPasteboardText = url.absoluteString
+                        controller.pendingReferer = nil
+                        NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
+                    }
                 }
                 .frame(minWidth: 1180, idealWidth: 1280, minHeight: 720, idealHeight: 760)
         }

@@ -106,6 +106,13 @@ struct DownloadTable: View {
             .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
             .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
                 rowContextMenu(for: itemIDs)
+            } primaryAction: { itemIDs in
+                let targetItems = controller.downloads.filter { itemIDs.contains($0.id) }
+                for target in targetItems {
+                    if target.status == .completed {
+                        openFile(target)
+                    }
+                }
             }
             .overlay {
                 if items.isEmpty {

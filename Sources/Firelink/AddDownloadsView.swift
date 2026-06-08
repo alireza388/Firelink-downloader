@@ -95,7 +95,7 @@ struct AddDownloadsView: View {
                 .scrollContentBackground(.hidden)
                 .background(.quaternary.opacity(0.35))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .frame(minHeight: 72)
+                .frame(height: 72)
 
             HStack {
                 Text("\(pendingDownloads.count) valid link\(pendingDownloads.count == 1 ? "" : "s") detected")

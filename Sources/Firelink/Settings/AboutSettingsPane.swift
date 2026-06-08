@@ -7,6 +7,9 @@ struct AboutSettingsPane: View {
     private let developerProfileURL = URL(string: "https://github.com/nimbold")!
     private let projectURL = URL(string: "https://github.com/nimbold/Firelink")!
     private let aria2URL = URL(string: "https://aria2.github.io/")!
+    private let ytDlpURL = URL(string: "https://github.com/yt-dlp/yt-dlp")!
+    private let ffmpegURL = URL(string: "https://ffmpeg.org/")!
+    private let sparkleURL = URL(string: "https://sparkle-project.org/")!
     private let licenseURL = URL(string: "https://github.com/nimbold/Firelink/blob/main/LICENSE")!
 
     private var appVersion: String {
@@ -253,7 +256,15 @@ struct AboutSettingsPane: View {
 
                     HStack {
                         Text("Powered by")
-                        Link("aria2", destination: aria2URL)
+                        HStack(spacing: 4) {
+                            Link("aria2", destination: aria2URL)
+                            Text("•").foregroundStyle(.secondary)
+                            Link("yt-dlp", destination: ytDlpURL)
+                            Text("•").foregroundStyle(.secondary)
+                            Link("ffmpeg", destination: ffmpegURL)
+                            Text("•").foregroundStyle(.secondary)
+                            Link("Sparkle", destination: sparkleURL)
+                        }
                         Spacer()
                         Link("MIT License", destination: licenseURL)
                     }

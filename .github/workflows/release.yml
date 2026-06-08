@@ -63,16 +63,18 @@ jobs:
       - name: Fetch media engines
         run: |
           mkdir -p Sources/Firelink
-          
+
           # Download latest yt-dlp for macOS
-          curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o Sources/Firelink/yt-dlp
+          curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o Sources/Firelink/yt-dlp
           chmod +x Sources/Firelink/yt-dlp
-          
-          # Download ffmpeg (Martin Riedl's static macOS ARM64 build)
-          curl -sL "https://ffmpeg.martin-riedl.de/download/macos/arm64/1779741465_9_1_1/ffmpeg.zip" -o ffmpeg.zip
+
+          # Download latest FFmpeg release build for macOS ARM64 from Martin Riedl's build server
+          curl -fsSL "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip" -o ffmpeg.zip
           unzip -q -o ffmpeg.zip -d Sources/Firelink
           rm ffmpeg.zip
           chmod +x Sources/Firelink/ffmpeg
+          test -x Sources/Firelink/yt-dlp
+          test -x Sources/Firelink/ffmpeg
 
       - name: Build app bundle
         env:
@@ -106,7 +108,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           awk '/^## \['"$VERSION"'\]/{flag=1; next} /^## \[/{if(flag) exit} flag' CHANGELOG.md > release_notes.md
-          
+
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
           else

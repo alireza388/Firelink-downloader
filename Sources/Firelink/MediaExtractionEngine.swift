@@ -51,7 +51,7 @@ enum MediaExtractionEngine {
             case .processFailed(let msg): return "Extraction failed: \(msg)"
             case .invalidOutput: return "Invalid output from media engine."
             case .parsingFailed(let err): return "Failed to parse metadata: \(err.localizedDescription)"
-            case .timedOut: return "Fetching metadata timed out. Try again, update yt-dlp, or change the selected browser cookie source."
+            case .timedOut: return "Fetching metadata timed out. Try again or change the selected browser cookie source."
             }
         }
     }

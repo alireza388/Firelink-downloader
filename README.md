@@ -44,7 +44,7 @@
 ## ✨ Features
 
 - ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c`.
-- 🪄 **Media Downloader:** Instantly extract high-quality audio and video formats (4K, 1080p, MP3) from sites like YouTube and Twitter—backed securely by `yt-dlp` and `ffmpeg` via our Add-on Gatekeeper.
+- 🪄 **Media Downloader:** Instantly extract high-quality audio and video formats (4K, 1080p, MP3) from sites like YouTube and Twitter, backed by bundled `yt-dlp` and `ffmpeg` engines.
 - 🎨 **Premium Native UI:** Responsive, frosted-glass SwiftUI design tailor-made for Apple Silicon.
 - 🌐 **Seamless Integration:** Send links directly from your browser with the Firelink Companion extension.
 - 🎯 **Visual Chunk Map:** Monitor active segment connections and download progress in real time.

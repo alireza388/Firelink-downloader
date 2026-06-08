@@ -24,6 +24,16 @@ cp "$ROOT_DIR/Resources/$ICON_NAME.icns" "$RESOURCES_DIR/$ICON_NAME.icns"
 cp "$ROOT_DIR/Sources/Firelink/Assets.xcassets/MenuBarIcon.imageset/MenuBarIconTemplate.png" "$RESOURCES_DIR/MenuBarIconTemplate.png"
 cp "$ROOT_DIR/Resources/GitHubTemplate.png" "$RESOURCES_DIR/GitHubTemplate.png"
 
+for media_engine in yt-dlp ffmpeg; do
+  media_engine_path="$ROOT_DIR/Sources/Firelink/$media_engine"
+  if [[ -x "$media_engine_path" ]]; then
+    cp "$media_engine_path" "$RESOURCES_DIR/$media_engine"
+    chmod +x "$RESOURCES_DIR/$media_engine"
+  else
+    echo "WARNING: $media_engine not found or not executable at $media_engine_path"
+  fi
+done
+
 echo "Packaging Firefox extension..."
 mkdir -p "$RESOURCES_DIR/FirefoxExtension"
 cp "$ROOT_DIR/Extensions/Firefox/background.js" "$RESOURCES_DIR/FirefoxExtension/background.js"

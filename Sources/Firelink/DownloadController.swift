@@ -208,26 +208,6 @@ final class DownloadController: ObservableObject {
         }
     }
 
-    func addMediaDownload(_ item: DownloadItem, startImmediately: Bool) {
-        var item = item
-        item.fileName = FileClassifier.sanitizedFileName(item.fileName)
-        item.category = FileClassifier.category(forFileName: item.fileName)
-        item.speedLimitKiBPerSecond = normalizedSpeedLimit(item.speedLimitKiBPerSecond)
-        item.queueID = normalizedQueueID(item.queueID ?? DownloadQueue.mainQueueID)
-
-        if let password = item.credentials?.password, !password.isEmpty {
-            KeychainCredentialStore.setPassword(password, for: item.id)
-        }
-
-        downloads.append(item)
-        engineMessage = "Added \(item.fileName) to \(item.category.rawValue)."
-        saveDownloads()
-
-        if startImmediately {
-            startQueue(queueID: item.queueID ?? DownloadQueue.mainQueueID)
-        }
-    }
-
     func startQueue(queueID: UUID? = nil) {
         engineMessage = ""
         restrictQueueToAutoResume = false
@@ -534,7 +514,7 @@ final class DownloadController: ObservableObject {
                 do {
                     update(item.id) {
                         guard $0.status == .downloading else { return }
-                        $0.message = "Checking media add-ons..."
+                        $0.message = "Checking bundled media engines..."
                     }
                     try await MediaEngineManager.shared.ensureAvailable(addons: [.ytDlp, .ffmpeg])
                     guard let liveItem = activeDownloadItem(id: item.id) else { return }

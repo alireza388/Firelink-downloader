@@ -3,7 +3,6 @@ import Combine
 
 enum AddonState: Equatable, Sendable {
     case notInstalled
-    case downloading(progress: Double)
     case installed(version: String)
     case failed(error: String)
 }
@@ -32,9 +31,11 @@ final class MediaEngineManager: ObservableObject {
     }
 
     func binaryPath(for addon: AddonType) -> URL? {
-        if let bundled = Bundle.main.url(forResource: addon.binaryName, withExtension: nil),
-           FileManager.default.isExecutableFile(atPath: bundled.path) {
-            return bundled
+        for bundle in [Bundle.main, Bundle.module] {
+            if let bundled = bundle.url(forResource: addon.binaryName, withExtension: nil),
+               FileManager.default.isExecutableFile(atPath: bundled.path) {
+                return bundled
+            }
         }
         return nil
     }
@@ -55,18 +56,18 @@ final class MediaEngineManager: ObservableObject {
             switch state(for: addon) {
             case .installed:
                 return false
-            case .downloading, .notInstalled, .failed:
+            case .notInstalled, .failed:
                 return true
             }
         }
 
         guard !missingAddons.isEmpty else { return }
-        
+
         for missing in missingAddons {
             setState(for: missing, to: .failed(error: "Bundled executable missing"))
         }
-        
-        throw NSError(domain: "MediaEngineErrorDomain", code: 1, userInfo: [NSLocalizedDescriptionKey: "One or more required media engines are missing from the app bundle."])
+
+        throw NSError(domain: "MediaEngineErrorDomain", code: 1, userInfo: [NSLocalizedDescriptionKey: "One or more required media engines are missing from the app bundle. Reinstall Firelink or rebuild the app bundle."])
     }
 
     private func state(for addon: AddonType) -> AddonState {

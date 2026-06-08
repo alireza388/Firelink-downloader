@@ -30,10 +30,10 @@ final class MediaDownloadEngine: @unchecked Sendable {
         let ffmpegURL = await MediaEngineManager.shared.binaryPath(for: .ffmpeg)
 
         guard let ytDlpURL, FileManager.default.isExecutableFile(atPath: ytDlpURL.path) else {
-            throw EngineError.missingEngine("yt-dlp is not installed. Please check Settings > Add-ons.")
+            throw EngineError.missingEngine("The bundled yt-dlp executable is missing. Reinstall Firelink or rebuild the app bundle.")
         }
         guard let ffmpegURL, FileManager.default.isExecutableFile(atPath: ffmpegURL.path) else {
-            throw EngineError.missingEngine("ffmpeg is not installed. Please check Settings > Add-ons.")
+            throw EngineError.missingEngine("The bundled FFmpeg executable is missing. Reinstall Firelink or rebuild the app bundle.")
         }
 
         try FileManager.default.createDirectory(at: item.destinationDirectory, withIntermediateDirectories: true)

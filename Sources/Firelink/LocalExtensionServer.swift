@@ -8,15 +8,11 @@ final class LocalExtensionServer: @unchecked Sendable {
         static let maxRequestBytes = 128 * 1024
         static let maxURLCount = 200
         static let extensionRequestHeader = "x-firelink-extension"
-        
-        // IMPORTANT(Backward Compatibility):
-        // Extension updates on Mozilla/Chrome stores can take several days to be approved.
-        // Therefore, we MUST NOT introduce breaking changes to the LocalExtensionServer API 
-        // without maintaining backward compatibility for older extensions.
-        // If you need to update the API (e.g., changing the payload structure), add the new 
-        // token here and handle both versions in `processRequest`.
+
+        // Firelink Companion 1.0.7+ sends this token. Keep accepted tokens here
+        // when future store releases need a non-breaking local API transition.
         static let supportedExtensionTokens = Set(["firelink-extension-v1"])
-        
+
         static let allowedSchemes = Set(["http", "https", "ftp", "sftp"])
     }
 

@@ -19,7 +19,7 @@ struct EngineSettingsPane: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
-                
+
                 LabeledContent("Binary Path") {
                     Text(executableURL?.path ?? "Not found")
                         .font(.system(.caption, design: .monospaced))
@@ -42,9 +42,9 @@ struct EngineSettingsPane: View {
 
             Section {
                 addonStatusRow(title: "yt-dlp", state: engineManager.ytDlpState, path: engineManager.binaryPath(for: .ytDlp))
-                
+
                 addonStatusRow(title: "FFmpeg", state: engineManager.ffmpegState, path: engineManager.binaryPath(for: .ffmpeg))
-                
+
                 LabeledContent("Browser Cookies") {
                     Picker("", selection: $settings.mediaCookieSource) {
                         ForEach(BrowserCookieSource.allCases, id: \.self) { source in
@@ -59,7 +59,7 @@ struct EngineSettingsPane: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Powers video and audio extraction from supported sites.")
-                    
+
                     if settings.mediaCookieSource != .none {
                         Text(settings.mediaCookieSource.statusDetail)
                     }
@@ -80,8 +80,6 @@ struct EngineSettingsPane: View {
                 case .notInstalled:
                     Text("Missing")
                         .foregroundStyle(.red)
-                case .downloading:
-                    Text("Unavailable")
                 case .installed(let version):
                     Text(version)
                         .foregroundStyle(.secondary)
@@ -91,7 +89,7 @@ struct EngineSettingsPane: View {
                         .foregroundStyle(.red)
                         .help(error)
                 }
-                
+
                 Text(path?.path ?? "Not found")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.tertiary)

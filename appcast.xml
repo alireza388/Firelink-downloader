@@ -6,17 +6,17 @@
     <description>Most recent updates for Firelink</description>
     <language>en</language>
     <item>
-      <title>Version 0.5.7</title>
+      <title>Version 0.6.1</title>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:releaseNotesLink>https://github.com/nimbold/Firelink/releases/tag/v0.5.7</sparkle:releaseNotesLink>
-      <pubDate>Sat, 06 Jun 2026 11:36:06 +0000</pubDate>
-      <enclosure url="https://github.com/nimbold/Firelink/releases/download/v0.5.7/Firelink-0.5.7-mac-arm64.dmg"
-                 sparkle:version="22"
-                 sparkle:shortVersionString="0.5.7"
-                 length="8871979"
+      <sparkle:releaseNotesLink>https://github.com/nimbold/Firelink/releases/tag/v0.6.1</sparkle:releaseNotesLink>
+      <pubDate>Mon, 08 Jun 2026 12:05:48 +0000</pubDate>
+      <enclosure url="https://github.com/nimbold/Firelink/releases/download/v0.6.1/Firelink-0.6.1-mac-arm64.dmg"
+                 sparkle:version="25"
+                 sparkle:shortVersionString="0.6.1"
+                 length="75938181"
                  type="application/octet-stream"
-                 sparkle:edSignature="Y4QEJqGw6IeXL5JmaRqt5U22Bmc8JD02+oLRIFoKgOJO4v6p6+AmBP9VoM3yp/MAzj+gJMWiI/Gf4aPx4x3dAg==" />
+                 sparkle:edSignature="7Oa4mQ5mZkDIwB24DnuoERbHi+sNYonm5QVG1LgWP5lHRJU7LUeVHBSGwgzcVTVpyz32sI5YFqYC6v4STqPGAw==" />
     </item>
   </channel>
 </rss>

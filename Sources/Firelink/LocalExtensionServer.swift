@@ -56,12 +56,17 @@ final class LocalExtensionServer: @unchecked Sendable {
 
     private func handleConnection(_ connection: NWConnection) {
         connection.start(queue: queue)
-        receiveRequest(from: connection, accumulatedData: Data())
+        let timeoutItem = DispatchWorkItem { [weak connection] in
+            connection?.cancel()
+        }
+        queue.asyncAfter(deadline: .now() + 5.0, execute: timeoutItem)
+        receiveRequest(from: connection, accumulatedData: Data(), timeoutItem: timeoutItem)
     }
 
-    private func receiveRequest(from connection: NWConnection, accumulatedData: Data) {
+    private func receiveRequest(from connection: NWConnection, accumulatedData: Data, timeoutItem: DispatchWorkItem) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else {
+                timeoutItem.cancel()
                 connection.cancel()
                 return
             }
@@ -72,22 +77,25 @@ final class LocalExtensionServer: @unchecked Sendable {
             }
 
             guard error == nil, requestData.count <= Constants.maxRequestBytes else {
+                timeoutItem.cancel()
                 self.sendResponse(.payloadTooLarge, connection: connection, origin: nil)
                 return
             }
 
             if let request = HTTPRequest(data: requestData) {
+                timeoutItem.cancel()
                 let status = self.processRequest(request)
                 self.sendResponse(status, connection: connection, origin: request.header(named: "origin"))
                 return
             }
 
             if isComplete {
+                timeoutItem.cancel()
                 self.sendResponse(.badRequest, connection: connection, origin: nil)
                 return
             }
 
-            self.receiveRequest(from: connection, accumulatedData: requestData)
+            self.receiveRequest(from: connection, accumulatedData: requestData, timeoutItem: timeoutItem)
         }
     }
 

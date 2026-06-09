@@ -27,7 +27,12 @@ struct ContentView: View {
                     _ = provider.loadObject(ofClass: URL.self) { url, _ in
                         if let url = url {
                             DispatchQueue.main.async {
-                                controller.pendingPasteboardText = url.absoluteString
+                                let newText = url.absoluteString
+                                if let existing = controller.pendingPasteboardText, !existing.isEmpty {
+                                    controller.pendingPasteboardText = existing + "\n" + newText
+                                } else {
+                                    controller.pendingPasteboardText = newText
+                                }
                                 controller.pendingReferer = nil
                                 openWindow(id: "add-downloads")
                             }
@@ -37,7 +42,11 @@ struct ContentView: View {
                     _ = provider.loadObject(ofClass: String.self) { text, _ in
                         if let text = text {
                             DispatchQueue.main.async {
-                                controller.pendingPasteboardText = text
+                                if let existing = controller.pendingPasteboardText, !existing.isEmpty {
+                                    controller.pendingPasteboardText = existing + "\n" + text
+                                } else {
+                                    controller.pendingPasteboardText = text
+                                }
                                 controller.pendingReferer = nil
                                 openWindow(id: "add-downloads")
                             }
@@ -146,18 +155,24 @@ struct ContentView: View {
             }
             .keyboardShortcut(.delete, modifiers: [])
             .opacity(0)
+            .buttonStyle(.plain)
+            .focusable(false)
 
             Button("") {
                 handlePaste(queueID: queueID)
             }
             .keyboardShortcut("v", modifiers: .command)
             .opacity(0)
+            .buttonStyle(.plain)
+            .focusable(false)
 
             Button("") {
                 selectAll(items: items)
             }
             .keyboardShortcut("a", modifiers: .command)
             .opacity(0)
+            .buttonStyle(.plain)
+            .focusable(false)
 
             Button("") {
                 if let item = selectedItems.first {
@@ -166,6 +181,8 @@ struct ContentView: View {
             }
             .keyboardShortcut(.return, modifiers: [])
             .opacity(0)
+            .buttonStyle(.plain)
+            .focusable(false)
         }
         .confirmationDialog(
             "Delete \(selection.count) Download\(selection.count == 1 ? "" : "s")",

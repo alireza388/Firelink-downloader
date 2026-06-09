@@ -161,21 +161,23 @@ final class MediaDownloadEngine: @unchecked Sendable {
         }
 
         let baseName = expectedURL.deletingPathExtension().lastPathComponent
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: item.destinationDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return expectedURL
+        let commonExtensions = ["mp4", "mkv", "webm", "mp3", "m4a", "opus", "m4v", "aac", "wav", "flac"]
+        
+        var mostRecent: URL?
+        var mostRecentDate: Date = .distantPast
+        
+        for ext in commonExtensions {
+            let candidate = item.destinationDirectory.appendingPathComponent("\(baseName).\(ext)")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                let date = (try? candidate.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                if date >= mostRecentDate {
+                    mostRecentDate = date
+                    mostRecent = candidate
+                }
+            }
         }
 
-        return contents
-            .filter { $0.deletingPathExtension().lastPathComponent == baseName }
-            .max { lhs, rhs in
-                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return lhsDate < rhsDate
-            } ?? expectedURL
+        return mostRecent ?? expectedURL
     }
 
     private static func cleanErrorMessage(_ message: String, status: Int32) -> String {

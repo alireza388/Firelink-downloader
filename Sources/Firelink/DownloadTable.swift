@@ -104,6 +104,7 @@ struct DownloadTable: View {
                 .width(min: 100, ideal: 155)
             }
             .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
+            .animation(.default, value: sortedItems)
             .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
                 rowContextMenu(for: itemIDs)
             } primaryAction: { itemIDs in
@@ -202,33 +203,37 @@ struct DownloadTable: View {
 
             Divider()
 
-            if targetItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
-                Button {
-                    for target in targetItems where target.status == .paused || target.status == .failed || target.status == .canceled {
-                        controller.resume(target)
-                    }
-                } label: {
-                    Label("Start", systemImage: "play.fill")
-                }
-            }
+            Divider()
 
-            if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
-                Button {
-                    for target in targetItems where target.status == .downloading || target.status == .queued {
-                        controller.pause(target)
+            Menu("Controls") {
+                if targetItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
+                    Button {
+                        for target in targetItems where target.status == .paused || target.status == .failed || target.status == .canceled {
+                            controller.resume(target)
+                        }
+                    } label: {
+                        Label("Start", systemImage: "play.fill")
                     }
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
                 }
-            }
 
-            if targetItems.contains(where: { $0.status == .completed || $0.status == .failed || $0.status == .canceled }) {
-                Button {
-                    for target in targetItems where target.status == .completed || target.status == .failed || target.status == .canceled {
-                        controller.redownload(target)
+                if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
+                    Button {
+                        for target in targetItems where target.status == .downloading || target.status == .queued {
+                            controller.pause(target)
+                        }
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
                     }
-                } label: {
-                    Label("Redownload", systemImage: "arrow.clockwise")
+                }
+
+                if targetItems.contains(where: { $0.status == .completed || $0.status == .failed || $0.status == .canceled }) {
+                    Button {
+                        for target in targetItems where target.status == .completed || target.status == .failed || target.status == .canceled {
+                            controller.redownload(target)
+                        }
+                    } label: {
+                        Label("Redownload", systemImage: "arrow.clockwise")
+                    }
                 }
             }
 
@@ -306,22 +311,15 @@ struct DownloadTable: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {
-            GeometryReader { proxy in
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.secondary.opacity(0.15))
-
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(statusColor(for: item.status))
-                        .frame(width: max(0, proxy.size.width * item.progress))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Text(item.progress.formatted(.percent.precision(.fractionLength(0))))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(.primary)
-                }
+            HStack(spacing: 4) {
+                ProgressView(value: item.progress)
+                    .progressViewStyle(.linear)
+                    .tint(statusColor(for: item.status))
+                
+                Text(item.progress.formatted(.percent.precision(.fractionLength(0))))
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .frame(width: 35, alignment: .trailing)
             }
-            .frame(height: 16)
         }
     }
 

@@ -29,6 +29,9 @@ final class DownloadController: ObservableObject {
         return supportDir.appendingPathComponent("Firelink").appendingPathComponent("downloads.json")
     }()
     private var saveTask: Task<Void, Never>?
+    private var pendingNotifications: [(title: String, body: String)] = []
+    private var notificationDebounceTask: Task<Void, Never>?
+    private var lastProgressUpdateTimes: [UUID: Date] = [:]
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -230,6 +233,7 @@ final class DownloadController: ObservableObject {
     }
 
     func pause(_ item: DownloadItem) {
+        lastProgressUpdateTimes[item.id] = nil
         activeHandles[item.id]?.cancel()
         activeHandles[item.id] = nil
         activeMediaHandles[item.id]?.cancel()
@@ -530,6 +534,11 @@ final class DownloadController: ObservableObject {
                         speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: liveItem),
                         progress: { [weak self] progress in
                             Task { @MainActor in
+                                let now = Date()
+                                if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.25 {
+                                    return
+                                }
+                                self?.lastProgressUpdateTimes[item.id] = now
                                 self?.update(item.id) {
                                     guard $0.status == .downloading else { return }
                                     $0.progress = progress.fraction
@@ -581,6 +590,11 @@ final class DownloadController: ObservableObject {
                     speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: item),
                     progress: { [weak self] progress in
                         Task { @MainActor in
+                            let now = Date()
+                            if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.25 {
+                                return
+                            }
+                            self?.lastProgressUpdateTimes[item.id] = now
                             self?.update(item.id) {
                                 guard $0.status == .downloading else { return }
                                 $0.progress = progress.fraction
@@ -1088,14 +1102,35 @@ final class DownloadController: ObservableObject {
     }
 
     private func showNotification(title: String, body: String) {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = .default
-            let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
+        pendingNotifications.append((title: title, body: body))
+        notificationDebounceTask?.cancel()
+        
+        notificationDebounceTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+                    guard granted, let self else { return }
+                    Task { @MainActor in
+                        let items = self.pendingNotifications
+                        self.pendingNotifications.removeAll()
+                        guard !items.isEmpty else { return }
+                        
+                        let content = UNMutableNotificationContent()
+                        if items.count == 1 {
+                            content.title = items[0].title
+                            content.body = items[0].body
+                        } else {
+                            content.title = "\(items.count) Downloads Completed"
+                            content.body = "Multiple items have finished downloading."
+                        }
+                        content.sound = .default
+                        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+                        UNUserNotificationCenter.current().add(request)
+                    }
+                }
+            } catch {}
         }
     }
 }

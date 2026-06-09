@@ -1,81 +1,8 @@
 import SwiftUI
-import Sparkle
-
-final class SparkleUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
-    private var _updater: SPUUpdater?
-    var updater: SPUUpdater { _updater! }
-
-    @Published var isChecking = false
-    @Published var isDownloading = false
-    @Published var isExtracting = false
-    @Published var isReadyToInstall = false
-    @Published var downloadProgress: Double = 0.0
-    @Published var extractionProgress: Double = 0.0
-
-    @Published var updateStatus: String?
-    @Published var foundUpdateItem: SUAppcastItem?
-    @Published var releaseNotes: AttributedString?
-    @Published var automaticallyChecksForUpdates: Bool = true {
-        didSet {
-            _updater?.automaticallyChecksForUpdates = automaticallyChecksForUpdates
-        }
-    }
-
-    var expectedContentLength: UInt64 = 0
-    var receivedContentLength: UInt64 = 0
-    var cancellation: (() -> Void)?
-    var updateChoiceReply: ((SPUUserUpdateChoice) -> Void)?
-
-    override init() {
-        super.init()
-        let driver = InlineUpdateUserDriver(updater: self)
-        let hostBundle = Bundle.main
-        self._updater = SPUUpdater(hostBundle: hostBundle, applicationBundle: hostBundle, userDriver: driver, delegate: self)
-        do {
-            try self._updater?.start()
-            self.automaticallyChecksForUpdates = self._updater?.automaticallyChecksForUpdates ?? true
-        } catch {
-            print("Failed to start Sparkle updater: \(error)")
-        }
-    }
-
-    func checkForUpdates() {
-        guard updater.canCheckForUpdates else {
-            isChecking = false
-            updateStatus = "Update check is already in progress."
-            return
-        }
-        updater.checkForUpdates()
-    }
-
-    func resetState() {
-        isChecking = false
-        isDownloading = false
-        isExtracting = false
-        isReadyToInstall = false
-        downloadProgress = 0.0
-        extractionProgress = 0.0
-        updateStatus = nil
-        foundUpdateItem = nil
-        releaseNotes = nil
-        expectedContentLength = 0
-        receivedContentLength = 0
-        cancellation = nil
-        updateChoiceReply = nil
-    }
-
-    // Delegate methods can be left mostly empty or minimal since the UserDriver handles the UI state now.
-    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
-        DispatchQueue.main.async {
-            self.isChecking = false
-        }
-    }
-}
 
 @main
 struct FirelinkApp: App {
-    @StateObject private var sparkleUpdater: SparkleUpdater
-
+    @StateObject private var updateChecker: ReleaseUpdateChecker
     @StateObject private var settings: AppSettings
     @StateObject private var controller: DownloadController
     @StateObject private var schedulerController: SchedulerController
@@ -85,7 +12,7 @@ struct FirelinkApp: App {
     private let extensionServer: LocalExtensionServer?
 
     init() {
-        self._sparkleUpdater = StateObject(wrappedValue: SparkleUpdater())
+        self._updateChecker = StateObject(wrappedValue: ReleaseUpdateChecker())
 
         let settings = AppSettings()
         let controller = DownloadController(settings: settings)
@@ -104,9 +31,12 @@ struct FirelinkApp: App {
                 .environmentObject(controller)
                 .environmentObject(settings)
                 .environmentObject(schedulerController)
-                .environmentObject(sparkleUpdater)
+                .environmentObject(updateChecker)
                 .modifier(AppThemeModifier(theme: settings.appTheme))
                 .modifier(AppFontSizeModifier(fontSize: settings.appFontSize))
+                .task {
+                    updateChecker.checkAutomaticallyIfNeeded()
+                }
                 .onOpenURL { url in
                     if url.scheme == "firelink" {
                         if url.host == "add",
@@ -180,7 +110,6 @@ struct FirelinkApp: App {
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             TrayMenuView()
                 .environmentObject(controller)
-                .environmentObject(sparkleUpdater)
         } label: {
             if let nsImage = { () -> NSImage? in
                 guard let url = menuBarIconURL(),

@@ -24,3 +24,7 @@ private-key*
 private_key*
 yt-dlp
 ffmpeg
+Sources/Firelink/_internal/
+!Sources/Firelink/_internal/
+Sources/Firelink/_internal/*
+!Sources/Firelink/_internal/.gitkeep

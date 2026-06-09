@@ -85,7 +85,6 @@ Firelink stands on the shoulders of giants. A massive thank you to the contribut
 - **[aria2](https://aria2.github.io/)** - The legendary multi-protocol download utility driving our core engine.
 - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** - The definitive command-line audio/video downloader.
 - **[FFmpeg](https://ffmpeg.org/)** - The industry standard for media stream manipulation and merging.
-- **[Sparkle](https://sparkle-project.org/)** - A secure and reliable software update framework for macOS.
 
 ---
 

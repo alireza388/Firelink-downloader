@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix a bug where confirming a duplicate resolution failed to close the Add Downloads window, misleading users into thinking the download didn't start.
 - Fix keyboard shortcut collision that caused the main window to intercept Enter/Escape keys when the duplicate resolution sheet was open.
 - Fix UI freeze when checking release notes for an update by parsing HTML asynchronously on a background thread.
-- Improve Sparkle changelog formatting by converting HTML tags to clean Markdown instead of stripping them into an unreadable block of text.
+- Improve update changelog formatting by converting release note markup to clean Markdown instead of stripping it into an unreadable block of text.
 - Change the internal `Process xxxxx` status message to a cleaner `Starting...` message when queueing a new download.
 - Fix `EXC_BREAKPOINT` crash on app launch in production builds by prioritizing `Bundle.main` over `Bundle.module` when accessing resources.
 
@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrate yt-dlp to DownloadController and add global queue support.
 - Implement smart progressive disclosure UI and media extraction engine.
 - Implement gatekeeper architecture for on-demand media engine binaries.
-- Inline Sparkle update checks to avoid unnecessary modals.
+- Inline update checks to avoid unnecessary modals.
 
 ### Changes
 - Add backward compatibility support for extension tokens.
@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Revert to plain mode without gradient.
 - Apply premium gradient to the correct new icon and app icon.
 - Remove redundant version string from up-to-date message.
-- Update appcast.xml with valid signature for new framework-embedded dmg.
+- Update release metadata for the framework-embedded dmg.
 
 ### Fixes
 - Cap max height of download links text editor.
@@ -86,14 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Block automatic metadata fetch for private IP addresses (security).
 - Actually update extension icons with the 1.9x gradient icon.
 - Correctly remove black padding and mask corners.
-- Harden Sparkle release metadata.
-- Correct Sparkle SUNoUpdateError code to prevent false error messages.
+- Harden release metadata.
+- Correct no-update handling to prevent false error messages.
 
 ## [0.5.7] - 2026-06-06
 
 ### New features
-- Replaced the basic in-app update checker with the industry-standard Sparkle 2 framework.
-- Added secure, automatic in-app updates using EdDSA cryptographic signatures.
+- Replaced the basic in-app update checker with an integrated release-checking flow.
+- Added secure update metadata checks before presenting new releases in the app.
 
 ## [0.5.6] - 2026-06-05
 

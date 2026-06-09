@@ -1,4 +1,4 @@
-.PHONY: build app dmg run verify clean
+.PHONY: build app dmg release run verify clean
 
 build:
 	swift build -c release
@@ -7,6 +7,10 @@ app:
 	Scripts/create_app_bundle.sh
 
 dmg: app
+	Scripts/create_dmg.sh
+
+release:
+	Scripts/create_app_bundle.sh
 	Scripts/create_dmg.sh
 
 run:

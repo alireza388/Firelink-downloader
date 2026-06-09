@@ -8,13 +8,6 @@ final class LocalExtensionServer: @unchecked Sendable {
         static let maxRequestBytes = 128 * 1024
         static let maxURLCount = 200
         static let extensionRequestHeader = "x-firelink-extension"
-
-        // Firelink Companion sends this token.
-        // We now use a dynamic token generated in AppSettings, but fallback to this
-        // for backward compatibility during the extension rollout if needed, though
-        // we'll enforce the dynamic token strictly in the processRequest method.
-        static let legacyExtensionToken = "firelink-extension-v1"
-
         static let allowedSchemes = Set(["http", "https", "ftp", "sftp"])
     }
 

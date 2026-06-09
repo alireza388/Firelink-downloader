@@ -10,16 +10,15 @@ let package = Package(
     products: [
         .executable(name: "Firelink", targets: ["Firelink"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.3")
-    ],
+    dependencies: [],
     targets: [
         .executableTarget(
             name: "Firelink",
-            dependencies: [
-                .product(name: "Sparkle", package: "Sparkle")
-            ],
+            dependencies: [],
             path: "Sources/Firelink",
+            exclude: [
+                "_internal"
+            ],
             resources: [
                 .process("Assets.xcassets"),
                 .copy("yt-dlp"),

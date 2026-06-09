@@ -8,6 +8,7 @@ DEFAULT_MARKETING_VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's
 DEFAULT_BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || true)"
 MARKETING_VERSION="${MARKETING_VERSION:-${DEFAULT_MARKETING_VERSION:-0.1.0}}"
 BUILD_NUMBER="${BUILD_NUMBER:-${DEFAULT_BUILD_NUMBER:-1}}"
+SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-${SIGNING_IDENTITY:-}}"
 APP_DIR="$ROOT_DIR/build/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -15,6 +16,48 @@ RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICON_NAME="AppIcon"
 
 cd "$ROOT_DIR"
+
+is_valid_mach_o() {
+  local path="$1"
+  if ! file "$path" | grep -q 'Mach-O'; then
+    return 0
+  fi
+
+  lipo -archs "$path" >/dev/null 2>&1
+}
+
+ensure_ytdlp() {
+  local ytdlp_path="$ROOT_DIR/Sources/Firelink/yt-dlp"
+  local ytdlp_internal_path="$ROOT_DIR/Sources/Firelink/_internal"
+
+  if [[ -x "$ytdlp_path" ]] && [[ -d "$ytdlp_internal_path" ]] && is_valid_mach_o "$ytdlp_path"; then
+    return
+  fi
+
+  if ! command -v curl >/dev/null || ! command -v unzip >/dev/null; then
+    echo "WARNING: yt-dlp or its runtime is missing or malformed, and curl/unzip are not available to refresh it." >&2
+    return
+  fi
+
+  echo "Refreshing bundled yt-dlp runtime..."
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip -o "$temp_dir/yt-dlp.zip"
+  unzip -q -o "$temp_dir/yt-dlp.zip" -d "$temp_dir"
+  cp "$temp_dir/yt-dlp_macos" "$ytdlp_path"
+  chmod +x "$ytdlp_path"
+
+  if [[ -d "$temp_dir/_internal" ]]; then
+    rm -rf "$ROOT_DIR/Sources/Firelink/_internal"
+    cp -R "$temp_dir/_internal" "$ROOT_DIR/Sources/Firelink/_internal"
+    touch "$ROOT_DIR/Sources/Firelink/_internal/.gitkeep"
+  fi
+
+  rm -rf "$temp_dir"
+}
+
+ensure_ytdlp
+
 swift build -c "$CONFIGURATION"
 
 rm -rf "$APP_DIR"
@@ -33,6 +76,10 @@ for media_engine in yt-dlp ffmpeg; do
     echo "WARNING: $media_engine not found or not executable at $media_engine_path"
   fi
 done
+
+if [[ -d "$ROOT_DIR/Sources/Firelink/_internal" ]]; then
+  cp -R "$ROOT_DIR/Sources/Firelink/_internal" "$RESOURCES_DIR/_internal"
+fi
 
 echo "Packaging Firefox extension..."
 mkdir -p "$RESOURCES_DIR/FirefoxExtension"
@@ -62,12 +109,6 @@ fi
 
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 mkdir -p "$FRAMEWORKS_DIR"
-if [ -d ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" ]; then
-  cp -R ".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework" "$FRAMEWORKS_DIR/Sparkle.framework"
-fi
-if [ -d ".build/artifacts/sparkle/Sparkle/SparkleCore.xcframework/macos-arm64_x86_64/SparkleCore.framework" ]; then
-  cp -R ".build/artifacts/sparkle/Sparkle/SparkleCore.xcframework/macos-arm64_x86_64/SparkleCore.framework" "$FRAMEWORKS_DIR/SparkleCore.framework"
-fi
 
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$MACOS_DIR/$APP_NAME" || true
 
@@ -103,12 +144,6 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>Firelink needs permission to control Finder so it can sleep, restart, or shut down your Mac after scheduled downloads finish.</string>
-  <key>SUPublicEDKey</key>
-  <string>TnontDdbFQHbKkjpWVlHaMEbMahiCugSHOcUF1MwKE0=</string>
-  <key>SUFeedURL</key>
-  <string>https://raw.githubusercontent.com/nimbold/Firelink/main/appcast.xml</string>
-  <key>SUEnableAutomaticChecks</key>
-  <true/>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -125,7 +160,51 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 if command -v codesign &> /dev/null; then
-  codesign --force --deep --sign - "$APP_DIR"
+  if [[ -n "$SIGNING_IDENTITY" ]]; then
+    CODESIGN_ARGS=(--force --timestamp --options runtime --sign "$SIGNING_IDENTITY")
+    echo "Signing app bundle with identity: $SIGNING_IDENTITY"
+  else
+    CODESIGN_ARGS=(--force --sign -)
+    echo "Ad-hoc signing app bundle for local use."
+  fi
+
+  sign_path() {
+    local path="$1"
+    codesign "${CODESIGN_ARGS[@]}" "$path"
+  }
+
+  sign_mach_o_file() {
+    local path="$1"
+    case "$path" in
+      */Python.framework/Python|*/Python.framework/Versions/Current/*)
+        return
+        ;;
+    esac
+
+    if file "$path" | grep -q 'Mach-O'; then
+      if ! sign_path "$path"; then
+        echo "WARNING: Could not sign Mach-O executable for local build: $path" >&2
+      fi
+    fi
+  }
+
+  if [[ -d "$FRAMEWORKS_DIR" ]]; then
+    while IFS= read -r -d '' executable_path; do
+      sign_mach_o_file "$executable_path"
+    done < <(find "$FRAMEWORKS_DIR" -type f -print0)
+
+    while IFS= read -r -d '' bundle_path; do
+      sign_path "$bundle_path"
+    done < <(find "$FRAMEWORKS_DIR" \( -name "*.xpc" -o -name "*.framework" \) -type d -depth -print0)
+  fi
+
+  while IFS= read -r -d '' executable_path; do
+    sign_mach_o_file "$executable_path"
+  done < <(find "$RESOURCES_DIR" -type f -print0)
+
+  sign_path "$MACOS_DIR/$APP_NAME"
+  sign_path "$APP_DIR"
+  codesign --verify --deep --verbose=2 "$APP_DIR" || true
 fi
 
 echo "Created $APP_DIR"

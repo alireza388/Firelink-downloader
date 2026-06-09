@@ -148,6 +148,9 @@ struct AboutSettingsPane: View {
                 .buttonStyle(.borderedProminent)
 
             case .upToDate(let latestVersion, _):
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.title2)
+                    .foregroundStyle(.green)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Firelink is up to date")
                         .font(.headline)

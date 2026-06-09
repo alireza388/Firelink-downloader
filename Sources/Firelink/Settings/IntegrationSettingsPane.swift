@@ -138,9 +138,8 @@ struct CompactStepCardView: View {
                 // Step Number Badge
                 ZStack {
                     Circle()
-                        .fill(Color(nsColor: .controlBackgroundColor))
+                        .fill(Color.secondary.opacity(0.1))
                         .frame(width: 24, height: 24)
-                        .shadow(color: .black.opacity(0.1), radius: 1, y: 1)
                     
                     Text("\(stepNumber)")
                         .font(.system(.caption, design: .rounded).weight(.bold))

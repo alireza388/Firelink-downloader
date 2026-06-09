@@ -32,25 +32,37 @@ struct AddDownloadsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    linkSection
-
-
-                    optionsSection
-                    advancedTransferSection
-
-                    summarySection
-                    previewSection
+            HStack(spacing: 0) {
+                // Left Column
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        linkSection
+                        summarySection
+                        previewSection
+                    }
+                    .padding(20)
                 }
-                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                // Right Column
+                VStack(spacing: 0) {
+                    Form {
+                        optionsSection
+                        advancedTransferSection
+                    }
+                    .formStyle(.grouped)
+                }
+                .frame(width: 320)
+                .background(Color(NSColor.controlBackgroundColor))
             }
             Divider()
             actionBar
                 .padding(16)
                 .background(.background)
         }
-        .frame(minWidth: 640, idealWidth: 680, minHeight: 620, idealHeight: 680)
+        .frame(minWidth: 720, idealWidth: 800, minHeight: 620, idealHeight: 680)
         .sheet(isPresented: $showingDuplicates) {
             DuplicateResolutionView(
                 conflicts: $conflictingDownloads,
@@ -107,7 +119,7 @@ struct AddDownloadsView: View {
                 .scrollContentBackground(.hidden)
                 .background(.quaternary.opacity(0.35))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                .frame(height: 72)
+                .frame(minHeight: 72, idealHeight: 100, maxHeight: 160)
 
             HStack {
                 Text("\(pendingDownloads.count) valid link\(pendingDownloads.count == 1 ? "" : "s") detected")
@@ -125,102 +137,9 @@ struct AddDownloadsView: View {
     }
 
     private var optionsSection: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-            GridRow {
-                Label("Save Location", systemImage: "folder")
-                    .font(.subheadline.weight(.semibold))
-                Toggle("Use one folder for all files", isOn: $overrideDestination)
-            }
-
-            GridRow {
-                Text("")
-                HStack(spacing: 8) {
-                    TextField("Automatic by file type", text: $destinationPath)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.callout, design: .monospaced))
-                        .disabled(!overrideDestination)
-
-                    Button {
-                        selectDestination()
-                    } label: {
-                        Label("Select...", systemImage: "folder.badge.plus")
-                    }
-                    .disabled(!overrideDestination)
-                }
-            }
-
-            GridRow(alignment: .firstTextBaseline) {
-                Label("Queue", systemImage: "tray.full")
-                    .font(.subheadline.weight(.semibold))
-                Picker("Queue", selection: $targetQueueID) {
-                    ForEach(controller.queues) { queue in
-                        Text(queue.name).tag(queue.id)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 220, alignment: .leading)
-            }
-
-            GridRow(alignment: .firstTextBaseline) {
-                Label("Connections per File", systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.subheadline.weight(.semibold))
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Slider(value: $connectionsPerServer, in: 1...16, step: 1)
-                            .frame(width: 145)
-                        Text("\(Int(connectionsPerServer)) segments")
-                            .monospacedDigit()
-                            .frame(width: 98, alignment: .leading)
-                    }
-                }
-            }
-
-            GridRow(alignment: .firstTextBaseline) {
-                Label("Speed Limit per File", systemImage: "speedometer")
-                    .font(.subheadline.weight(.semibold))
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Toggle("Limit each file", isOn: $speedLimitEnabled)
-                            .toggleStyle(.switch)
-                        Stepper(
-                            "\(speedLimitKiBPerSecond) KiB/s",
-                            value: $speedLimitKiBPerSecond,
-                            in: 1...10_485_760,
-                            step: 128
-                        )
-                        .disabled(!speedLimitEnabled)
-                    }
-                }
-            }
-
-            GridRow(alignment: .top) {
-                Label("Authorization", systemImage: "lock.shield")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.top, 4)
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Use authorization", isOn: $useAuthorization)
-                        .toggleStyle(.switch)
-
-                    if useAuthorization {
-                        HStack(spacing: 8) {
-                            TextField("Username", text: $authUsername)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 145)
-                            SecureField("Password", text: $authPassword)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 145)
-                        }
-                        Toggle("Save login for this website", isOn: $saveLogin)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
+        Group {
             if let firstMedia = pendingDownloads.first(where: { $0.isMedia }), !firstMedia.mediaOptions.isEmpty {
-                GridRow(alignment: .firstTextBaseline) {
-                    Label("Media Format", systemImage: "film")
-                        .font(.subheadline.weight(.semibold))
+                Section {
                     Picker("Format", selection: Binding(
                         get: { firstMedia.selectedMediaOption?.id ?? "" },
                         set: { newId in
@@ -241,7 +160,68 @@ struct AddDownloadsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 220, alignment: .leading)
+                } header: {
+                    Text("Media Format").foregroundStyle(.blue)
+                }
+            }
+
+            Section("Save Location") {
+                Toggle("Use one folder for all files", isOn: $overrideDestination)
+                if overrideDestination {
+                    HStack(spacing: 8) {
+                        TextField("Automatic by file type", text: $destinationPath)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.callout, design: .monospaced))
+                        Button {
+                            selectDestination()
+                        } label: {
+                            Label("Select...", systemImage: "folder.badge.plus")
+                        }
+                    }
+                }
+            }
+
+            Section("Queue") {
+                Picker("Target Queue", selection: $targetQueueID) {
+                    ForEach(controller.queues) { queue in
+                        Text(queue.name).tag(queue.id)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            Section("Transfer Settings") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Connections per File")
+                    HStack {
+                        Slider(value: $connectionsPerServer, in: 1...16, step: 1)
+                        Text("\(Int(connectionsPerServer))")
+                            .monospacedDigit()
+                            .frame(width: 24, alignment: .trailing)
+                    }
+                }
+                
+                Toggle("Limit speed per file", isOn: $speedLimitEnabled)
+                if speedLimitEnabled {
+                    Stepper(
+                        "\(speedLimitKiBPerSecond) KiB/s",
+                        value: $speedLimitKiBPerSecond,
+                        in: 1...10_485_760,
+                        step: 128
+                    )
+                }
+            }
+
+            Section("Authorization") {
+                Toggle("Use authorization", isOn: $useAuthorization)
+                if useAuthorization {
+                    TextField("Username", text: $authUsername)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("Password", text: $authPassword)
+                        .textFieldStyle(.roundedBorder)
+                    Toggle("Save login for this website", isOn: $saveLogin)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -344,61 +324,53 @@ struct AddDownloadsView: View {
     }
 
     private var advancedTransferSection: some View {
-        DisclosureGroup(isExpanded: $showsAdvancedTransfer) {
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                GridRow(alignment: .firstTextBaseline) {
-                    Toggle("Checksum", isOn: $checksumEnabled)
-                        .font(.subheadline.weight(.semibold))
-                    HStack(spacing: 8) {
+        Section {
+            DisclosureGroup(isExpanded: $showsAdvancedTransfer) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Verify Checksum", isOn: $checksumEnabled)
+                    if checksumEnabled {
                         Picker("Algorithm", selection: $checksumAlgorithm) {
                             ForEach(ChecksumAlgorithm.allCases) { algorithm in
                                 Text(algorithm.title).tag(algorithm)
                             }
                         }
-                        .labelsHidden()
-                        .frame(width: 130)
-
                         TextField("Expected digest", text: $checksumValue)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.callout, design: .monospaced))
                     }
-                    .disabled(!checksumEnabled)
-                }
 
-                GridRow(alignment: .top) {
-                    Label("Headers", systemImage: "text.quote")
-                        .font(.subheadline.weight(.semibold))
-                    TextEditor(text: $headerText)
-                        .font(.system(.callout, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .background(.quaternary.opacity(0.35))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .frame(minHeight: 48)
-                }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Headers")
+                        TextEditor(text: $headerText)
+                            .font(.system(.callout, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .background(.quaternary.opacity(0.35))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .frame(minHeight: 48)
+                    }
 
-                GridRow(alignment: .firstTextBaseline) {
-                    Label("Cookies", systemImage: "circle.hexagongrid.circle")
-                        .font(.subheadline.weight(.semibold))
-                    TextField("name=value; other=value", text: $cookieText)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.callout, design: .monospaced))
-                }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cookies")
+                        TextField("name=value; other=value", text: $cookieText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.callout, design: .monospaced))
+                    }
 
-                GridRow(alignment: .top) {
-                    Label("Mirrors", systemImage: "point.3.filled.connected.trianglepath.dotted")
-                        .font(.subheadline.weight(.semibold))
-                    TextEditor(text: $mirrorText)
-                        .font(.system(.callout, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .background(.quaternary.opacity(0.35))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .frame(minHeight: 48)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Mirrors")
+                        TextEditor(text: $mirrorText)
+                            .font(.system(.callout, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .background(.quaternary.opacity(0.35))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .frame(minHeight: 48)
+                    }
                 }
+                .padding(.top, 8)
+            } label: {
+                Label("Advanced Transfer", systemImage: "slider.horizontal.3")
+                    .font(.subheadline.weight(.semibold))
             }
-            .padding(.top, 8)
-        } label: {
-            Label("Advanced Transfer", systemImage: "slider.horizontal.3")
-                .font(.subheadline.weight(.semibold))
         }
     }
 

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-06-09
+
+### New Features
+- Replace Sparkle with a lightweight native GitHub release checker for seamless and reliable updates.
+
+### Improvements
+- Polish the browser extension pairing UI with a secure masked token field and improved styling.
+
+### Changes
+- Remove stale references to the legacy static token from the Firelink Companion extension.
+
+### Fixes
+- Fix an issue where the app failed to detect newer padded version numbers (e.g., `1.0` vs `1.0.0`).
+- Fix missing macOS code signatures for `yt-dlp`'s embedded Python runtime, resolving potential Gatekeeper rejections.
+
 ## [0.6.3] - 2026-06-09
 
 ### Improvements

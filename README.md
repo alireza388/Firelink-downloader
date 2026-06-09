@@ -50,6 +50,7 @@
 - 🎯 **Visual Chunk Map:** Monitor active segment connections and download progress in real time.
 - 🗂️ **Smart Organization:** Auto-categorizes files into `Musics`, `Movies`, `Compressed`, and more.
 - 🛡️ **Reliable & Secure:** Deep Keychain integration for authenticated downloads, zero-configuration setup, and automatic recovery.
+- 🔄 **Native Updater:** Built-in seamless GitHub release checking for lightweight and transparent app updates without third-party frameworks.
 
 ---
 

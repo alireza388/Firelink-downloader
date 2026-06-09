@@ -139,18 +139,19 @@ enum MediaExtractionEngine {
     }
 
     private static func executablePath(named name: String, candidates: [String]) -> String? {
-        if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            return path
-        }
+        var safeCandidates = candidates
+        safeCandidates.append(contentsOf: [
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
+            "/usr/bin/\(name)",
+            "/opt/local/bin/\(name)"
+        ])
 
-        let pathEnvironment = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for directory in pathEnvironment.split(separator: ":") {
-            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(name).path
+        for candidate in safeCandidates {
             if FileManager.default.isExecutableFile(atPath: candidate) {
                 return candidate
             }
         }
-
         return nil
     }
 

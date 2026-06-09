@@ -93,7 +93,7 @@ struct FirelinkApp: App {
         _controller = StateObject(wrappedValue: controller)
         _schedulerController = StateObject(wrappedValue: SchedulerController(downloadController: controller))
 
-        extensionServer = LocalExtensionServer(downloadController: controller)
+        extensionServer = LocalExtensionServer(downloadController: controller, settings: settings)
         extensionServer?.start()
         controller.extensionServerPort = extensionServer?.port
     }

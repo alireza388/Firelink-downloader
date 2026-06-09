@@ -134,23 +134,80 @@ enum DownloadMetadataFetcher {
         if h == "localhost" || h.hasSuffix(".local") { return true }
         if !h.contains(".") && !h.contains(":") { return true }
 
-        let parts = h.split(separator: ".")
-        if parts.count == 4, let first = Int(parts[0]), let second = Int(parts[1]) {
-            if first == 127 || first == 10 || (first == 192 && second == 168) {
-                return true
-            }
-            if first == 172 && (16...31).contains(second) {
-                return true
-            }
-            if first == 169 && second == 254 {
-                return true
-            }
-        }
+        var hints = addrinfo(
+            ai_flags: 0,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: 0,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
 
-        if h.contains(":") {
-            if h == "[::1]" || h.hasPrefix("[fc") || h.hasPrefix("[fd") || h.hasPrefix("[fe8") || h.hasPrefix("[fe9") || h.hasPrefix("[fea") || h.hasPrefix("[feb") {
-                return true
+        var res: UnsafeMutablePointer<addrinfo>?
+        if getaddrinfo(host, nil, &hints, &res) == 0 {
+            var current = res
+            while let info = current {
+                let family = info.pointee.ai_family
+                if family == AF_INET {
+                    let addr = info.pointee.ai_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                    let ip = UInt32(bigEndian: addr.sin_addr.s_addr)
+                    let first = (ip >> 24) & 0xFF
+                    let second = (ip >> 16) & 0xFF
+
+                    if first == 127 || first == 10 || (first == 192 && second == 168) {
+                        freeaddrinfo(res)
+                        return true
+                    }
+                    if first == 172 && (16...31).contains(second) {
+                        freeaddrinfo(res)
+                        return true
+                    }
+                    if first == 169 && second == 254 {
+                        freeaddrinfo(res)
+                        return true
+                    }
+                } else if family == AF_INET6 {
+                    let addr = info.pointee.ai_addr.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
+                    let bytes = addr.sin6_addr.__u6_addr.__u6_addr8
+                    
+                    let isLoopback = bytes.0 == 0 && bytes.1 == 0 && bytes.2 == 0 && bytes.3 == 0 &&
+                                     bytes.4 == 0 && bytes.5 == 0 && bytes.6 == 0 && bytes.7 == 0 &&
+                                     bytes.8 == 0 && bytes.9 == 0 && bytes.10 == 0 && bytes.11 == 0 &&
+                                     bytes.12 == 0 && bytes.13 == 0 && bytes.14 == 0 && bytes.15 == 1
+                    
+                    let isULA = (bytes.0 & 0xFE) == 0xFC
+                    let isLinkLocal = bytes.0 == 0xFE && (bytes.1 & 0xC0) == 0x80
+                    
+                    let isIPv4Mapped = bytes.0 == 0 && bytes.1 == 0 && bytes.2 == 0 && bytes.3 == 0 &&
+                                       bytes.4 == 0 && bytes.5 == 0 && bytes.6 == 0 && bytes.7 == 0 &&
+                                       bytes.8 == 0 && bytes.9 == 0 && bytes.10 == 0xFF && bytes.11 == 0xFF
+                    
+                    if isLoopback || isULA || isLinkLocal {
+                        freeaddrinfo(res)
+                        return true
+                    }
+                    if isIPv4Mapped {
+                        let first = bytes.12
+                        let second = bytes.13
+                        if first == 127 || first == 10 || (first == 192 && second == 168) {
+                            freeaddrinfo(res)
+                            return true
+                        }
+                        if first == 172 && (16...31).contains(second) {
+                            freeaddrinfo(res)
+                            return true
+                        }
+                        if first == 169 && second == 254 {
+                            freeaddrinfo(res)
+                            return true
+                        }
+                    }
+                }
+                current = info.pointee.ai_next
             }
+            freeaddrinfo(res)
         }
         return false
     }

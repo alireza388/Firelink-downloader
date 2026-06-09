@@ -183,6 +183,10 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var extensionPairingToken: String {
+        didSet { save() }
+    }
+
     @Published var message = ""
 
     private let defaults: UserDefaults
@@ -204,6 +208,7 @@ final class AppSettings: ObservableObject {
             proxySettings = stored.proxySettings?.normalized ?? ProxySettings()
             siteLogins = stored.siteLogins
             mediaCookieSource = stored.mediaCookieSource ?? .none
+            extensionPairingToken = stored.extensionPairingToken ?? UUID().uuidString
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             appTheme = .system
@@ -216,6 +221,7 @@ final class AppSettings: ObservableObject {
             proxySettings = ProxySettings()
             siteLogins = []
             mediaCookieSource = .none
+            extensionPairingToken = UUID().uuidString
             downloadDirectories = Self.defaultDirectories()
         }
 
@@ -332,7 +338,8 @@ final class AppSettings: ObservableObject {
             proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins,
-            mediaCookieSource: mediaCookieSource
+            mediaCookieSource: mediaCookieSource,
+            extensionPairingToken: extensionPairingToken
         )
         let defaults = self.defaults
         let storageKey = self.storageKey
@@ -404,4 +411,5 @@ private struct StoredSettings: Codable {
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
     var mediaCookieSource: BrowserCookieSource?
+    var extensionPairingToken: String?
 }

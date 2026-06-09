@@ -9,20 +9,24 @@ final class LocalExtensionServer: @unchecked Sendable {
         static let maxURLCount = 200
         static let extensionRequestHeader = "x-firelink-extension"
 
-        // Firelink Companion 1.0.7+ sends this token. Keep accepted tokens here
-        // when future store releases need a non-breaking local API transition.
-        static let supportedExtensionTokens = Set(["firelink-extension-v1"])
+        // Firelink Companion sends this token.
+        // We now use a dynamic token generated in AppSettings, but fallback to this
+        // for backward compatibility during the extension rollout if needed, though
+        // we'll enforce the dynamic token strictly in the processRequest method.
+        static let legacyExtensionToken = "firelink-extension-v1"
 
         static let allowedSchemes = Set(["http", "https", "ftp", "sftp"])
     }
 
     private let listener: NWListener
     private let downloadController: DownloadController
+    private let settings: AppSettings
     private let queue = DispatchQueue(label: "local.firelink.server")
     let port: UInt16
 
-    init?(downloadController: DownloadController) {
+    init?(downloadController: DownloadController, settings: AppSettings) {
         self.downloadController = downloadController
+        self.settings = settings
         let parameters = NWParameters.tcp
 
         var createdListener: NWListener?
@@ -124,10 +128,6 @@ final class LocalExtensionServer: @unchecked Sendable {
     }
 
     private func processRequest(_ request: HTTPRequest) -> HTTPStatus {
-        guard request.path == "/download" else {
-            return .notFound
-        }
-
         let host = request.header(named: "host") ?? ""
         let isLocalhost = host == "127.0.0.1:\(self.port)" || host == "localhost:\(self.port)" || host == "127.0.0.1" || host == "localhost"
         guard isLocalhost else {
@@ -138,13 +138,22 @@ final class LocalExtensionServer: @unchecked Sendable {
             return isAllowedExtensionOrigin(request.header(named: "origin") ?? "") ? .noContent : .forbidden
         }
 
-        guard request.method == "POST" else {
-            return .methodNotAllowed
+        let expectedToken = DispatchQueue.main.sync { settings.extensionPairingToken }
+        guard let token = request.header(named: Constants.extensionRequestHeader),
+              token == expectedToken else {
+            return .forbidden
         }
 
-        guard let token = request.header(named: Constants.extensionRequestHeader),
-              Constants.supportedExtensionTokens.contains(token) else {
-            return .forbidden
+        if request.path == "/ping" {
+            return request.method == "GET" ? .ok : .methodNotAllowed
+        }
+
+        guard request.path == "/download" else {
+            return .notFound
+        }
+
+        guard request.method == "POST" else {
+            return .methodNotAllowed
         }
 
         guard request.header(named: "content-type")?.lowercased().contains("application/json") == true else {

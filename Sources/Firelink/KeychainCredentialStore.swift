@@ -30,7 +30,8 @@ enum KeychainCredentialStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: id.uuidString,
-            kSecValueData as String: Data(password.utf8)
+            kSecValueData as String: Data(password.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
 
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess

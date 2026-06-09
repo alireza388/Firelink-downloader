@@ -56,19 +56,12 @@ final class Aria2DownloadEngine {
         let candidates = [
             "/opt/homebrew/bin/aria2c",
             "/usr/local/bin/aria2c",
-            "/usr/bin/aria2c"
+            "/usr/bin/aria2c",
+            "/opt/local/bin/aria2c"
         ]
 
         if let found = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
             return URL(fileURLWithPath: found)
-        }
-
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for folder in path.split(separator: ":") {
-            let candidate = URL(fileURLWithPath: String(folder)).appendingPathComponent("aria2c")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
         }
 
         return nil

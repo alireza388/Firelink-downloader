@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-06-10
+
+### New Features
+- Add cascading media format pickers with inline loading states during metadata extraction.
+- Redesign the Integration settings pane for a more modern experience.
+- Overhaul the built-in update checker UI to integrate seamlessly into the settings.
+
+### Improvements
+- Implement keychain permission priming to defer secure access until explicitly granted, preventing unexpected macOS prompts.
+- Optimize core UI components to significantly improve rendering performance and overall app stability.
+
+### Fixes
+- Fix layout and dynamic sizing bugs in the Add Downloads window.
+- Fix formatting inconsistencies in media options selection.
+- Fix toast notification rendering glitches.
+
 ## [0.6.5] - 2026-06-09
 
 ### Fixes

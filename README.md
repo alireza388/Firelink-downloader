@@ -43,14 +43,13 @@
 
 ## ✨ Features
 
-- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c`.
-- 🪄 **Media Downloader:** Instantly extract high-quality audio and video formats (4K, 1080p, MP3) from sites like YouTube and Twitter, backed by bundled `yt-dlp` and `ffmpeg` engines.
-- 🎨 **Premium Native UI:** Responsive, frosted-glass SwiftUI design tailor-made for Apple Silicon.
-- 🌐 **Seamless Integration:** Send links directly from your browser with the Firelink Companion extension.
-- 🎯 **Visual Chunk Map:** Monitor active segment connections and download progress in real time.
-- 🗂️ **Smart Organization:** Auto-categorizes files into `Musics`, `Movies`, `Compressed`, and more.
-- 🛡️ **Reliable & Secure:** Deep Keychain integration for authenticated downloads, zero-configuration setup, and automatic recovery.
-- 🔄 **Native Updater:** Built-in seamless GitHub release checking for lightweight and transparent app updates without third-party frameworks.
+- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c` with configurable speed limits.
+- 🪄 **Media Downloader:** Instantly extract high-quality media (4K, 1080p, MP3) with smart cascading format pickers, powered by bundled `yt-dlp` and `ffmpeg`.
+- 🎨 **Premium Native UI:** A responsive, frosted-glass SwiftUI interface tailor-made for Apple Silicon, featuring a visual chunk map and dynamic progress tracking.
+- 🌐 **Seamless Browser Integration:** Send downloads directly from your browser via the secure Firelink Companion extension.
+- 🛡️ **Privacy & Security:** Zero-configuration setup with deferred Keychain integration ensures your credentials are kept safe and only accessed when strictly necessary.
+- 🗂️ **Smart Organization:** Auto-categorizes incoming files and remembers your preferred download locations.
+- 🔄 **Native Updater:** Built-in seamless GitHub release checking for lightweight and transparent app updates.
 
 ---
 

@@ -9,7 +9,14 @@ struct SiteLoginsSettingsPane: View {
 
     var body: some View {
         Form {
-            Section(editingLoginID == nil ? "Add Login" : "Edit Login") {
+            Section {
+                KeychainAccessCard()
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+
+            if settings.isKeychainAccessGranted {
+                Section(editingLoginID == nil ? "Add Login" : "Edit Login") {
                 TextField("URL Pattern (e.g., *.github.com)", text: $urlPattern)
                 TextField("Username", text: $username)
                 SecureField(editingLoginID == nil ? "Password" : "Password (leave blank to keep current)", text: $password)
@@ -70,6 +77,7 @@ struct SiteLoginsSettingsPane: View {
                         .onDelete(perform: settings.deleteSiteLogins)
                     }
                     .frame(minHeight: 180)
+                }
                 }
             }
         }

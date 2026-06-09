@@ -185,8 +185,14 @@ final class AppSettings: ObservableObject {
 
     @Published var extensionPairingToken: String {
         didSet {
-            KeychainCredentialStore.setExtensionToken(extensionPairingToken)
+            if isKeychainAccessGranted {
+                KeychainCredentialStore.setExtensionToken(extensionPairingToken)
+            }
         }
+    }
+
+    @Published var isKeychainAccessGranted: Bool {
+        didSet { save() }
     }
 
     @Published var message = ""
@@ -198,6 +204,7 @@ final class AppSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
+        let granted: Bool
         if let data = defaults.data(forKey: storageKey),
            let stored = try? JSONDecoder().decode(StoredSettings.self, from: data) {
             appTheme = stored.appTheme ?? .system
@@ -211,6 +218,8 @@ final class AppSettings: ObservableObject {
             siteLogins = stored.siteLogins
             mediaCookieSource = stored.mediaCookieSource ?? .none
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
+            granted = stored.isKeychainAccessGranted ?? false
+            isKeychainAccessGranted = granted
         } else {
             appTheme = .system
             appFontSize = .standard
@@ -223,13 +232,19 @@ final class AppSettings: ObservableObject {
             siteLogins = []
             mediaCookieSource = .none
             downloadDirectories = Self.defaultDirectories()
+            granted = false
+            isKeychainAccessGranted = granted
         }
 
-        if let token = KeychainCredentialStore.extensionToken() {
-            extensionPairingToken = token
+        if granted {
+            if let token = KeychainCredentialStore.extensionToken() {
+                extensionPairingToken = token
+            } else {
+                extensionPairingToken = Self.generateSecureToken()
+                // The didSet of extensionPairingToken will handle setting it in the keychain since isKeychainAccessGranted is true.
+            }
         } else {
-            extensionPairingToken = Self.generateSecureToken()
-            KeychainCredentialStore.setExtensionToken(extensionPairingToken)
+            extensionPairingToken = ""
         }
 
         for category in DownloadCategory.allCases where downloadDirectories[category] == nil {
@@ -333,6 +348,25 @@ final class AppSettings: ObservableObject {
         return DownloadCredentials(username: login.username, password: password)
     }
 
+    func grantKeychainAccess() {
+        isKeychainAccessGranted = true
+        if let token = KeychainCredentialStore.extensionToken() {
+            extensionPairingToken = token
+        } else {
+            extensionPairingToken = Self.generateSecureToken()
+        }
+    }
+
+    func revokeKeychainAccess() {
+        KeychainCredentialStore.deleteExtensionToken()
+        for login in siteLogins {
+            KeychainCredentialStore.deletePassword(for: login.id)
+        }
+        siteLogins.removeAll()
+        extensionPairingToken = ""
+        isKeychainAccessGranted = false
+    }
+
     private func save() {
         let stored = StoredSettings(
             appTheme: appTheme,
@@ -345,7 +379,8 @@ final class AppSettings: ObservableObject {
             proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins,
-            mediaCookieSource: mediaCookieSource
+            mediaCookieSource: mediaCookieSource,
+            isKeychainAccessGranted: isKeychainAccessGranted
         )
         let defaults = self.defaults
         let storageKey = self.storageKey
@@ -426,4 +461,5 @@ private struct StoredSettings: Codable {
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
     var mediaCookieSource: BrowserCookieSource?
+    var isKeychainAccessGranted: Bool?
 }

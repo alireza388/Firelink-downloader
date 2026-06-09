@@ -29,7 +29,10 @@ struct IntegrationSettingsPane: View {
                 }
                 .padding(.bottom, 8)
 
-                // Step 1: Copy Token
+                KeychainAccessCard()
+
+                if settings.isKeychainAccessGranted {
+                    // Step 1: Copy Token
                 StepCardView(
                     stepNumber: 1,
                     title: "Copy Pairing Token",
@@ -102,6 +105,7 @@ struct IntegrationSettingsPane: View {
                 .font(.footnote)
                 .padding(.top, 8)
 
+                }
             }
             .padding(32)
         }

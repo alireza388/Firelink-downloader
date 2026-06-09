@@ -48,4 +48,51 @@ enum KeychainCredentialStore {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
+    private static let extensionTokenService = "local.firelink.extension-token"
+    private static let extensionTokenAccount = "pairing-token"
+
+    static func extensionToken() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: extensionTokenService,
+            kSecAttrAccount as String: extensionTokenAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else {
+            return nil
+        }
+
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func setExtensionToken(_ token: String) -> Bool {
+        deleteExtensionToken()
+
+        let attributes: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: extensionTokenService,
+            kSecAttrAccount as String: extensionTokenAccount,
+            kSecValueData as String: Data(token.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+    }
+
+    @discardableResult
+    static func deleteExtensionToken() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: extensionTokenService,
+            kSecAttrAccount as String: extensionTokenAccount
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
 }

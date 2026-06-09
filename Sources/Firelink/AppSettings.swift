@@ -184,7 +184,9 @@ final class AppSettings: ObservableObject {
     }
 
     @Published var extensionPairingToken: String {
-        didSet { save() }
+        didSet {
+            KeychainCredentialStore.setExtensionToken(extensionPairingToken)
+        }
     }
 
     @Published var message = ""
@@ -208,7 +210,6 @@ final class AppSettings: ObservableObject {
             proxySettings = stored.proxySettings?.normalized ?? ProxySettings()
             siteLogins = stored.siteLogins
             mediaCookieSource = stored.mediaCookieSource ?? .none
-            extensionPairingToken = stored.extensionPairingToken ?? UUID().uuidString
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
         } else {
             appTheme = .system
@@ -221,8 +222,14 @@ final class AppSettings: ObservableObject {
             proxySettings = ProxySettings()
             siteLogins = []
             mediaCookieSource = .none
-            extensionPairingToken = UUID().uuidString
             downloadDirectories = Self.defaultDirectories()
+        }
+
+        if let token = KeychainCredentialStore.extensionToken() {
+            extensionPairingToken = token
+        } else {
+            extensionPairingToken = Self.generateSecureToken()
+            KeychainCredentialStore.setExtensionToken(extensionPairingToken)
         }
 
         for category in DownloadCategory.allCases where downloadDirectories[category] == nil {
@@ -338,8 +345,7 @@ final class AppSettings: ObservableObject {
             proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins,
-            mediaCookieSource: mediaCookieSource,
-            extensionPairingToken: extensionPairingToken
+            mediaCookieSource: mediaCookieSource
         )
         let defaults = self.defaults
         let storageKey = self.storageKey
@@ -381,6 +387,15 @@ final class AppSettings: ObservableObject {
         return host == normalizedPattern
     }
 
+    private static func generateSecureToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            return UUID().uuidString
+        }
+        return Data(bytes).base64EncodedString()
+    }
+
     private static func defaultDirectories() -> [DownloadCategory: String] {
         Dictionary(uniqueKeysWithValues: DownloadCategory.allCases.map { ($0, defaultDirectory(for: $0).path) })
     }
@@ -411,5 +426,4 @@ private struct StoredSettings: Codable {
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
     var mediaCookieSource: BrowserCookieSource?
-    var extensionPairingToken: String?
 }

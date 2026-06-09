@@ -108,7 +108,7 @@ final class LocalExtensionServer: @unchecked Sendable {
         if let origin, isAllowedExtensionOrigin(origin) {
             headers.append("Access-Control-Allow-Origin: \(origin)")
             headers.append("Vary: Origin")
-            headers.append("Access-Control-Allow-Methods: POST, OPTIONS")
+            headers.append("Access-Control-Allow-Methods: GET, POST, OPTIONS")
             headers.append("Access-Control-Allow-Headers: Content-Type, X-Firelink-Extension")
         }
 

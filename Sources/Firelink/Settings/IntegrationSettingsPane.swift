@@ -36,28 +36,42 @@ struct IntegrationSettingsPane: View {
                     description: "This secure token authorizes your browser extension.",
                     icon: "doc.on.clipboard.fill",
                     iconColor: .blue,
-                    actionText: "Copy Token"
-                ) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(settings.extensionPairingToken, forType: .string)
-                    withAnimation {
-                        showToast = true
+                    actionText: "Copy Token",
+                    action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(settings.extensionPairingToken, forType: .string)
+                        withAnimation {
+                            showToast = true
+                        }
+                    },
+                    secondaryActionText: "Regenerate",
+                    secondaryAction: {
+                        var bytes = [UInt8](repeating: 0, count: 32)
+                        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+                        settings.extensionPairingToken = status == errSecSuccess ? Data(bytes).base64EncodedString() : UUID().uuidString
                     }
-                }
+                )
 
-                // Step 2: Open Browser
+                // Step 2: Get Extension
                 StepCardView(
                     stepNumber: 2,
-                    title: "Open Firefox",
-                    description: "Launch your browser. If you haven't installed the extension yet, do that first.",
-                    icon: "safari.fill",
+                    title: "Get Extension",
+                    description: "Install the Firelink Companion extension on your favorite browser.",
+                    icon: "globe",
                     iconColor: .orange,
-                    actionText: "Open Firefox"
-                ) {
-                    if let url = URL(string: "https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/") {
-                        NSWorkspace.shared.open(url)
+                    actionText: "Firefox Add-ons",
+                    action: {
+                        if let url = URL(string: "https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    },
+                    secondaryActionText: "Releases",
+                    secondaryAction: {
+                        if let url = URL(string: "https://github.com/nimbold/Firelink-Extension/releases") {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
-                }
+                )
 
                 // Step 3: Paste and Save
                 StepCardView(
@@ -104,6 +118,8 @@ struct StepCardView: View {
     let iconColor: Color
     let actionText: String?
     let action: (() -> Void)?
+    var secondaryActionText: String? = nil
+    var secondaryAction: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 16) {
@@ -143,17 +159,36 @@ struct StepCardView: View {
             Spacer()
             
             // Action Button
-            if let actionText = actionText, let action = action {
-                Button(action: action) {
-                    Text(actionText)
-                        .font(.subheadline.weight(.medium))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
+            HStack(spacing: 8) {
+                if let secondaryActionText = secondaryActionText, let secondaryAction = secondaryAction {
+                    Button(action: secondaryAction) {
+                        Text(secondaryActionText)
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .foregroundColor(.primary)
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+
+                if let actionText = actionText, let action = action {
+                    Button(action: action) {
+                        Text(actionText)
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.accentColor)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(16)

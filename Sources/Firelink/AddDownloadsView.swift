@@ -216,6 +216,34 @@ struct AddDownloadsView: View {
                     }
                 }
             }
+
+            if let firstMedia = pendingDownloads.first(where: { $0.isMedia }), !firstMedia.mediaOptions.isEmpty {
+                GridRow(alignment: .firstTextBaseline) {
+                    Label("Media Format", systemImage: "film")
+                        .font(.subheadline.weight(.semibold))
+                    Picker("Format", selection: Binding(
+                        get: { firstMedia.selectedMediaOption?.id ?? "" },
+                        set: { newId in
+                            for index in pendingDownloads.indices where pendingDownloads[index].isMedia {
+                                if let option = pendingDownloads[index].mediaOptions.first(where: { $0.id == newId }) {
+                                    pendingDownloads[index].selectedMediaOption = option
+                                    if let metadata = pendingDownloads[index].mediaMetadata {
+                                        let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
+                                        pendingDownloads[index].fileName = "\(cleanTitle).\(option.outputExtension)"
+                                        pendingDownloads[index].category = FileClassifier.category(forFileName: pendingDownloads[index].fileName)
+                                    }
+                                }
+                            }
+                        }
+                    )) {
+                        ForEach(firstMedia.mediaOptions) { option in
+                            Text(option.name).tag(option.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 220, alignment: .leading)
+                }
+            }
         }
     }
 
@@ -261,36 +289,11 @@ struct AddDownloadsView: View {
                 }
 
                 TableColumn("Status") { $item in
-                    if item.isMedia {
-                        if !item.mediaOptions.isEmpty {
-                            Menu {
-                                ForEach(item.mediaOptions) { option in
-                                    Button {
-                                        item.selectedMediaOption = option
-                                        if let metadata = item.mediaMetadata {
-                                            let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
-                                            item.fileName = "\(cleanTitle).\(option.outputExtension)"
-                                            item.category = FileClassifier.category(forFileName: item.fileName)
-                                        }
-                                    } label: {
-                                        Text(option.name)
-                                    }
-                                }
-                            } label: {
-                                Text(item.selectedMediaOption?.name ?? "Select Format")
-                                    .lineLimit(1)
-                            }
-                            .menuStyle(.borderlessButton)
-                            .buttonStyle(.plain)
-                            .fixedSize()
-                        } else if case .loading = item.state {
-                            HStack {
-                                ProgressView().controlSize(.small)
-                                Text("Checking")
-                            }.foregroundStyle(.secondary)
-                        } else {
-                            MetadataStatusView(state: item.state)
-                        }
+                    if item.isMedia, case .loading = item.state {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Checking")
+                        }.foregroundStyle(.secondary)
                     } else {
                         MetadataStatusView(state: item.state)
                     }

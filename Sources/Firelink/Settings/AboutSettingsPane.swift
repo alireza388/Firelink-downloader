@@ -101,144 +101,81 @@ struct AboutSettingsPane: View {
 
     @ViewBuilder
     private var updateStatusView: some View {
-        switch updateChecker.state {
-        case .idle:
-            VStack(alignment: .leading, spacing: 12) {
-                updateHeader(
-                    systemImage: "arrow.down.circle",
-                    tint: .blue,
-                    title: "Check for Updates",
-                    subtitle: "Firelink checks GitHub Releases and opens the download page when a new version is available."
-                )
-
-                HStack(spacing: 12) {
-                    Button {
-                        updateChecker.checkForUpdates()
-                    } label: {
-                        Label("Check for Updates", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        NSWorkspace.shared.open(releasesURL)
-                    } label: {
-                        Label("Release Notes", systemImage: "doc.text")
-                    }
-                }
-            }
-
-        case .checking:
-            HStack(spacing: 12) {
-                ProgressView()
-                    .controlSize(.small)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Checking GitHub Releases")
+        HStack(alignment: .center) {
+            switch updateChecker.state {
+            case .idle:
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Check for Updates")
                         .font(.headline)
-                    Text("Looking for the latest stable Firelink release.")
+                    Text("Firelink checks GitHub Releases for new versions.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-            }
-
-        case .updateAvailable(let update):
-            VStack(alignment: .leading, spacing: 12) {
-                updateHeader(
-                    systemImage: "arrow.down.circle.fill",
-                    tint: .green,
-                    title: "Firelink \(update.version) Is Available",
-                    subtitle: "You have Firelink \(appVersion). Download the new release from GitHub when you're ready."
-                )
-
-                HStack(spacing: 12) {
-                    Button {
-                        NSWorkspace.shared.open(update.releaseURL)
-                    } label: {
-                        Label("Open GitHub Release", systemImage: "arrow.up.forward.app")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button {
-                        updateChecker.checkForUpdates()
-                    } label: {
-                        Label("Check Again", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
+                Spacer()
+                Button("Check Now") {
+                    updateChecker.checkForUpdates()
                 }
-            }
 
-        case .upToDate(let latestVersion, let localVersion):
-            VStack(alignment: .leading, spacing: 12) {
-                let subtitle = latestVersion == localVersion
-                    ? "Firelink \(localVersion) is the newest stable release."
-                    : "Firelink \(localVersion) is newer than the latest stable GitHub release, \(latestVersion)."
-
-                updateHeader(
-                    systemImage: "checkmark.seal.fill",
-                    tint: .green,
-                    title: "You're Up to Date",
-                    subtitle: subtitle
-                )
-
-                HStack(spacing: 12) {
-                    Button {
-                        updateChecker.checkForUpdates()
-                    } label: {
-                        Label("Check Again", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        NSWorkspace.shared.open(releasesURL)
-                    } label: {
-                        Label("Release Notes", systemImage: "doc.text")
-                    }
+            case .checking:
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Checking for updates...")
+                        .font(.headline)
+                    Text("Connecting to GitHub...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-            }
+                Spacer()
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, 16)
 
-        case .failed(let message, let recovery):
-            VStack(alignment: .leading, spacing: 12) {
-                updateHeader(
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: .orange,
-                    title: message,
-                    subtitle: recovery
-                )
+            case .updateAvailable(let update):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Firelink \(update.version) is available!")
+                        .font(.headline)
+                    Text("You currently have version \(appVersion).")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    
+                    Link("View Release Notes", destination: update.releaseURL)
+                        .font(.caption)
+                        .padding(.top, 2)
+                }
+                Spacer()
+                Button("Download Update") {
+                    NSWorkspace.shared.open(update.releaseURL)
+                }
+                .buttonStyle(.borderedProminent)
 
-                HStack(spacing: 12) {
-                    Button {
-                        updateChecker.checkForUpdates()
-                    } label: {
-                        Label("Check Again", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderedProminent)
+            case .upToDate(let latestVersion, _):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Firelink is up to date")
+                        .font(.headline)
+                    Text("Version \(latestVersion) is the newest stable release.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Check Again") {
+                    updateChecker.checkForUpdates()
+                }
 
-                    Button {
-                        NSWorkspace.shared.open(releasesURL)
-                    } label: {
-                        Label("Open Releases", systemImage: "safari")
-                    }
+            case .failed(let message, let recovery):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(message)
+                        .font(.headline)
+                    Text(recovery)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Button("Try Again") {
+                    updateChecker.checkForUpdates()
                 }
             }
         }
-    }
-
-    private func updateHeader(systemImage: String, tint: Color, title: String, subtitle: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.title2)
-                .foregroundStyle(tint)
-                .frame(width: 28)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
+        .padding(.vertical, 4)
     }
 
 }

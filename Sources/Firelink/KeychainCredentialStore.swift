@@ -10,7 +10,8 @@ enum KeychainCredentialStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: id.uuidString,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
         ]
 
         var result: CFTypeRef?
@@ -57,7 +58,8 @@ enum KeychainCredentialStore {
             kSecAttrService as String: extensionTokenService,
             kSecAttrAccount as String: extensionTokenAccount,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
         ]
 
         var result: CFTypeRef?

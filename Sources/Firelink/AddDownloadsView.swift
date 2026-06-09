@@ -139,30 +139,7 @@ struct AddDownloadsView: View {
     private var optionsSection: some View {
         Group {
             if let firstMedia = pendingDownloads.first(where: { $0.isMedia }), !firstMedia.mediaOptions.isEmpty {
-                Section {
-                    Picker("Format", selection: Binding(
-                        get: { firstMedia.selectedMediaOption?.id ?? "" },
-                        set: { newId in
-                            for index in pendingDownloads.indices where pendingDownloads[index].isMedia {
-                                if let option = pendingDownloads[index].mediaOptions.first(where: { $0.id == newId }) {
-                                    pendingDownloads[index].selectedMediaOption = option
-                                    if let metadata = pendingDownloads[index].mediaMetadata {
-                                        let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
-                                        pendingDownloads[index].fileName = "\(cleanTitle).\(option.outputExtension)"
-                                        pendingDownloads[index].category = FileClassifier.category(forFileName: pendingDownloads[index].fileName)
-                                    }
-                                }
-                            }
-                        }
-                    )) {
-                        ForEach(firstMedia.mediaOptions) { option in
-                            Text(option.name).tag(option.id)
-                        }
-                    }
-                    .labelsHidden()
-                } header: {
-                    Text("Media Format").foregroundStyle(.blue)
-                }
+                mediaFormatSection(for: firstMedia)
             }
 
             Section("Save Location") {
@@ -320,6 +297,87 @@ struct AddDownloadsView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!canAddDownloads)
             .keyboardShortcut(showingDuplicates ? nil : .defaultAction)
+        }
+    }
+
+    private func updateMediaOption(for firstMedia: PendingDownload, newId: String) {
+        for index in pendingDownloads.indices where pendingDownloads[index].isMedia {
+            if let option = pendingDownloads[index].mediaOptions.first(where: { $0.id == newId }) {
+                pendingDownloads[index].selectedMediaOption = option
+                if let metadata = pendingDownloads[index].mediaMetadata {
+                    let cleanTitle = FileClassifier.sanitizedFileName(metadata.title ?? "Media")
+                    pendingDownloads[index].fileName = "\(cleanTitle).\(option.outputExtension)"
+                    pendingDownloads[index].category = FileClassifier.category(forFileName: pendingDownloads[index].fileName)
+                }
+            }
+        }
+    }
+
+    private func mediaFormatSection(for firstMedia: PendingDownload) -> some View {
+        let currentOption = firstMedia.selectedMediaOption ?? firstMedia.mediaOptions.first!
+        let availableTypes = Array(Set(firstMedia.mediaOptions.map(\.mediaType))).sorted(by: { $0.rawValue > $1.rawValue })
+        let optionsForType = firstMedia.mediaOptions.filter { $0.mediaType == currentOption.mediaType }
+        let availableFormats = Array(Set(optionsForType.map(\.containerName))).sorted()
+        let optionsForFormat = optionsForType.filter { $0.containerName == currentOption.containerName }
+        
+        let availableQualities = Array(Set(optionsForFormat.map(\.qualityName))).sorted(by: { 
+             if $0 == "Best" { return true }
+             if $1 == "Best" { return false }
+             return $0 > $1 
+        })
+
+        return Section {
+            Picker("Type", selection: Binding(
+                get: { currentOption.mediaType },
+                set: { newType in
+                    if let firstOfNewType = firstMedia.mediaOptions.first(where: { $0.mediaType == newType }) {
+                        updateMediaOption(for: firstMedia, newId: firstOfNewType.id)
+                    }
+                }
+            )) {
+                ForEach(availableTypes, id: \.self) { type in
+                    Text(type.rawValue).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.bottom, 4)
+
+            Picker("Format", selection: Binding(
+                get: { currentOption.containerName },
+                set: { newFormat in
+                    let matching = optionsForType.first(where: { $0.containerName == newFormat && $0.qualityName == currentOption.qualityName })
+                    let fallback = optionsForType.first(where: { $0.containerName == newFormat })
+                    if let newOption = matching ?? fallback {
+                        updateMediaOption(for: firstMedia, newId: newOption.id)
+                    }
+                }
+            )) {
+                ForEach(availableFormats, id: \.self) { format in
+                    Text(format).tag(format)
+                }
+            }
+
+            if currentOption.mediaType == .video {
+                Picker("Quality", selection: Binding(
+                    get: { currentOption.qualityName },
+                    set: { newQuality in
+                        if let newOption = optionsForFormat.first(where: { $0.qualityName == newQuality }) {
+                            updateMediaOption(for: firstMedia, newId: newOption.id)
+                        }
+                    }
+                )) {
+                    ForEach(availableQualities, id: \.self) { quality in
+                        Text(quality).tag(quality)
+                    }
+                }
+            } else {
+                Picker("Quality", selection: .constant("Best")) {
+                    Text("Best").tag("Best")
+                }
+                .disabled(true)
+            }
+        } header: {
+            Text("Media Format").foregroundStyle(.blue)
         }
     }
 

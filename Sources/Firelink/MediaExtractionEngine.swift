@@ -26,6 +26,11 @@ struct MediaMetadata: Decodable, Sendable, Equatable {
     }
 }
 
+enum MediaType: String, Sendable, Equatable {
+    case video = "Video"
+    case audio = "Audio"
+}
+
 struct CleanFormatOption: Identifiable, Equatable, Sendable {
     var id: String { name }
     let name: String
@@ -35,6 +40,10 @@ struct CleanFormatOption: Identifiable, Equatable, Sendable {
     let outputExtension: String
     let detail: String
     let estimatedBytes: Int64?
+    
+    let mediaType: MediaType
+    let qualityName: String
+    let containerName: String
 }
 
 enum MediaExtractionEngine {
@@ -194,7 +203,10 @@ enum MediaExtractionEngine {
                         base: height == nil ? "Best available video" : "Up to \(qualityName)",
                         estimatedBytes: estimatedBytes
                     ),
-                    estimatedBytes: estimatedBytes
+                    estimatedBytes: estimatedBytes,
+                    mediaType: .video,
+                    qualityName: qualityName,
+                    containerName: containerName
                 ))
             }
         }
@@ -208,7 +220,10 @@ enum MediaExtractionEngine {
                 symbol: "music.note",
                 outputExtension: "mp3",
                 detail: optionDetail(base: "Converted with ffmpeg", estimatedBytes: estimatedBytes),
-                estimatedBytes: estimatedBytes
+                estimatedBytes: estimatedBytes,
+                mediaType: .audio,
+                qualityName: "Best",
+                containerName: "MP3"
             ))
         }
 
@@ -221,7 +236,10 @@ enum MediaExtractionEngine {
                 symbol: "waveform",
                 outputExtension: "m4a",
                 detail: optionDetail(base: "Prefer native M4A", estimatedBytes: estimatedBytes),
-                estimatedBytes: estimatedBytes
+                estimatedBytes: estimatedBytes,
+                mediaType: .audio,
+                qualityName: "Best",
+                containerName: "M4A"
             ))
         }
 
@@ -234,7 +252,10 @@ enum MediaExtractionEngine {
                 symbol: "waveform",
                 outputExtension: "opus",
                 detail: optionDetail(base: "Efficient audio", estimatedBytes: estimatedBytes),
-                estimatedBytes: estimatedBytes
+                estimatedBytes: estimatedBytes,
+                mediaType: .audio,
+                qualityName: "Best",
+                containerName: "Opus"
             ))
         }
 

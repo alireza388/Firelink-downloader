@@ -47,6 +47,10 @@ struct ContentView: View {
             }
             return true
         }
+        .sheet(isPresented: $settings.showKeychainPrimer) {
+            KeychainPrimerView()
+                .environmentObject(settings)
+        }
     }
 
     @ViewBuilder
@@ -241,5 +245,57 @@ struct ContentView: View {
         case .category(let category):
             controller.downloads.filter { $0.category == category }
         }
+    }
+}
+
+struct KeychainPrimerView: View {
+    @EnvironmentObject private var settings: AppSettings
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "lock.shield")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 64, height: 64)
+                .foregroundStyle(settings.appTheme.theme.accent ?? Color.accentColor)
+                .padding(.top, 16)
+
+            VStack(spacing: 8) {
+                Text("Security Update")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Text("Firelink has been updated. To keep your browser extension running smoothly and your site logins secure, please re-authorize access to your Mac's Keychain on the next prompt.")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+
+            VStack(spacing: 12) {
+                Button {
+                    settings.resolveKeychainPrimer(grantAccess: true)
+                } label: {
+                    Text("Grant Secure Access")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button {
+                    settings.resolveKeychainPrimer(grantAccess: false)
+                } label: {
+                    Text("Not Now")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.large)
+            }
+            .padding(.horizontal, 32)
+            .padding(.bottom, 16)
+        }
+        .padding(24)
+        .frame(width: 400)
     }
 }

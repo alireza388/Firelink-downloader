@@ -195,6 +195,8 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var showKeychainPrimer = false
+
     @Published var message = ""
 
     private let defaults: UserDefaults
@@ -236,12 +238,30 @@ final class AppSettings: ObservableObject {
             isKeychainAccessGranted = granted
         }
 
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let currentBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+        let fullVersion = "\(currentVersion).\(currentBuild)"
+        let lastVersion = defaults.string(forKey: "Firelink.lastLaunchedVersion")
+        defaults.set(fullVersion, forKey: "Firelink.lastLaunchedVersion")
+
+        var needsPrimer = false
         if granted {
-            if let token = KeychainCredentialStore.extensionToken() {
-                extensionPairingToken = token
+            if let lastVersion, lastVersion != fullVersion {
+                needsPrimer = true
+            }
+        }
+
+        if granted {
+            if needsPrimer {
+                showKeychainPrimer = true
+                extensionPairingToken = ""
             } else {
-                extensionPairingToken = Self.generateSecureToken()
-                // The didSet of extensionPairingToken will handle setting it in the keychain since isKeychainAccessGranted is true.
+                if let token = KeychainCredentialStore.extensionToken() {
+                    extensionPairingToken = token
+                } else {
+                    extensionPairingToken = Self.generateSecureToken()
+                    // The didSet of extensionPairingToken will handle setting it in the keychain since isKeychainAccessGranted is true.
+                }
             }
         } else {
             extensionPairingToken = ""
@@ -365,6 +385,19 @@ final class AppSettings: ObservableObject {
         siteLogins.removeAll()
         extensionPairingToken = ""
         isKeychainAccessGranted = false
+    }
+
+    func resolveKeychainPrimer(grantAccess: Bool) {
+        showKeychainPrimer = false
+        if grantAccess {
+            if let token = KeychainCredentialStore.extensionToken() {
+                extensionPairingToken = token
+            } else {
+                extensionPairingToken = Self.generateSecureToken()
+            }
+        } else {
+            isKeychainAccessGranted = false
+        }
     }
 
     private func save() {

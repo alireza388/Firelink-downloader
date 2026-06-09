@@ -175,11 +175,6 @@ if command -v codesign &> /dev/null; then
 
   sign_mach_o_file() {
     local path="$1"
-    case "$path" in
-      */Python.framework/Python|*/Python.framework/Versions/Current/*)
-        return
-        ;;
-    esac
 
     if file "$path" | grep -q 'Mach-O'; then
       if ! sign_path "$path"; then
@@ -201,6 +196,10 @@ if command -v codesign &> /dev/null; then
   while IFS= read -r -d '' executable_path; do
     sign_mach_o_file "$executable_path"
   done < <(find "$RESOURCES_DIR" -type f -print0)
+
+  while IFS= read -r -d '' bundle_path; do
+    sign_path "$bundle_path"
+  done < <(find "$RESOURCES_DIR" \( -name "*.xpc" -o -name "*.framework" \) -type d -depth -print0)
 
   sign_path "$MACOS_DIR/$APP_NAME"
   sign_path "$APP_DIR"

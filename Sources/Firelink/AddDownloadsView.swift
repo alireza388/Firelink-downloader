@@ -138,7 +138,7 @@ struct AddDownloadsView: View {
 
     private var optionsSection: some View {
         Group {
-            if let firstMedia = pendingDownloads.first(where: { $0.isMedia }), !firstMedia.mediaOptions.isEmpty {
+            if let firstMedia = pendingDownloads.first(where: { $0.isMedia }) {
                 mediaFormatSection(for: firstMedia)
             }
 
@@ -313,21 +313,40 @@ struct AddDownloadsView: View {
         }
     }
 
+    @ViewBuilder
     private func mediaFormatSection(for firstMedia: PendingDownload) -> some View {
-        let currentOption = firstMedia.selectedMediaOption ?? firstMedia.mediaOptions.first!
-        let availableTypes = Array(Set(firstMedia.mediaOptions.map(\.mediaType))).sorted(by: { $0.rawValue > $1.rawValue })
-        let optionsForType = firstMedia.mediaOptions.filter { $0.mediaType == currentOption.mediaType }
-        let availableFormats = Array(Set(optionsForType.map(\.containerName))).sorted()
-        let optionsForFormat = optionsForType.filter { $0.containerName == currentOption.containerName }
-        
-        let availableQualities = Array(Set(optionsForFormat.map(\.qualityName))).sorted(by: { 
-             if $0 == "Best" { return true }
-             if $1 == "Best" { return false }
-             return $0 > $1 
-        })
+        Section {
+            if firstMedia.mediaOptions.isEmpty {
+                HStack(spacing: 8) {
+                    if case .loading = firstMedia.state {
+                        ProgressView().controlSize(.small)
+                        Text("Fetching media options...")
+                            .foregroundStyle(.secondary)
+                    } else if case .failed(let error) = firstMedia.state {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                        Text("Failed to load options.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting for metadata...")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                let currentOption = firstMedia.selectedMediaOption ?? firstMedia.mediaOptions.first!
+                let availableTypes = Array(Set(firstMedia.mediaOptions.map(\.mediaType))).sorted(by: { $0.rawValue > $1.rawValue })
+                let optionsForType = firstMedia.mediaOptions.filter { $0.mediaType == currentOption.mediaType }
+                let availableFormats = Array(Set(optionsForType.map(\.containerName))).sorted()
+                let optionsForFormat = optionsForType.filter { $0.containerName == currentOption.containerName }
+                
+                let availableQualities = Array(Set(optionsForFormat.map(\.qualityName))).sorted(by: { 
+                     if $0 == "Best" { return true }
+                     if $1 == "Best" { return false }
+                     return $0 > $1 
+                })
 
-        return Section {
-            Picker("Type", selection: Binding(
+                Picker("Type", selection: Binding(
                 get: { currentOption.mediaType },
                 set: { newType in
                     if let firstOfNewType = firstMedia.mediaOptions.first(where: { $0.mediaType == newType }) {
@@ -376,6 +395,7 @@ struct AddDownloadsView: View {
                 }
                 .disabled(true)
             }
+            } // End of else block
         } header: {
             Text("Media Format").foregroundStyle(.blue)
         }

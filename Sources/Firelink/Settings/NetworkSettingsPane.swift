@@ -5,8 +5,8 @@ struct NetworkSettingsPane: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Proxy", selection: proxyBinding(\.mode)) {
+            Section("Proxy") {
+                Picker("Mode", selection: proxyBinding(\.mode)) {
                     ForEach(ProxyMode.allCases, id: \.self) { mode in
                         Text(mode.title)
                             .tag(mode)
@@ -42,6 +42,16 @@ struct NetworkSettingsPane: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Section("Identity") {
+                TextField("User Agent", text: $settings.customUserAgent, prompt: Text("e.g. Mozilla/5.0..."))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                
+                Text("Spoofs the browser User-Agent to bypass download restrictions. Leave blank for default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }
@@ -49,14 +59,14 @@ struct NetworkSettingsPane: View {
     private var networkSummary: String {
         switch settings.proxySettings.mode {
         case .none:
-            "Downloads ignore configured proxies."
+            return "Downloads ignore configured proxies."
         case .system:
-            "Downloads use the matching macOS system proxy when one is configured."
+            return "Downloads use the matching macOS system proxy when one is configured."
         case .custom:
             if let proxyURI = settings.proxySettings.customProxyURI {
-                "Downloads use \(proxyURI)."
+                return "Downloads use \(proxyURI)."
             } else {
-                "Enter a proxy host and port to enable the custom proxy."
+                return "Enter a proxy host and port to enable the custom proxy."
             }
         }
     }

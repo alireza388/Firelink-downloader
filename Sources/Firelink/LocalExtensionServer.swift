@@ -185,10 +185,17 @@ final class LocalExtensionServer: @unchecked Sendable {
             }
 
             Task { @MainActor in
-                self.downloadController.pendingPasteboardText = validURLs.joined(separator: "\n")
-                self.downloadController.pendingReferer = payload.referer
-                NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
-                NSApp.activate(ignoringOtherApps: true)
+                if self.settings.askWhereToSaveEachFile {
+                    self.downloadController.pendingPasteboardText = validURLs.joined(separator: "\n")
+                    self.downloadController.pendingReferer = payload.referer
+                    NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } else {
+                    for validURL in validURLs {
+                        self.downloadController.add(urlText: validURL)
+                    }
+                    self.downloadController.startQueue()
+                }
             }
 
             return .ok

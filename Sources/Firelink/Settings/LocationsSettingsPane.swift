@@ -6,18 +6,17 @@ struct LocationsSettingsPane: View {
 
     var body: some View {
         Form {
-            Section {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 12) {
-                    BulkDirectoryPickerRow()
+            Section(footer: Text("When enabled, you can choose the download location each time you add a download.")) {
+                Toggle("Ask where to save each file before downloading", isOn: $settings.askWhereToSaveEachFile)
+            }
 
-                    GridRow {
-                        Divider()
-                            .gridCellColumns(2)
-                    }
+            Section(header: Text("Default Locations"), footer: Text("Automatically sets the folder for all categories within the selected base folder.")) {
+                BulkDirectoryPickerRow()
+            }
 
-                    ForEach(DownloadCategory.allCases, id: \.self) { category in
-                        DirectoryPickerRow(category: category)
-                    }
+            Section(header: Text("Category Locations"), footer: Text("Folders will be created automatically when saving.")) {
+                ForEach(DownloadCategory.allCases, id: \.self) { category in
+                    DirectoryPickerRow(category: category)
                 }
 
                 HStack {
@@ -26,8 +25,6 @@ struct LocationsSettingsPane: View {
                         settings.resetDirectories()
                     }
                 }
-            } footer: {
-                Text("Folders will be created automatically when applied.")
             }
         }
         .formStyle(.grouped)
@@ -42,13 +39,10 @@ struct DirectoryPickerRow: View {
     @State private var message = ""
 
     var body: some View {
-        GridRow(alignment: .firstTextBaseline) {
-            Label(category.rawValue, systemImage: category.symbolName)
-                .gridColumnAlignment(.leading)
-
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent {
                 HStack(spacing: 8) {
-                    TextField("", text: $path, prompt: Text("Folder path"))
+                    TextField("", text: $path)
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
@@ -56,25 +50,18 @@ struct DirectoryPickerRow: View {
                             applyPath()
                         }
 
-                    Button {
-                        applyPath()
-                    } label: {
-                        Label("Apply", systemImage: "checkmark")
-                    }
-                    .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button {
+                    Button("Choose...") {
                         selectFolder()
-                    } label: {
-                        Label("Select", systemImage: "folder.badge.plus")
                     }
                 }
+            } label: {
+                Label(category.rawValue, systemImage: category.symbolName)
+            }
 
-                if let displayMessage = message.isEmpty ? statusMessage(for: path) : message, !displayMessage.isEmpty {
-                    Text(displayMessage)
-                        .font(.caption)
-                        .foregroundStyle(isErrorMessage(displayMessage) ? .red : .secondary)
-                }
+            if let displayMessage = message.isEmpty ? statusMessage(for: path) : message, !displayMessage.isEmpty {
+                Text(displayMessage)
+                    .font(.caption)
+                    .foregroundStyle(isErrorMessage(displayMessage) ? .red : .secondary)
             }
         }
         .onAppear {
@@ -175,13 +162,10 @@ struct BulkDirectoryPickerRow: View {
     @State private var message = ""
 
     var body: some View {
-        GridRow(alignment: .firstTextBaseline) {
-            Label("All Categories", systemImage: "folder.fill.badge.plus")
-                .gridColumnAlignment(.leading)
-
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent {
                 HStack(spacing: 8) {
-                    TextField("", text: $path, prompt: Text("Base folder path"))
+                    TextField("", text: $path)
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
@@ -189,29 +173,18 @@ struct BulkDirectoryPickerRow: View {
                             applyPath()
                         }
 
-                    Button {
-                        applyPath()
-                    } label: {
-                        Label("Apply", systemImage: "checkmark")
-                    }
-                    .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    Button {
+                    Button("Choose...") {
                         selectFolder()
-                    } label: {
-                        Label("Select", systemImage: "folder.badge.plus")
                     }
                 }
+            } label: {
+                Label("All Categories", systemImage: "folder.fill.badge.plus")
+            }
 
-                if !message.isEmpty {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(isErrorMessage(message) ? .red : .secondary)
-                } else {
-                    Text("Automatically creates all category folders in the selected path.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            if !message.isEmpty {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(isErrorMessage(message) ? .red : .secondary)
             }
         }
     }

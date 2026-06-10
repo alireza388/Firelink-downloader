@@ -5,7 +5,7 @@ struct DownloadSettingsPane: View {
 
     var body: some View {
         Form {
-            Section {
+            Section("Connections") {
                 Stepper(
                     "Default connections per server: \(settings.perServerConnections)",
                     value: $settings.perServerConnections,
@@ -25,7 +25,7 @@ struct DownloadSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
+            Section("Bandwidth") {
                 LabeledContent("Global speed limit") {
                     HStack {
                         TextField("0", value: $settings.globalSpeedLimitKiBPerSecond, format: .number)
@@ -39,6 +39,23 @@ struct DownloadSettingsPane: View {
                 Text("Set to 0 for unlimited speed. This limit is divided across currently active downloads.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            
+            Section("Recovery") {
+                Stepper(
+                    "Automatic retries: \(settings.maxAutomaticRetries)",
+                    value: $settings.maxAutomaticRetries,
+                    in: 0...10
+                )
+                Text("Number of times to retry a download automatically if the connection fails.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Notifications") {
+                Toggle("Show notification when download completes", isOn: $settings.showNotifications)
+                Toggle("Play sound when download completes", isOn: $settings.playCompletionSound)
+                    .disabled(!settings.showNotifications)
             }
         }
         .formStyle(.grouped)

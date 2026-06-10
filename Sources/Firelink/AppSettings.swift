@@ -160,6 +160,33 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var showNotifications: Bool {
+        didSet { save() }
+    }
+
+    @Published var customUserAgent: String {
+        didSet { save() }
+    }
+
+    @Published var playCompletionSound: Bool {
+        didSet { save() }
+    }
+
+    @Published var showDockBadge: Bool {
+        didSet { save() }
+    }
+
+    @Published var maxAutomaticRetries: Int {
+        didSet {
+            let clamped = min(max(maxAutomaticRetries, 0), 10)
+            if maxAutomaticRetries != clamped {
+                maxAutomaticRetries = clamped
+                return
+            }
+            save()
+        }
+    }
+
     @Published var proxySettings: ProxySettings {
         didSet {
             let normalized = proxySettings.normalized
@@ -197,6 +224,10 @@ final class AppSettings: ObservableObject {
 
     @Published var showKeychainPrimer = false
 
+    @Published var askWhereToSaveEachFile: Bool {
+        didSet { save() }
+    }
+
     @Published var message = ""
 
     private let defaults: UserDefaults
@@ -216,12 +247,18 @@ final class AppSettings: ObservableObject {
             maxConcurrentDownloads = min(max(stored.maxConcurrentDownloads ?? 3, 1), 12)
             globalSpeedLimitKiBPerSecond = min(max(stored.globalSpeedLimitKiBPerSecond ?? 0, 0), 10_485_760)
             preventsSleepWhileDownloading = stored.preventsSleepWhileDownloading
+            showNotifications = stored.showNotifications ?? true
+            playCompletionSound = stored.playCompletionSound ?? true
+            showDockBadge = stored.showDockBadge ?? true
+            customUserAgent = stored.customUserAgent ?? ""
+            maxAutomaticRetries = min(max(stored.maxAutomaticRetries ?? 3, 0), 10)
             proxySettings = stored.proxySettings?.normalized ?? ProxySettings()
             siteLogins = stored.siteLogins
             mediaCookieSource = stored.mediaCookieSource ?? .none
             downloadDirectories = Self.decodeDirectories(stored.downloadDirectories)
             granted = stored.isKeychainAccessGranted ?? false
             isKeychainAccessGranted = granted
+            askWhereToSaveEachFile = stored.askWhereToSaveEachFile ?? true
         } else {
             appTheme = .system
             appFontSize = .standard
@@ -230,12 +267,18 @@ final class AppSettings: ObservableObject {
             maxConcurrentDownloads = 3
             globalSpeedLimitKiBPerSecond = 0
             preventsSleepWhileDownloading = true
+            showNotifications = true
+            playCompletionSound = true
+            showDockBadge = true
+            customUserAgent = ""
+            maxAutomaticRetries = 3
             proxySettings = ProxySettings()
             siteLogins = []
             mediaCookieSource = .none
             downloadDirectories = Self.defaultDirectories()
             granted = false
             isKeychainAccessGranted = granted
+            askWhereToSaveEachFile = true
         }
 
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
@@ -409,11 +452,17 @@ final class AppSettings: ObservableObject {
             maxConcurrentDownloads: maxConcurrentDownloads,
             globalSpeedLimitKiBPerSecond: globalSpeedLimitKiBPerSecond,
             preventsSleepWhileDownloading: preventsSleepWhileDownloading,
+            showNotifications: showNotifications,
+            playCompletionSound: playCompletionSound,
+            showDockBadge: showDockBadge,
+            customUserAgent: customUserAgent,
+            maxAutomaticRetries: maxAutomaticRetries,
             proxySettings: proxySettings.normalized,
             downloadDirectories: Dictionary(uniqueKeysWithValues: downloadDirectories.map { ($0.key.rawValue, $0.value) }),
             siteLogins: siteLogins,
             mediaCookieSource: mediaCookieSource,
-            isKeychainAccessGranted: isKeychainAccessGranted
+            isKeychainAccessGranted: isKeychainAccessGranted,
+            askWhereToSaveEachFile: askWhereToSaveEachFile
         )
         let defaults = self.defaults
         let storageKey = self.storageKey
@@ -490,9 +539,15 @@ private struct StoredSettings: Codable {
     var maxConcurrentDownloads: Int?
     var globalSpeedLimitKiBPerSecond: Int?
     var preventsSleepWhileDownloading: Bool
+    var showNotifications: Bool?
+    var playCompletionSound: Bool?
+    var showDockBadge: Bool?
+    var customUserAgent: String?
+    var maxAutomaticRetries: Int?
     var proxySettings: ProxySettings?
     var downloadDirectories: [String: String]
     var siteLogins: [SiteLogin]
     var mediaCookieSource: BrowserCookieSource?
     var isKeychainAccessGranted: Bool?
+    var askWhereToSaveEachFile: Bool?
 }

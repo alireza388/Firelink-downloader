@@ -23,7 +23,6 @@ final class DownloadController: ObservableObject {
     private var queuePumpScope: QueuePumpScope = .idle
     private var sleepActivity: SleepActivityHandle?
     private var cancellables = Set<AnyCancellable>()
-    private let maxAutomaticRetries = 3
     private lazy var storageURL: URL = {
         let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
         return supportDir.appendingPathComponent("Firelink").appendingPathComponent("downloads.json")
@@ -502,6 +501,17 @@ final class DownloadController: ObservableObject {
         pruneActiveQueueScopes()
     }
 
+    private func injectedEngineItem(from item: DownloadItem) -> DownloadItem {
+        var engineItem = item
+        let ua = settings.customUserAgent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !ua.isEmpty, !(engineItem.requestHeaders?.contains(where: { $0.name.caseInsensitiveCompare("user-agent") == .orderedSame }) ?? false) {
+            var headers = engineItem.requestHeaders ?? []
+            headers.append(DownloadRequestHeader(name: "User-Agent", value: ua))
+            engineItem.requestHeaders = headers
+        }
+        return engineItem
+    }
+
     private func start(_ item: DownloadItem) {
         update(item.id) {
             $0.status = .downloading
@@ -528,7 +538,7 @@ final class DownloadController: ObservableObject {
                         $0.message = "Starting yt-dlp..."
                     }
                     let handle = try await mediaEngine.start(
-                        item: liveItem,
+                        item: injectedEngineItem(from: liveItem),
                         cookieSource: settings.mediaCookieSource,
                         proxyConfiguration: settings.downloadProxyConfiguration,
                         speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: liveItem),
@@ -585,7 +595,7 @@ final class DownloadController: ObservableObject {
         } else {
             do {
                 let handle = try engine.start(
-                    item: item,
+                    item: injectedEngineItem(from: item),
                     proxyConfiguration: settings.downloadProxyConfiguration,
                     speedLimitKiBPerSecond: effectiveSpeedLimitKiBPerSecond(for: item),
                     progress: { [weak self] progress in
@@ -810,7 +820,7 @@ final class DownloadController: ObservableObject {
 
         let retryCount = automaticRetryCounts[itemID] ?? 0
 
-        guard isAutomaticallyRecoverable(error), retryCount < maxAutomaticRetries else {
+        guard isAutomaticallyRecoverable(error), retryCount < settings.maxAutomaticRetries else {
             automaticRetryCounts[itemID] = nil
             update(itemID) {
                 $0.status = .failed
@@ -833,7 +843,7 @@ final class DownloadController: ObservableObject {
             $0.speedText = "-"
             $0.etaText = "-"
             $0.connectionCount = 0
-            $0.message = "Connection interrupted. Retrying from partial file (\(retryCount + 1)/\(maxAutomaticRetries))."
+            $0.message = "Connection interrupted. Retrying from partial file (\(retryCount + 1)/\(settings.maxAutomaticRetries))."
             $0.autoResumeOnLaunch = true
         }
         saveDownloads()
@@ -1102,6 +1112,8 @@ final class DownloadController: ObservableObject {
     }
 
     private func showNotification(title: String, body: String) {
+        guard settings.showNotifications || settings.playCompletionSound else { return }
+
         pendingNotifications.append((title: title, body: body))
         notificationDebounceTask?.cancel()
         
@@ -1110,7 +1122,11 @@ final class DownloadController: ObservableObject {
                 try await Task.sleep(nanoseconds: 1_000_000_000)
                 guard !Task.isCancelled else { return }
                 
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+                var options: UNAuthorizationOptions = []
+                if self.settings.showNotifications { options.insert(.alert) }
+                if self.settings.playCompletionSound { options.insert(.sound) }
+                
+                UNUserNotificationCenter.current().requestAuthorization(options: options) { [weak self] granted, _ in
                     guard granted, let self else { return }
                     Task { @MainActor in
                         let items = self.pendingNotifications
@@ -1118,14 +1134,22 @@ final class DownloadController: ObservableObject {
                         guard !items.isEmpty else { return }
                         
                         let content = UNMutableNotificationContent()
-                        if items.count == 1 {
-                            content.title = items[0].title
-                            content.body = items[0].body
+                        if self.settings.showNotifications {
+                            if items.count == 1 {
+                                content.title = items[0].title
+                                content.body = items[0].body
+                            } else {
+                                content.title = "\(items.count) Downloads Completed"
+                                content.body = "Multiple items have finished downloading."
+                            }
                         } else {
-                            content.title = "\(items.count) Downloads Completed"
-                            content.body = "Multiple items have finished downloading."
+                            content.title = "Download Completed"
                         }
-                        content.sound = .default
+                        
+                        if self.settings.playCompletionSound {
+                            content.sound = .default
+                        }
+                        
                         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
                         UNUserNotificationCenter.current().add(request)
                     }

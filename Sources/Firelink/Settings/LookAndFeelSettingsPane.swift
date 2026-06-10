@@ -34,9 +34,13 @@ struct LookAndFeelSettingsPane: View {
                 }
             }
 
-            Section("Menu Bar") {
-                Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
+            Section("macOS Integration") {
+                Toggle("Show badge on Dock icon", isOn: $settings.showDockBadge)
+                Text("Displays the number of active downloads on the Firelink Dock icon.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
+                Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
                 Text("Provides quick access to downloads and queues from the macOS menu bar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

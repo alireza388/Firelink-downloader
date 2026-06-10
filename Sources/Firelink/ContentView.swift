@@ -21,6 +21,15 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenAddDownloadsWindow"))) { _ in
             openWindow(id: "add-downloads")
         }
+        .onChange(of: controller.activeCount) { _, newCount in
+            updateDockBadge(count: newCount, show: settings.showDockBadge)
+        }
+        .onChange(of: settings.showDockBadge) { _, show in
+            updateDockBadge(count: controller.activeCount, show: show)
+        }
+        .onAppear {
+            updateDockBadge(count: controller.activeCount, show: settings.showDockBadge)
+        }
         .onDrop(of: [.url, .fileURL, .plainText], isTargeted: nil) { providers in
             for provider in providers {
                 if provider.canLoadObject(ofClass: URL.self) {
@@ -197,6 +206,14 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Are you sure you want to delete the selected downloads?")
+        }
+    }
+
+    private func updateDockBadge(count: Int, show: Bool) {
+        if show && count > 0 {
+            NSApp.dockTile.badgeLabel = "\(count)"
+        } else {
+            NSApp.dockTile.badgeLabel = nil
         }
     }
 

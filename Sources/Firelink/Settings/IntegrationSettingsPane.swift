@@ -59,7 +59,9 @@ struct IntegrationSettingsPane: View {
                             secondaryAction: {
                                 var bytes = [UInt8](repeating: 0, count: 32)
                                 let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-                                settings.extensionPairingToken = status == errSecSuccess ? Data(bytes).base64EncodedString() : UUID().uuidString
+                                if status == errSecSuccess {
+                                    settings.extensionPairingToken = Data(bytes).base64EncodedString()
+                                }
                             }
                         )
 

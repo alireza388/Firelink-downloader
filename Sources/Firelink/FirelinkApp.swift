@@ -7,6 +7,8 @@ struct FirelinkApp: App {
     @StateObject private var controller: DownloadController
     @StateObject private var schedulerController: SchedulerController
     @AppStorage("showMenuBarIcon") private var showMenuBarIcon = true
+    @State private var lastURLSchemeInvocation: Date = .distantPast
+    @State private var urlSchemeInvocationCount: Int = 0
 
     // Server must be retained to keep listening
     private let extensionServer: LocalExtensionServer?
@@ -38,11 +40,20 @@ struct FirelinkApp: App {
                     updateChecker.checkAutomaticallyIfNeeded()
                 }
                 .onOpenURL { url in
+                    let now = Date()
+                    if now.timeIntervalSince(lastURLSchemeInvocation) > 5 {
+                        urlSchemeInvocationCount = 0
+                    }
+                    guard urlSchemeInvocationCount < 3 else { return }
+                    urlSchemeInvocationCount += 1
+                    lastURLSchemeInvocation = now
+
                     if url.scheme == "firelink" {
                         if url.host == "add",
                            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                            let queryItems = components.queryItems,
-                           let link = queryItems.first(where: { $0.name == "url" })?.value {
+                           let link = queryItems.first(where: { $0.name == "url" })?.value,
+                           link.count < 65536 {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                 controller.pendingPasteboardText = link
                                 controller.pendingReferer = nil
@@ -52,6 +63,7 @@ struct FirelinkApp: App {
                         return
                     }
                     
+                    guard url.absoluteString.count < 65536 else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         controller.pendingPasteboardText = url.absoluteString
                         controller.pendingReferer = nil

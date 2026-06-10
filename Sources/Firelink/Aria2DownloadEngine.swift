@@ -10,18 +10,43 @@ final class Aria2DownloadEngine: Sendable {
         let cancel: @Sendable () -> Void
     }
 
-    static func findFreePort() -> UInt16 {
-        var port: UInt16 = 6800
-        let parameters = NWParameters.tcp
-        for p in 6800...6900 {
-            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: UInt16(p))!)
-            if let listener = try? NWListener(using: parameters) {
-                listener.cancel()
-                port = UInt16(p)
-                break
+    static func findFreePort() -> (UInt16, Int32)? {
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = 0
+
+        let sock = socket(AF_INET, SOCK_STREAM, 0)
+        guard sock >= 0 else { return nil }
+
+        var addrPtr = addr
+        let bindResult = withUnsafePointer(to: &addrPtr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        return port
+
+        guard bindResult == 0 else {
+            close(sock)
+            return nil
+        }
+
+        var boundAddr = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let getsocknameResult = withUnsafeMutablePointer(to: &boundAddr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(sock, $0, &len)
+            }
+        }
+
+        guard getsocknameResult == 0 else {
+            close(sock)
+            return nil
+        }
+
+        let port = UInt16(bigEndian: boundAddr.sin_port)
+        return (port, sock)
     }
 
     enum EngineError: LocalizedError {
@@ -120,13 +145,36 @@ final class Aria2DownloadEngine: Sendable {
         var lastError: Error?
 
         for _ in 1...5 {
-            let rpcPort = Int(Self.findFreePort())
+            guard let (rpcPortVal, portSocket) = Self.findFreePort() else {
+                lastError = EngineError.launchFailed("Could not find free port")
+                continue
+            }
+            let rpcPort = Int(rpcPortVal)
             let rpcSecret = UUID().uuidString
             let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("firelink-aria2-\(UUID().uuidString)")
+            
+            final class CleanupState: @unchecked Sendable {
+                private let lock = NSLock()
+                private var didCleanup = false
+                func cleanup(tempDir: URL) {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    if !didCleanup {
+                        try? FileManager.default.removeItem(at: tempDir)
+                        didCleanup = true
+                    }
+                }
+            }
+            
+            let cleanupState = CleanupState()
+            let cleanupTempDir: @Sendable () -> Void = {
+                cleanupState.cleanup(tempDir: tempDir)
+            }
             
             do {
                 try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             } catch {
+                close(portSocket)
                 lastError = EngineError.launchFailed("Could not create secure temporary directory: \(error.localizedDescription)")
                 continue
             }
@@ -135,7 +183,9 @@ final class Aria2DownloadEngine: Sendable {
             do {
                 let confContent = "rpc-secret=\(rpcSecret)\n"
                 try confContent.write(to: confURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: confURL.path)
             } catch {
+                close(portSocket)
                 lastError = EngineError.launchFailed("Could not write secure configuration file: \(error.localizedDescription)")
                 continue
             }
@@ -152,6 +202,7 @@ final class Aria2DownloadEngine: Sendable {
                     confURL: confURL
                 )
             } catch {
+                close(portSocket)
                 lastError = error
                 break
             }
@@ -187,7 +238,7 @@ final class Aria2DownloadEngine: Sendable {
         }
 
         process.terminationHandler = { finishedProcess in
-            try? FileManager.default.removeItem(at: tempDir)
+            cleanupTempDir()
             completionMonitor.cancel()
             outputPipe.fileHandleForReading.readabilityHandler = nil
             errorPipe.fileHandleForReading.readabilityHandler = nil
@@ -210,6 +261,7 @@ final class Aria2DownloadEngine: Sendable {
 
             var didThrow = false
             do {
+                close(portSocket)
                 try process.run()
                 if let input = inputFileContent(for: item).data(using: .utf8) {
                     inputPipe.fileHandleForWriting.write(input)
@@ -223,7 +275,7 @@ final class Aria2DownloadEngine: Sendable {
             if didThrow {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
-                try? FileManager.default.removeItem(at: tempDir)
+                cleanupTempDir()
                 continue
             }
             
@@ -232,7 +284,7 @@ final class Aria2DownloadEngine: Sendable {
             if !process.isRunning {
                 let stderr = String(data: errorBuffer.data, encoding: .utf8) ?? ""
                 if stderr.contains("Address already in use") || stderr.contains("Failed to bind") || stderr.contains("bind: Address") {
-                    try? FileManager.default.removeItem(at: tempDir)
+                    cleanupTempDir()
                     continue
                 }
                 // If it exited for another reason, we might still want to fail or let the terminationHandler process it.
@@ -253,7 +305,7 @@ final class Aria2DownloadEngine: Sendable {
                 if process.isRunning {
                     process.terminate()
                 }
-                try? FileManager.default.removeItem(at: tempDir)
+                cleanupTempDir()
             }
         }
         

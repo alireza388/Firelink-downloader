@@ -28,6 +28,20 @@ final class MediaEngineManager: ObservableObject {
 
     private init() {
         checkLocalInstallation()
+        Task.detached { [weak self] in
+            await self?.prewarmYtDlp()
+        }
+    }
+
+    nonisolated private func prewarmYtDlp() async {
+        guard let path = await MainActor.run(body: { binaryPath(for: .ytDlp) }) else { return }
+        let process = Process()
+        process.executableURL = path
+        process.arguments = ["--version"]
+        process.standardOutput = nil
+        process.standardError = nil
+        try? process.run()
+        process.waitUntilExit()
     }
 
     func binaryPath(for addon: AddonType) -> URL? {

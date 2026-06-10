@@ -93,10 +93,9 @@ struct DownloadRequestHeader: Codable, Equatable, Sendable {
     var value: String
 
     var normalized: DownloadRequestHeader {
-        DownloadRequestHeader(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            value: value.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+        let cleanValue = value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+        return DownloadRequestHeader(name: cleanName, value: cleanValue)
     }
 
     var isEmpty: Bool {
@@ -190,6 +189,14 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     var rpcSecret: String?
     var mediaFormatSelector: String?
     var isAudioOnlyMedia: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, url, fileName, category, destinationDirectory, connectionsPerServer
+        case credentials, checksum, requestHeaders, cookieHeader, mirrorURLs, speedLimitKiBPerSecond
+        case status, progress, speedText, etaText, connectionCount, sizeBytes, bytesText, message
+        case createdAt, lastTryAt, autoResumeOnLaunch, queueID
+        case mediaFormatSelector, isAudioOnlyMedia
+    }
 
     var displaySpeedText: String {
         status == .downloading ? speedText : "-"

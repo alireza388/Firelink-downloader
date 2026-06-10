@@ -298,13 +298,15 @@ final class AppSettings: ObservableObject {
         }
 
         if granted {
-            if let token = KeychainCredentialStore.extensionToken() {
-                extensionPairingToken = token
-            } else {
-                extensionPairingToken = Self.generateSecureToken()
-            }
             if needsPrimer {
                 showKeychainPrimer = true
+                extensionPairingToken = ""
+            } else {
+                if let token = KeychainCredentialStore.extensionToken() {
+                    extensionPairingToken = token
+                } else {
+                    extensionPairingToken = Self.generateSecureToken()
+                }
             }
         } else {
             extensionPairingToken = ""

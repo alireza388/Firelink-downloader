@@ -44,9 +44,12 @@ final class MediaDownloadEngine: @unchecked Sendable {
         var arguments = [
             "--newline",
             "--ffmpeg-location", ffmpegURL.path,
-            "--force-ipv4",
-            "--live-from-start",
-            "--extractor-args", "youtube:player_client=ios,web",
+            "--no-check-formats",
+            "--fragment-retries", "10",
+            "--retry-sleep", "0",
+            "--skip-unavailable-fragments",
+            "--extractor-args", "youtube:player_client=tv,web",
+            "--extractor-args", "youtube:skip=webpage",
             "--compat-options", "no-youtube-unavailable-videos",
             "-o", item.destinationPath
         ]
@@ -64,7 +67,7 @@ final class MediaDownloadEngine: @unchecked Sendable {
             }
         }
 
-        MediaExtractionEngine.appendCommonArguments(
+        let tempConfigDir = MediaExtractionEngine.appendCommonArguments(
             to: &arguments,
             cookieSource: cookieSource,
             credentials: item.credentials,
@@ -100,19 +103,25 @@ final class MediaDownloadEngine: @unchecked Sendable {
             messageUpdate: messageUpdate
         )
 
+        let readGroup = DispatchGroup()
+
+        readGroup.enter()
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
+                readGroup.leave()
             } else if let text = String(data: data, encoding: .utf8) {
                 outputHandler.handle(text)
             }
         }
 
+        readGroup.enter()
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
+                readGroup.leave()
             } else {
                 errorBuffer.append(data)
                 if let text = String(data: data, encoding: .utf8) {
@@ -122,18 +131,27 @@ final class MediaDownloadEngine: @unchecked Sendable {
         }
 
         process.terminationHandler = { finishedProcess in
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            
-            if finishedProcess.terminationStatus == 0 {
-                completionGate.complete(.success(Self.resolvedOutputURL(for: item, tracker: outputPathTracker)))
-            } else {
-                let errorString = String(data: errorBuffer.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
-                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: finishedProcess.terminationStatus))))
+            if let tempConfigDir {
+                try? FileManager.default.removeItem(at: tempConfigDir)
+            }
+            readGroup.notify(queue: .global()) {
+                if finishedProcess.terminationStatus == 0 {
+                    completionGate.complete(.success(Self.resolvedOutputURL(for: item, tracker: outputPathTracker)))
+                } else {
+                    let errorString = String(data: errorBuffer.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
+                    completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: finishedProcess.terminationStatus))))
+                }
             }
         }
 
+        var didRun = false
+        defer {
+            if !didRun, let tempConfigDir {
+                try? FileManager.default.removeItem(at: tempConfigDir)
+            }
+        }
         try process.run()
+        didRun = true
         messageUpdate("Fetching media data...")
         outputPipe.fileHandleForWriting.closeFile()
         errorPipe.fileHandleForWriting.closeFile()

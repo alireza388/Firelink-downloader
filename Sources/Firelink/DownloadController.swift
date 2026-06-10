@@ -545,7 +545,7 @@ final class DownloadController: ObservableObject {
                         progress: { [weak self] progress in
                             Task { @MainActor in
                                 let now = Date()
-                                if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.25 {
+                                if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.5 {
                                     return
                                 }
                                 self?.lastProgressUpdateTimes[item.id] = now
@@ -603,7 +603,7 @@ final class DownloadController: ObservableObject {
                         progress: { [weak self] progress in
                             Task { @MainActor in
                                 let now = Date()
-                                if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.25 {
+                                if let last = self?.lastProgressUpdateTimes[item.id], now.timeIntervalSince(last) < 0.5 {
                                     return
                                 }
                                 self?.lastProgressUpdateTimes[item.id] = now

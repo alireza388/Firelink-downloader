@@ -158,8 +158,9 @@ struct SidebarView: View {
             .tag(SidebarSelection.downloads(.category(category)))
     }
 
+    @ViewBuilder
     private func queueRow(for queue: DownloadQueue) -> some View {
-        Label(queue.name, systemImage: queue.isMain ? "list.bullet.rectangle" : "list.bullet")
+        let row = Label(queue.name, systemImage: queue.isMain ? "list.bullet.rectangle" : "list.bullet")
             .badge(controller.queueCount(for: queue.id))
             .tag(SidebarSelection.queue(queue.id))
             .onDrop(
@@ -170,17 +171,20 @@ struct SidebarView: View {
                     controller: controller
                 )
             )
-            .contextMenu {
-                if !queue.isMain {
-                    Button("Rename") {
-                        queueBeingRenamed = queue
-                        queueName = queue.name
-                    }
-                    Button("Delete", role: .destructive) {
-                        queueBeingRemoved = queue
-                    }
+            
+        if queue.isMain {
+            row
+        } else {
+            row.contextMenu {
+                Button("Rename") {
+                    queueBeingRenamed = queue
+                    queueName = queue.name
+                }
+                Button("Delete", role: .destructive) {
+                    queueBeingRemoved = queue
                 }
             }
+        }
     }
 }
 

@@ -2,13 +2,13 @@ import Foundation
 import Network
 import AppKit
 import Combine
+import CryptoKit
 
 final class LocalExtensionServer: @unchecked Sendable {
     private enum Constants {
         static let portRange = 6412...6422
         static let maxRequestBytes = 128 * 1024
         static let maxURLCount = 200
-        static let extensionRequestHeader = "x-firelink-extension"
         static let allowedSchemes = Set(["http", "https", "ftp", "sftp"])
     }
 
@@ -126,7 +126,7 @@ final class LocalExtensionServer: @unchecked Sendable {
             headers.append("Access-Control-Allow-Origin: \(origin)")
             headers.append("Vary: Origin")
             headers.append("Access-Control-Allow-Methods: GET, POST, OPTIONS")
-            headers.append("Access-Control-Allow-Headers: Content-Type, X-Firelink-Extension")
+            headers.append("Access-Control-Allow-Headers: Content-Type, X-Firelink-Signature, X-Firelink-Timestamp")
         }
 
         let response = headers.joined(separator: "\r\n") + "\r\n\r\n"
@@ -156,8 +156,25 @@ final class LocalExtensionServer: @unchecked Sendable {
         }
 
         let expectedToken = currentPairingToken
-        guard let token = request.header(named: Constants.extensionRequestHeader),
-              token == expectedToken else {
+        let bodyString = String(data: request.body, encoding: .utf8) ?? ""
+        guard let signatureHex = request.header(named: "x-firelink-signature"),
+              let timestampStr = request.header(named: "x-firelink-timestamp"),
+              let timestamp = TimeInterval(timestampStr) else {
+            return .forbidden
+        }
+
+        let now = Date().timeIntervalSince1970 * 1000
+        guard abs(now - timestamp) < 60000 else {
+            return .forbidden
+        }
+
+        let keyData = expectedToken.data(using: .utf8) ?? Data()
+        let key = SymmetricKey(data: keyData)
+        let messageData = (timestampStr + bodyString).data(using: .utf8) ?? Data()
+        let hmac = HMAC<SHA256>.authenticationCode(for: messageData, using: key)
+        let expectedSignature = hmac.map { String(format: "%02x", $0) }.joined()
+
+        guard signatureHex.lowercased() == expectedSignature else {
             return .forbidden
         }
 
@@ -180,6 +197,7 @@ final class LocalExtensionServer: @unchecked Sendable {
         struct Payload: Decodable {
             let urls: [String]
             let referer: String?
+            let silent: Bool?
         }
 
         do {
@@ -201,7 +219,8 @@ final class LocalExtensionServer: @unchecked Sendable {
             }
 
             Task { @MainActor in
-                if self.settings.askWhereToSaveEachFile {
+                let shouldAsk = self.settings.askWhereToSaveEachFile || payload.silent != true
+                if shouldAsk {
                     self.downloadController.pendingPasteboardText = validURLs.joined(separator: "\n")
                     self.downloadController.pendingReferer = payload.referer
                     NotificationCenter.default.post(name: NSNotification.Name("OpenAddDownloadsWindow"), object: nil)

@@ -363,6 +363,12 @@ struct DownloadTable: View {
             } label: {
                 Label(targetItems.count > 1 ? "Properties (\(targetItems.count))" : "Properties", systemImage: "info.circle")
             }
+        } else {
+            Button {
+                openWindow(id: "add-downloads")
+            } label: {
+                Label("Add Download", systemImage: "plus")
+            }
         }
     }
 

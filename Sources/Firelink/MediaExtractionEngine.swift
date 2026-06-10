@@ -47,7 +47,19 @@ struct CleanFormatOption: Identifiable, Equatable, Sendable {
 }
 
 enum MediaExtractionEngine {
-    private static let metadataTimeoutSeconds: UInt64 = 75
+    private final class CacheEntry {
+        let metadata: MediaMetadata
+        let options: [CleanFormatOption]
+        let date: Date
+        init(metadata: MediaMetadata, options: [CleanFormatOption], date: Date) {
+            self.metadata = metadata
+            self.options = options
+            self.date = date
+        }
+    }
+    nonisolated(unsafe) private static let metadataCache = NSCache<NSURL, CacheEntry>()
+
+    private static let metadataTimeoutSeconds: UInt64 = 30
 
     enum ExtractionError: Error, LocalizedError {
         case processFailed(String)
@@ -72,6 +84,9 @@ enum MediaExtractionEngine {
         transferOptions: DownloadTransferOptions,
         proxyConfiguration: DownloadProxyConfiguration
     ) async throws -> (MediaMetadata, [CleanFormatOption]) {
+        if let cached = metadataCache.object(forKey: url as NSURL), Date().timeIntervalSince(cached.date) < 300 {
+            return (cached.metadata, cached.options)
+        }
         guard let ytDlpURL = await MediaEngineManager.shared.binaryPath(for: .ytDlp),
               FileManager.default.isExecutableFile(atPath: ytDlpURL.path) else {
             throw ExtractionError.processFailed("yt-dlp binary not found.")
@@ -83,16 +98,27 @@ enum MediaExtractionEngine {
             "--no-warnings", 
             "--ignore-no-formats-error", 
             "--no-playlist", 
-            "--force-ipv4",
-            "--extractor-args", "youtube:player_client=ios,web",
+            "--no-check-formats",
+            "--extractor-args", "youtube:player_client=tv,web",
+            "--extractor-args", "youtube:skip=webpage",
             "--compat-options", "no-youtube-unavailable-videos"
         ]
+
+        if let ffmpegURL = await MediaEngineManager.shared.binaryPath(for: .ffmpeg),
+           FileManager.default.isExecutableFile(atPath: ffmpegURL.path) {
+            args.append(contentsOf: ["--ffmpeg-location", ffmpegURL.path])
+        }
 
         if let proxyURI = proxyConfiguration.customProxyURI, proxyConfiguration.mode == .custom {
             args.append(contentsOf: ["--proxy", proxyURI])
         }
 
-        appendCommonArguments(to: &args, cookieSource: cookieSource, credentials: credentials, transferOptions: transferOptions)
+        let tempConfigDir = appendCommonArguments(to: &args, cookieSource: cookieSource, credentials: credentials, transferOptions: transferOptions)
+        defer {
+            if let tempConfigDir {
+                try? FileManager.default.removeItem(at: tempConfigDir)
+            }
+        }
         args.append(url.absoluteString)
 
         let data = try await YTDLPMetadataProcess(
@@ -107,6 +133,7 @@ enum MediaExtractionEngine {
         do {
             let metadata = try JSONDecoder().decode(MediaMetadata.self, from: data)
             let options = extractOptions(from: metadata)
+            metadataCache.setObject(CacheEntry(metadata: metadata, options: options, date: Date()), forKey: url as NSURL)
             return (metadata, options)
         } catch {
             throw ExtractionError.parsingFailed(error)
@@ -118,7 +145,7 @@ enum MediaExtractionEngine {
         cookieSource: BrowserCookieSource,
         credentials: DownloadCredentials?,
         transferOptions: DownloadTransferOptions
-    ) {
+    ) -> URL? {
         if let browserName = cookieSource.ytDlpBrowserName {
             args.append(contentsOf: ["--cookies-from-browser", browserName])
         }
@@ -134,9 +161,18 @@ enum MediaExtractionEngine {
             args.append(contentsOf: ["--add-header", "Cookie: \(cookieHeader)"])
         }
 
+        var tempConfigDir: URL?
         if let credentials, !credentials.isEmpty {
-            args.append(contentsOf: ["--username", credentials.username, "--password", credentials.password])
+            let configContent = "--username \"\(credentials.username)\"\n--password \"\(credentials.password)\"\n"
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("firelink-yt-dlp-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let fileURL = tempDir.appendingPathComponent("yt-dlp.conf")
+            try? configContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+            args.append(contentsOf: ["--config-locations", fileURL.path])
+            tempConfigDir = tempDir
         }
+        return tempConfigDir
     }
 
     private static func appendJavaScriptRuntimeArguments(to args: inout [String]) {
@@ -416,19 +452,25 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             process.standardError = errorPipe
             process.standardInput = nil
 
+            let readGroup = DispatchGroup()
+
+            readGroup.enter()
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
+                    readGroup.leave()
                 } else {
                     outputBuffer.append(data)
                 }
             }
 
+            readGroup.enter()
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
+                    readGroup.leave()
                 } else {
                     errorBuffer.append(data)
                 }
@@ -439,25 +481,24 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             }
 
             process.terminationHandler = { finishedProcess in
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                
-                if finishedProcess.terminationStatus == 0 {
-                    continuation.resume(returning: outputBuffer.data)
-                } else {
-                    let stderr = String(data: errorBuffer.data, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let stdout = String(data: outputBuffer.data, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let message = [stderr, stdout]
-                        .compactMap { $0 }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: "\n")
-                    continuation.resume(
-                        throwing: MediaExtractionEngine.ExtractionError.processFailed(
-                            message.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : message
+                readGroup.notify(queue: .global()) {
+                    if finishedProcess.terminationStatus == 0 {
+                        continuation.resume(returning: outputBuffer.data)
+                    } else {
+                        let stderr = String(data: errorBuffer.data, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let stdout = String(data: outputBuffer.data, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let message = [stderr, stdout]
+                            .compactMap { $0 }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: "\n")
+                        continuation.resume(
+                            throwing: MediaExtractionEngine.ExtractionError.processFailed(
+                                message.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : message
+                            )
                         )
-                    )
+                    }
                 }
             }
 
@@ -475,9 +516,15 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
     }
 
     private func terminate() {
-        lock.withLock {
-            if let process, process.isRunning {
-                process.terminate()
+        let p = lock.withLock { self.process }
+        guard let p, p.isRunning else { return }
+        
+        p.terminate()
+        
+        Task.detached {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if p.isRunning {
+                kill(p.processIdentifier, SIGKILL)
             }
         }
     }

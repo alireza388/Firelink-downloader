@@ -425,6 +425,9 @@ struct AddDownloadsView: View {
                             .background(.quaternary.opacity(0.35))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .frame(minHeight: 48)
+                            .onChange(of: headerText) { _, newValue in
+                                if newValue.count > 65536 { headerText = String(newValue.prefix(65536)) }
+                            }
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -432,6 +435,9 @@ struct AddDownloadsView: View {
                         TextField("name=value; other=value", text: $cookieText)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.callout, design: .monospaced))
+                            .onChange(of: cookieText) { _, newValue in
+                                if newValue.count > 65536 { cookieText = String(newValue.prefix(65536)) }
+                            }
                     }
 
                     VStack(alignment: .leading, spacing: 4) {
@@ -442,6 +448,9 @@ struct AddDownloadsView: View {
                             .background(.quaternary.opacity(0.35))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .frame(minHeight: 48)
+                            .onChange(of: mirrorText) { _, newValue in
+                                if newValue.count > 65536 { mirrorText = String(newValue.prefix(65536)) }
+                            }
                     }
                 }
                 .padding(.top, 8)
@@ -709,6 +718,7 @@ struct AddDownloadsView: View {
                 case .replace:
                     let destURL = overrideDirectory ?? finalDownloads[index].defaultDirectory
                     let path = destURL.appendingPathComponent(finalDownloads[index].fileName).path
+                    guard URL(fileURLWithPath: path).standardized.path.hasPrefix(destURL.standardized.path) else { continue }
                     if let existingIndex = controller.downloads.firstIndex(where: { ($0.destinationPath == path || $0.url == finalDownloads[index].url) && $0.status != .canceled }) {
                         controller.delete(controller.downloads[existingIndex], deleteFiles: true)
                     } else if FileManager.default.fileExists(atPath: path) {

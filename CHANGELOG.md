@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-11
+
+### Security Fixes
+- Addressed multiple vulnerabilities identified in the v0.7.0 security audit.
+- Moved `yt-dlp` credential passing from CLI arguments to secure temporary configuration files to prevent process list leakage.
+- Enforced strict `0o600` POSIX permissions on `aria2c` temporary configuration files to protect generated RPC secrets.
+- Replaced the unauthenticated local connection protocol with a secure HMAC-SHA256 signature validation.
+- Excluded sensitive properties like `rpcSecret` and `rpcPort` from `DownloadItem` serialization so they are never saved to disk in plaintext.
+- Mitigated SSRF (Server-Side Request Forgery) by strictly validating metadata fetch requests against private IP addresses and loopback ranges.
+- Prevented potential path traversal vulnerabilities by validating destination file URLs during duplicate resolution.
+- Sanitized custom HTTP headers to prevent CR/LF injection vectors.
+- Re-architected `aria2c` port-finding with POSIX sockets to eliminate a known race-condition window.
+- Applied rate-limiting and text length bounds to the custom `firelink://` scheme to mitigate DoS and injection attempts.
+
+### Fixes
+- Implemented a thread-safe cleanup mechanism for temporary directories to resolve a concurrency race condition during engine cancellation.
+
 ## [0.7.0] - 2026-06-11
 
 ### New Features & Improvements

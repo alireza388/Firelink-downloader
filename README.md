@@ -47,7 +47,7 @@
 - 🪄 **Media Downloader:** Instantly extract high-quality media (4K, 1080p, MP3) with smart cascading format pickers, powered by bundled `yt-dlp` and `ffmpeg`.
 - 🎨 **Premium Native UI:** A responsive, frosted-glass SwiftUI interface strictly adhering to Apple Human Interface Guidelines, featuring a visual chunk map and dynamic progress tracking.
 - 🌐 **Seamless Browser Integration:** Send downloads directly from your browser via the secure Firelink Companion extension.
-- 🛡️ **Privacy & Security:** Zero-configuration setup with deferred Keychain integration ensures your credentials are kept safe and only accessed when strictly necessary.
+- 🛡️ **Privacy & Security:** Zero-configuration setup with deferred Keychain integration and secure HMAC-SHA256 authenticated local API endpoints ensure your system remains strictly isolated and protected from malicious scripts.
 - 🗂️ **Smart Organization:** Auto-categorizes incoming files and remembers your preferred download locations.
 - 🔄 **Native Updater:** Built-in seamless GitHub release checking for lightweight and transparent app updates.
 

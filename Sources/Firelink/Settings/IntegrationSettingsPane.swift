@@ -7,117 +7,139 @@ struct IntegrationSettingsPane: View {
     @State private var showToast = false
 
     var body: some View {
-        VStack(spacing: 20) {
-            // Header
-            HStack(alignment: .center, spacing: 16) {
-                Image(systemName: "puzzlepiece.extension.fill")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 40, height: 40)
-                    .foregroundStyle(Color(nsColor: NSColor(red: 1.0, green: 0.44, blue: 0.22, alpha: 1.0)))
-                    .accessibilityHidden(true)
+        Form {
+            Section {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "puzzlepiece.extension.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(Color(nsColor: NSColor(red: 1.0, green: 0.44, blue: 0.22, alpha: 1.0)))
+                        .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Connect Browser Extension")
-                        .font(.title2.weight(.bold))
-                    Text("Capture downloads directly from your browser in three easy steps.")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connect Browser Extension")
+                            .font(.title3.weight(.bold))
+                        Text("Capture downloads directly from your browser in three easy steps.")
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                    }
+                    Spacer()
                 }
-                Spacer()
+                .padding(.bottom, 4)
             }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
 
-            KeychainAccessCard()
+            Section {
+                KeychainAccessCard()
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
 
             if settings.isKeychainAccessGranted {
-                HStack(spacing: 12) {
-                    // Step 1
-                    CompactStepCardView(
-                        stepNumber: 1,
-                        title: "Copy Token",
-                        description: "This secure token authorizes your browser extension.",
-                        icon: "doc.on.clipboard.fill",
-                        iconColor: .blue,
-                        actionText: "Copy Token",
-                        action: {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(settings.extensionPairingToken, forType: .string)
-                            withAnimation {
-                                showToast = true
+                Section {
+                    HStack(spacing: 8) {
+                        // Step 1
+                        CompactStepCardView(
+                            stepNumber: 1,
+                            title: "Copy Token",
+                            description: "This secure token authorizes your browser extension.",
+                            icon: "doc.on.clipboard.fill",
+                            iconColor: .blue,
+                            actionText: "Copy Token",
+                            action: {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(settings.extensionPairingToken, forType: .string)
+                                withAnimation {
+                                    showToast = true
+                                }
+                            },
+                            secondaryActionText: "Regenerate",
+                            secondaryAction: {
+                                var bytes = [UInt8](repeating: 0, count: 32)
+                                let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+                                settings.extensionPairingToken = status == errSecSuccess ? Data(bytes).base64EncodedString() : UUID().uuidString
                             }
-                        },
-                        secondaryActionText: "Regenerate",
-                        secondaryAction: {
-                            var bytes = [UInt8](repeating: 0, count: 32)
-                            let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-                            settings.extensionPairingToken = status == errSecSuccess ? Data(bytes).base64EncodedString() : UUID().uuidString
-                        }
-                    )
+                        )
 
-                    Image(systemName: "chevron.right")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                        Image(systemName: "chevron.right")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
 
-                    // Step 2
-                    CompactStepCardView(
-                        stepNumber: 2,
-                        title: "Get Extension",
-                        description: "Install the Firelink Companion extension on your browser.",
-                        icon: "globe",
-                        iconColor: .orange,
-                        actionText: "Firefox Add-ons",
-                        action: {
-                            if let url = URL(string: "https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/") {
-                                NSWorkspace.shared.open(url)
+                        // Step 2
+                        CompactStepCardView(
+                            stepNumber: 2,
+                            title: "Get Extension",
+                            description: "Install the Firelink Companion extension on your browser.",
+                            icon: "globe",
+                            iconColor: .orange,
+                            actionText: "Firefox Add-ons",
+                            action: {
+                                if let url = URL(string: "https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            },
+                            secondaryActionText: "Releases",
+                            secondaryAction: {
+                                if let url = URL(string: "https://github.com/nimbold/Firelink-Extension/releases") {
+                                    NSWorkspace.shared.open(url)
+                                }
                             }
-                        },
-                        secondaryActionText: "Releases",
-                        secondaryAction: {
-                            if let url = URL(string: "https://github.com/nimbold/Firelink-Extension/releases") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    )
+                        )
 
-                    Image(systemName: "chevron.right")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
+                        Image(systemName: "chevron.right")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(Color(nsColor: .tertiaryLabelColor))
 
-                    // Step 3
-                    CompactStepCardView(
-                        stepNumber: 3,
-                        title: "Paste & Connect",
-                        description: "Click the Firelink icon in your browser's toolbar and paste the token.",
-                        icon: "arrow.down.doc.fill",
-                        iconColor: .green,
-                        actionText: nil,
-                        action: nil
-                    )
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                
-                Divider()
-                
-                // Diagnostics
-                HStack {
-                    Text("Diagnostics:")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if let port = controller.extensionServerPort {
-                        Label("Listening on 127.0.0.1:\(port)", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("Not listening", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                        // Step 3
+                        CompactStepCardView(
+                            stepNumber: 3,
+                            title: "Paste & Connect",
+                            description: "Click the Firelink icon in your browser's toolbar and paste the token.",
+                            icon: "arrow.down.doc.fill",
+                            iconColor: .green,
+                            actionText: nil,
+                            action: nil
+                        )
                     }
+                    .fixedSize(horizontal: false, vertical: true)
+                } header: {
+                    Text("Setup Guide")
                 }
-                .font(.footnote)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
+                
+                Section {
+                    HStack {
+                        Text("Diagnostics:")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if let port = controller.extensionServerPort {
+                            Label("Listening on 127.0.0.1:\(port)", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Label("Not listening", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .font(.footnote)
+                    .padding(8)
+                    .background(Color(NSColor.controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
+                } header: {
+                    Text("Status")
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
-            Spacer()
         }
-        .padding(24)
+        .formStyle(.grouped)
         .toast(isShowing: $showToast, message: "Token copied to clipboard!")
-        .background(Color(NSColor.windowBackgroundColor))
     }
 }
 
@@ -133,56 +155,56 @@ struct CompactStepCardView: View {
     var secondaryAction: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             HStack(alignment: .top) {
                 // Step Number Badge
                 ZStack {
                     Circle()
                         .fill(Color.secondary.opacity(0.1))
-                        .frame(width: 24, height: 24)
+                        .frame(width: 20, height: 20)
                     
                     Text("\(stepNumber)")
-                        .font(.system(.caption, design: .rounded).weight(.bold))
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
                         .foregroundStyle(.primary)
                 }
                 Spacer()
                 // Icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(iconColor.opacity(0.15))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 28, height: 28)
                     
                     Image(systemName: icon)
-                        .font(.system(size: 16))
+                        .font(.system(size: 14))
                         .foregroundStyle(iconColor)
                 }
             }
             
             // Text Content
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(description)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
             
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             
             // Action Button
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 if let actionText = actionText, let action = action {
                     Button(action: action) {
                         Text(actionText)
-                            .font(.caption.weight(.medium))
+                            .font(.caption2.weight(.medium))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 4)
                             .background(Color.accentColor)
                             .foregroundColor(.white)
-                            .cornerRadius(6)
+                            .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
                 }
@@ -190,14 +212,14 @@ struct CompactStepCardView: View {
                 if let secondaryActionText = secondaryActionText, let secondaryAction = secondaryAction {
                     Button(action: secondaryAction) {
                         Text(secondaryActionText)
-                            .font(.caption.weight(.medium))
+                            .font(.caption2.weight(.medium))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 4)
                             .background(Color(nsColor: .controlBackgroundColor))
                             .foregroundColor(.primary)
-                            .cornerRadius(6)
+                            .cornerRadius(4)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 6)
+                                RoundedRectangle(cornerRadius: 4)
                                     .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
                             )
                     }
@@ -205,15 +227,15 @@ struct CompactStepCardView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color(nsColor: .controlBackgroundColor))
                 .shadow(color: .black.opacity(0.05), radius: 4, y: 1)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
         )
     }

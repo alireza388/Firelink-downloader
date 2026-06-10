@@ -283,7 +283,13 @@ final class AppSettings: ObservableObject {
 
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         let currentBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
-        let fullVersion = "\(currentVersion).\(currentBuild)"
+        var execHash = "unknown"
+        if let execPath = Bundle.main.executablePath,
+           let attr = try? FileManager.default.attributesOfItem(atPath: execPath),
+           let modDate = attr[.modificationDate] as? Date {
+            execHash = String(modDate.timeIntervalSince1970)
+        }
+        let fullVersion = "\(currentVersion).\(currentBuild).\(execHash)"
         let lastVersion = defaults.string(forKey: "Firelink.lastLaunchedVersion")
         defaults.set(fullVersion, forKey: "Firelink.lastLaunchedVersion")
 

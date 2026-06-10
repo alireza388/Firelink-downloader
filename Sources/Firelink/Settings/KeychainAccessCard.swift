@@ -4,38 +4,39 @@ struct KeychainAccessCard: View {
     @EnvironmentObject private var settings: AppSettings
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: settings.isKeychainAccessGranted ? 12 : 16) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: settings.isKeychainAccessGranted ? 6 : 10)
                     .fill(settings.isKeychainAccessGranted ? Color.green.opacity(0.15) : Color.blue.opacity(0.15))
-                    .frame(width: 36, height: 36)
+                    .frame(width: settings.isKeychainAccessGranted ? 28 : 36, height: settings.isKeychainAccessGranted ? 28 : 36)
                 
                 Image(systemName: settings.isKeychainAccessGranted ? "lock.open.fill" : "lock.fill")
-                    .font(.system(size: 18))
+                    .font(.system(size: settings.isKeychainAccessGranted ? 14 : 18))
                     .foregroundStyle(settings.isKeychainAccessGranted ? .green : .blue)
             }
             
             VStack(alignment: .leading, spacing: 2) {
-                Text("Keychain Access")
-                    .font(.headline)
-                Text("Firelink needs Keychain access to securely store your browser extension pairing token.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(settings.isKeychainAccessGranted ? "Keychain Access Granted" : "Keychain Access")
+                    .font(settings.isKeychainAccessGranted ? .subheadline.weight(.medium) : .headline)
+                    .foregroundStyle(settings.isKeychainAccessGranted ? .green : .primary)
+                
+                if !settings.isKeychainAccessGranted {
+                    Text("Firelink needs Keychain access to securely store your browser extension pairing token.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             
-            Spacer(minLength: 16)
+            Spacer(minLength: settings.isKeychainAccessGranted ? 8 : 16)
             
             if settings.isKeychainAccessGranted {
-                Label("Granted", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.subheadline.weight(.medium))
-                
                 Button(role: .destructive) {
                     settings.revokeKeychainAccess()
                 } label: {
                     Text("Revoke")
                 }
+                .controlSize(.small)
             } else {
                 Button {
                     settings.grantKeychainAccess()
@@ -51,14 +52,14 @@ struct KeychainAccessCard: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(12)
+        .padding(settings.isKeychainAccessGranted ? 8 : 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: settings.isKeychainAccessGranted ? 8 : 12)
                 .fill(Color(nsColor: .controlBackgroundColor))
                 .shadow(color: .black.opacity(0.05), radius: 4, y: 1)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: settings.isKeychainAccessGranted ? 8 : 12)
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 1)
         )
     }

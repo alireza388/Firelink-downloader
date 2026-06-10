@@ -43,9 +43,9 @@
 
 ## ✨ Features
 
-- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c` with configurable speed limits.
+- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c` with configurable speed limits and a built-in download scheduler.
 - 🪄 **Media Downloader:** Instantly extract high-quality media (4K, 1080p, MP3) with smart cascading format pickers, powered by bundled `yt-dlp` and `ffmpeg`.
-- 🎨 **Premium Native UI:** A responsive, frosted-glass SwiftUI interface tailor-made for Apple Silicon, featuring a visual chunk map and dynamic progress tracking.
+- 🎨 **Premium Native UI:** A responsive, frosted-glass SwiftUI interface strictly adhering to Apple Human Interface Guidelines, featuring a visual chunk map and dynamic progress tracking.
 - 🌐 **Seamless Browser Integration:** Send downloads directly from your browser via the secure Firelink Companion extension.
 - 🛡️ **Privacy & Security:** Zero-configuration setup with deferred Keychain integration ensures your credentials are kept safe and only accessed when strictly necessary.
 - 🗂️ **Smart Organization:** Auto-categorizes incoming files and remembers your preferred download locations.

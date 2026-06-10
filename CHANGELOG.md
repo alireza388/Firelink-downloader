@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-11
+
+### New Features & Improvements
+- Complete UI modernization for the context menu, toolbar, download list, and sidebar to adhere strictly to Apple's Human Interface Guidelines (HIG).
+- Overhaul of the Settings panes including Site Logins, Engine, About, Locations, and Downloads for a unified, cleaner look.
+- Introduce an "Ask where to save" global configuration option for manual location picking per download.
+- Add "Stop Time" option to the Scheduler and unit picker for the global Speed Limiter.
+- Enhance the Integration pane with a visible step counter and an up-to-date status icon.
+- Optimize `yt-dlp` execution for noticeably faster media extraction speeds.
+- Defer Keychain access prompts and track executable modification dates for a more secure "priming" mechanism.
+
+### Fixes
+- Fix issues regarding proxy environment propagation into media download processes.
+- Resolve multiple critical bugs related to configuration storage and download stability.
+- Address multiple underlying issues identified during comprehensive code reviews to improve overall resilience.
+
 ## [0.6.6] - 2026-06-10
 
 ### New Features

@@ -20,7 +20,7 @@ cd "$ROOT_DIR"
 is_valid_mach_o() {
   local path="$1"
   if ! file "$path" | grep -q 'Mach-O'; then
-    return 0
+    return 1
   fi
 
   lipo -archs "$path" >/dev/null 2>&1

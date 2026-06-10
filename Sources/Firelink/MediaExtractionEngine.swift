@@ -416,16 +416,10 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             process.standardError = errorPipe
             process.standardInput = nil
 
-            let group = DispatchGroup()
-            group.enter() // output
-            group.enter() // error
-            group.enter() // process
-
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
-                    group.leave()
                 } else {
                     outputBuffer.append(data)
                 }
@@ -435,7 +429,6 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
-                    group.leave()
                 } else {
                     errorBuffer.append(data)
                 }
@@ -445,12 +438,11 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
                 self.process = process
             }
 
-            process.terminationHandler = { _ in
-                group.leave()
-            }
-
-            group.notify(queue: .global()) {
-                if process.terminationStatus == 0 {
+            process.terminationHandler = { finishedProcess in
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
+                
+                if finishedProcess.terminationStatus == 0 {
                     continuation.resume(returning: outputBuffer.data)
                 } else {
                     let stderr = String(data: errorBuffer.data, encoding: .utf8)?
@@ -463,7 +455,7 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
                         .joined(separator: "\n")
                     continuation.resume(
                         throwing: MediaExtractionEngine.ExtractionError.processFailed(
-                            message.isEmpty ? "Exit code \(process.terminationStatus)" : message
+                            message.isEmpty ? "Exit code \(finishedProcess.terminationStatus)" : message
                         )
                     )
                 }

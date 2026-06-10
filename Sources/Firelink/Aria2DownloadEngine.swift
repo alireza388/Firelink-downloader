@@ -10,7 +10,7 @@ final class Aria2DownloadEngine: Sendable {
         let cancel: @Sendable () -> Void
     }
 
-    static func findFreePort() -> Int {
+    static func findFreePort() -> UInt16 {
         var port: UInt16 = 6800
         let parameters = NWParameters.tcp
         for p in 6800...6900 {
@@ -21,7 +21,7 @@ final class Aria2DownloadEngine: Sendable {
                 break
             }
         }
-        return Int(port)
+        return port
     }
 
     enum EngineError: LocalizedError {
@@ -120,7 +120,7 @@ final class Aria2DownloadEngine: Sendable {
         var lastError: Error?
 
         for _ in 1...5 {
-            let rpcPort = Self.findFreePort()
+            let rpcPort = Int(Self.findFreePort())
             let rpcSecret = UUID().uuidString
             let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("firelink-aria2-\(UUID().uuidString)")
             
@@ -221,6 +221,8 @@ final class Aria2DownloadEngine: Sendable {
             }
             
             if didThrow {
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+                errorPipe.fileHandleForReading.readabilityHandler = nil
                 try? FileManager.default.removeItem(at: tempDir)
                 continue
             }

@@ -503,6 +503,11 @@ final class DownloadController: ObservableObject {
 
     private func injectedEngineItem(from item: DownloadItem) -> DownloadItem {
         var engineItem = item
+        if engineItem.credentials != nil {
+            if let storedPassword = KeychainCredentialStore.password(for: engineItem.id) {
+                engineItem.credentials?.password = storedPassword
+            }
+        }
         let ua = settings.customUserAgent.trimmingCharacters(in: .whitespacesAndNewlines)
         if !ua.isEmpty, !(engineItem.requestHeaders?.contains(where: { $0.name.caseInsensitiveCompare("user-agent") == .orderedSame }) ?? false) {
             var headers = engineItem.requestHeaders ?? []
@@ -1042,10 +1047,6 @@ final class DownloadController: ObservableObject {
                 adjusted.queueID = validQueueID(adjusted.queueID)
                 if isLegacyDownloadList, item.queueID == nil {
                     adjusted.queueID = DownloadQueue.mainQueueID
-                }
-
-                if adjusted.credentials != nil, let storedPassword = KeychainCredentialStore.password(for: adjusted.id) {
-                    adjusted.credentials?.password = storedPassword
                 }
 
                 if adjusted.status == .completed && adjusted.progress != 1 {

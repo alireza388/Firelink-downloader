@@ -60,7 +60,8 @@ struct DownloadPropertiesView: View {
         if let credentials = item.credentials {
             _loginMode = State(initialValue: .custom)
             _username = State(initialValue: credentials.username)
-            _password = State(initialValue: credentials.password)
+            let storedPassword = KeychainCredentialStore.password(for: item.id) ?? credentials.password
+            _password = State(initialValue: storedPassword)
         } else {
             _loginMode = State(initialValue: .matching)
             _username = State(initialValue: "")

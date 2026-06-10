@@ -117,29 +117,14 @@ struct ContentView: View {
             StatusBar()
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup {
                 Button {
                     controller.pendingAddQueueID = queueID
                     openWindow(id: "add-downloads")
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("Add Download", systemImage: "plus")
                 }
-            }
-
-            ToolbarItemGroup {
-                let canStop = selectedItems.isEmpty ? hasActiveDownloads(in: queueID) : selectedItems.contains(where: { $0.status == .downloading })
-                Button {
-                    if selectedItems.isEmpty {
-                        controller.pauseActiveDownloads(queueID: queueID)
-                    } else {
-                        for item in selectedItems where item.status == .downloading {
-                            controller.pause(item)
-                        }
-                    }
-                } label: {
-                    Label(selectedItems.isEmpty ? "Stop All" : "Stop", systemImage: "stop.fill")
-                }
-                .disabled(!canStop)
+                .help("Add a new download")
 
                 let canStart = selectedItems.isEmpty ? hasQueuedDownloads(in: queueID) : selectedItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled })
                 Button {
@@ -151,9 +136,25 @@ struct ContentView: View {
                         }
                     }
                 } label: {
-                    Label(selectedItems.isEmpty ? "Start Queue" : "Start", systemImage: "play.fill")
+                    Label(selectedItems.isEmpty ? "Resume All" : "Resume", systemImage: "play.fill")
                 }
+                .help(selectedItems.isEmpty ? "Resume all downloads" : "Resume selected downloads")
                 .disabled(!canStart)
+
+                let canStop = selectedItems.isEmpty ? hasActiveDownloads(in: queueID) : selectedItems.contains(where: { $0.status == .downloading || $0.status == .queued })
+                Button {
+                    if selectedItems.isEmpty {
+                        controller.pauseActiveDownloads(queueID: queueID)
+                    } else {
+                        for item in selectedItems where item.status == .downloading || item.status == .queued {
+                            controller.pause(item)
+                        }
+                    }
+                } label: {
+                    Label(selectedItems.isEmpty ? "Pause All" : "Pause", systemImage: "pause.fill")
+                }
+                .help(selectedItems.isEmpty ? "Pause all active downloads" : "Pause selected downloads")
+                .disabled(!canStop)
             }
         }
         .background {

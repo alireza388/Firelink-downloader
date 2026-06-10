@@ -271,42 +271,38 @@ struct DownloadTable: View {
                     showInFinder(target)
                 }
             } label: {
-                Label(targetItems.count > 1 ? "Show in Finder (\(targetItems.count))" : "Show in Finder", systemImage: "finder")
+                Label(targetItems.count > 1 ? "Show in Finder (\(targetItems.count))" : "Show in Finder", systemImage: "magnifyingglass")
             }
 
             Divider()
 
-            Divider()
-
-            Menu("Controls") {
-                if targetItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
-                    Button {
-                        for target in targetItems where target.status == .paused || target.status == .failed || target.status == .canceled {
-                            controller.resume(target)
-                        }
-                    } label: {
-                        Label("Start", systemImage: "play.fill")
+            if targetItems.contains(where: { $0.status == .paused || $0.status == .failed || $0.status == .canceled }) {
+                Button {
+                    for target in targetItems where target.status == .paused || target.status == .failed || target.status == .canceled {
+                        controller.resume(target)
                     }
+                } label: {
+                    Label("Resume", systemImage: "play.fill")
                 }
+            }
 
-                if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
-                    Button {
-                        for target in targetItems where target.status == .downloading || target.status == .queued {
-                            controller.pause(target)
-                        }
-                    } label: {
-                        Label("Stop", systemImage: "stop.fill")
+            if targetItems.contains(where: { $0.status == .downloading || $0.status == .queued }) {
+                Button {
+                    for target in targetItems where target.status == .downloading || target.status == .queued {
+                        controller.pause(target)
                     }
+                } label: {
+                    Label("Pause", systemImage: "pause.fill")
                 }
+            }
 
-                if targetItems.contains(where: { $0.status == .completed || $0.status == .failed || $0.status == .canceled }) {
-                    Button {
-                        for target in targetItems where target.status == .completed || target.status == .failed || target.status == .canceled {
-                            controller.redownload(target)
-                        }
-                    } label: {
-                        Label("Redownload", systemImage: "arrow.clockwise")
+            if targetItems.contains(where: { $0.status == .completed || $0.status == .failed || $0.status == .canceled }) {
+                Button {
+                    for target in targetItems where target.status == .completed || target.status == .failed || target.status == .canceled {
+                        controller.redownload(target)
                     }
+                } label: {
+                    Label("Redownload", systemImage: "arrow.clockwise")
                 }
             }
 
@@ -336,12 +332,16 @@ struct DownloadTable: View {
                 Label(targetItems.count > 1 ? "Copy Addresses" : "Copy Address", systemImage: "link")
             }
 
-            Button {
-                for target in targetItems {
-                    openWindow(id: "download-properties", value: target.id)
+            if targetItems.allSatisfy({ $0.status == .completed }) {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    let paths = targetItems.map { $0.destinationPath }.joined(separator: "\n")
+                    if !paths.isEmpty {
+                        NSPasteboard.general.setString(paths, forType: .string)
+                    }
+                } label: {
+                    Label(targetItems.count > 1 ? "Copy File Paths" : "Copy File Path", systemImage: "doc.on.doc")
                 }
-            } label: {
-                Label(targetItems.count > 1 ? "Properties (\(targetItems.count))" : "Properties", systemImage: "info.circle")
             }
 
             Divider()
@@ -349,7 +349,17 @@ struct DownloadTable: View {
             Button(role: .destructive) {
                 pendingDeleteItems = itemIDs
             } label: {
-                Label("Remove", systemImage: "trash")
+                Label("Remove from List", systemImage: "trash")
+            }
+
+            Divider()
+
+            Button {
+                for target in targetItems {
+                    openWindow(id: "download-properties", value: target.id)
+                }
+            } label: {
+                Label(targetItems.count > 1 ? "Properties (\(targetItems.count))" : "Properties", systemImage: "info.circle")
             }
         }
     }

@@ -93,9 +93,6 @@ struct ProxySettings: Codable, Equatable, Sendable {
         var copy = self
         copy.host = copy.host.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.port = min(max(copy.port, 1), 65_535)
-        if copy.type != .http {
-            copy.type = .http
-        }
         return copy
     }
 
@@ -301,16 +298,13 @@ final class AppSettings: ObservableObject {
         }
 
         if granted {
+            if let token = KeychainCredentialStore.extensionToken() {
+                extensionPairingToken = token
+            } else {
+                extensionPairingToken = Self.generateSecureToken()
+            }
             if needsPrimer {
                 showKeychainPrimer = true
-                extensionPairingToken = ""
-            } else {
-                if let token = KeychainCredentialStore.extensionToken() {
-                    extensionPairingToken = token
-                } else {
-                    extensionPairingToken = Self.generateSecureToken()
-                    // The didSet of extensionPairingToken will handle setting it in the keychain since isKeychainAccessGranted is true.
-                }
             }
         } else {
             extensionPairingToken = ""

@@ -701,7 +701,7 @@ struct AddDownloadsView: View {
                     var count = 1
                     let base = URL(fileURLWithPath: newName).deletingPathExtension().lastPathComponent
                     let ext = URL(fileURLWithPath: newName).pathExtension
-                    while controller.downloads.contains(where: { $0.destinationDirectory == destURL && $0.fileName == newName }) || FileManager.default.fileExists(atPath: destURL.appendingPathComponent(newName).path) {
+                    while controller.downloads.contains(where: { $0.destinationDirectory == destURL && $0.fileName == newName }) || FileManager.default.fileExists(atPath: destURL.appendingPathComponent(newName).path) || finalDownloads.prefix(upTo: index).contains(where: { (overrideDirectory ?? $0.defaultDirectory) == destURL && $0.fileName == newName }) {
                         newName = "\(base) (\(count))" + (ext.isEmpty ? "" : ".\(ext)")
                         count += 1
                     }

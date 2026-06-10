@@ -100,16 +100,10 @@ final class MediaDownloadEngine: @unchecked Sendable {
             messageUpdate: messageUpdate
         )
 
-        let group = DispatchGroup()
-        group.enter() // output
-        group.enter() // error
-        group.enter() // process
-
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
-                group.leave()
             } else if let text = String(data: data, encoding: .utf8) {
                 outputHandler.handle(text)
             }
@@ -119,7 +113,6 @@ final class MediaDownloadEngine: @unchecked Sendable {
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
-                group.leave()
             } else {
                 errorBuffer.append(data)
                 if let text = String(data: data, encoding: .utf8) {
@@ -128,16 +121,15 @@ final class MediaDownloadEngine: @unchecked Sendable {
             }
         }
 
-        process.terminationHandler = { _ in
-            group.leave()
-        }
-
-        group.notify(queue: .global()) {
-            if process.terminationStatus == 0 {
+        process.terminationHandler = { finishedProcess in
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            
+            if finishedProcess.terminationStatus == 0 {
                 completionGate.complete(.success(Self.resolvedOutputURL(for: item, tracker: outputPathTracker)))
             } else {
                 let errorString = String(data: errorBuffer.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown Error"
-                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: process.terminationStatus))))
+                completionGate.complete(.failure(EngineError.launchFailed(Self.cleanErrorMessage(errorString, status: finishedProcess.terminationStatus))))
             }
         }
 

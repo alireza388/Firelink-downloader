@@ -21,31 +21,6 @@ enum DownloadSidebarFilter: Hashable {
     }
 }
 
-enum SettingsSidebarFilter: String, CaseIterable, Hashable {
-    case downloads = "Downloads"
-    case lookAndFeel = "Look and feel"
-    case network = "Network"
-    case locations = "Locations"
-    case siteLogins = "Site Logins"
-    case power = "Power"
-    case engine = "Engine"
-    case integration = "Integrations"
-    case about = "About"
-
-    var symbolName: String {
-        switch self {
-        case .downloads: "arrow.down.circle"
-        case .lookAndFeel: "paintpalette"
-        case .network: "network"
-        case .locations: "folder"
-        case .siteLogins: "key.fill"
-        case .power: "moon.zzz"
-        case .engine: "terminal"
-        case .integration: "puzzlepiece.extension"
-        case .about: "info.circle"
-        }
-    }
-}
 
 enum SidebarSelection: Hashable {
     case downloads(DownloadSidebarFilter)
@@ -57,6 +32,7 @@ enum SidebarSelection: Hashable {
 
 struct SidebarView: View {
     @EnvironmentObject private var controller: DownloadController
+    @Environment(\.controlActiveState) private var controlActiveState
     @Binding var selection: SidebarSelection
     @State private var queueBeingRenamed: DownloadQueue?
     @State private var queueBeingRemoved: DownloadQueue?
@@ -95,6 +71,7 @@ struct SidebarView: View {
                     selection = .queue(queue.id)
                 } label: {
                     Label("Add new queue", systemImage: "plus")
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -121,8 +98,8 @@ struct SidebarView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(selection == .settings ? Color.accentColor : Color.clear)
-                .foregroundStyle(selection == .settings ? Color.white : Color.primary)
+                .background(selection == .settings ? (controlActiveState == .key || controlActiveState == .active ? Color.accentColor : Color.secondary.opacity(0.5)) : Color.clear)
+                .foregroundStyle(selection == .settings ? (controlActiveState == .key || controlActiveState == .active ? Color.white : Color.primary) : Color.primary)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
@@ -163,7 +140,7 @@ struct SidebarView: View {
             Button("Delete Queue", role: .destructive) {
                 controller.removeQueue(id: queue.id)
                 if selection == .queue(queue.id) {
-                    selection = .downloads(.unfinished)
+                    selection = .downloads(.all)
                 }
                 queueBeingRemoved = nil
             }

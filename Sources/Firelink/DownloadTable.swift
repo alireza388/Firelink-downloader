@@ -13,117 +13,128 @@ struct DownloadTable: View {
 
     @State private var sortOrder = [KeyPathComparator(\DownloadItem.createdAt, order: .reverse)]
     @State private var pendingDeleteItems: Set<DownloadItem.ID>?
-
-    var sortedItems: [DownloadItem] {
-        items.sorted(using: sortOrder)
-    }
+    @State private var sortedItems: [DownloadItem] = []
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(title)
-                    .font(.headline)
+                    .font(.title2)
+                    .fontWeight(.semibold)
                 Text("\(items.count)")
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                     .background(.quaternary.opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .clipShape(Capsule())
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
-            Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("File Name", value: \.fileName) { item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: item.category.symbolName)
-                            .font(.title3)
-                            .foregroundStyle(categoryColor(for: item.category))
-                            .frame(width: 22)
-                        Text(item.fileName)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .allowsHitTesting(false)
+            if items.isEmpty {
+                ContentUnavailableView(
+                    "No Downloads",
+                    systemImage: "arrow.down.circle",
+                    description: Text("Use Add or press \(Image(systemName: "command"))V to paste one or more links.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Table(sortedItems, selection: $selection, sortOrder: $sortOrder) {
+                    TableColumn("File Name", value: \.fileName) { item in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: item.category.symbolName)
+                                .font(.title3)
+                                .foregroundStyle(categoryColor(for: item.category))
+                                .frame(width: 22)
+                            Text(item.fileName)
+                                .font(.headline)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .allowsHitTesting(false)
+                        }
+                        .draggable(item.id.uuidString)
                     }
-                    .draggable(item.id.uuidString)
-                }
-                .width(min: 200, ideal: 340)
+                    .width(min: 200, ideal: 340)
 
-                TableColumn("Size", value: \.sortableSize) { item in
-                    if let size = item.sizeBytes, size > 0 {
-                        Text(ByteFormatter.string(size))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    } else if item.bytesText != "-" && !item.bytesText.isEmpty {
-                        Text(item.bytesText)
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    } else {
-                        Text("Unknown")
-                            .monospacedDigit()
+                    TableColumn("Size", value: \.sortableSize) { item in
+                        if let size = item.sizeBytes, size > 0 {
+                            Text(ByteFormatter.string(size))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } else if item.bytesText != "-" && !item.bytesText.isEmpty {
+                            Text(item.bytesText)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        } else {
+                            Text("Unknown")
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("Status", value: \.status.rawValue) { item in
+                        combinedStatusCell(for: item)
+                    }
+                    .width(min: 160, ideal: 200)
+
+                    TableColumn("Speed", value: \.displaySpeedText) { item in
+                        if item.status == .downloading {
+                            formattedSpeedCell(for: item.displaySpeedText)
+                        } else {
+                            Text("-")
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("ETA", value: \.displayETAText) { item in
+                        if item.status == .downloading {
+                            formattedETACell(for: item.displayETAText)
+                        } else {
+                            Text("-")
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("Date Added", value: \.createdAt) { item in
+                        Text(formatted(item.createdAt))
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
+                    .width(min: 100, ideal: 155)
                 }
-                .width(min: 80, ideal: 100)
-
-                TableColumn("Progress", value: \.progress) { item in
-                    progressBarCell(for: item)
-                }
-                .width(min: 100, ideal: 115)
-
-                TableColumn("Status", value: \.status.rawValue) { item in
-                    statusCell(for: item)
-                }
-                .width(min: 115, ideal: 170)
-
-                TableColumn("Speed", value: \.displaySpeedText) { item in
-                    Text(item.displaySpeedText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                }
-                .width(min: 70, ideal: 90)
-
-                TableColumn("ETA", value: \.displayETAText) { item in
-                    Text(item.displayETAText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                }
-                .width(min: 70, ideal: 90)
-
-                TableColumn("Date Added", value: \.createdAt) { item in
-                    Text(formatted(item.createdAt))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                }
-                .width(min: 100, ideal: 155)
-            }
-            .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
-            .animation(.default, value: sortedItems)
-            .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
-                rowContextMenu(for: itemIDs)
-            } primaryAction: { itemIDs in
-                let targetItems = controller.downloads.filter { itemIDs.contains($0.id) }
-                for target in targetItems {
-                    if target.status == .completed {
-                        openFile(target)
+                .environment(\.defaultMinListRowHeight, settings.listRowDensity.minRowHeight)
+                .animation(.default, value: sortedItems)
+                .contextMenu(forSelectionType: DownloadItem.ID.self) { itemIDs in
+                    rowContextMenu(for: itemIDs)
+                } primaryAction: { itemIDs in
+                    let targetItems = controller.downloads.filter { itemIDs.contains($0.id) }
+                    for target in targetItems {
+                        if target.status == .completed {
+                            openFile(target)
+                        }
                     }
                 }
             }
-            .overlay {
-                if items.isEmpty {
-                    ContentUnavailableView(
-                        "No Downloads",
-                        systemImage: "arrow.down.circle",
-                        description: Text("Use Add or press \(Image(systemName: "command"))V to paste one or more links.")
-                    )
-                }
+        }
+        .onAppear { sortedItems = items.sorted(using: sortOrder) }
+        .onChange(of: items) { _, newItems in
+            if newItems.count != sortedItems.count {
+                sortedItems = newItems.sorted(using: sortOrder)
+            } else {
+                let itemsDict = Dictionary(uniqueKeysWithValues: newItems.map { ($0.id, $0) })
+                sortedItems = sortedItems.compactMap { itemsDict[$0.id] }
             }
+        }
+        .onChange(of: sortOrder) { _, newOrder in
+            sortedItems = items.sorted(using: newOrder)
         }
         .confirmationDialog(
             "Delete Download",
@@ -165,17 +176,79 @@ struct DownloadTable: View {
     }
 
     @ViewBuilder
-    private func statusCell(for item: DownloadItem) -> some View {
-        let message = item.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        if item.status == .downloading, !message.isEmpty {
-            Text(message)
-                .lineLimit(1)
-                .truncationMode(.tail)
+    private func combinedStatusCell(for item: DownloadItem) -> some View {
+        if item.status == .completed {
+            Text("Completed")
+                .foregroundStyle(.green)
+                .fontWeight(.medium)
         } else {
-            Text(item.status.rawValue)
+            HStack(spacing: 8) {
+                ProgressView(value: item.progress)
+                    .progressViewStyle(.linear)
+                    .tint(statusColor(for: item.status))
+                
+                if item.status == .downloading {
+                    Text(item.progress.formatted(.percent.precision(.fractionLength(0))))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 35, alignment: .trailing)
+                } else {
+                    Text(item.status.rawValue.capitalized)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func parseSpeed(_ text: String) -> [String] {
+        var display = text
+        
+        if let index = display.firstIndex(where: { $0.isLetter }) {
+            if display.distance(from: display.startIndex, to: index) > 0 {
+                let prevIndex = display.index(before: index)
+                if display[prevIndex] != " " {
+                    display.insert(" ", at: index)
+                }
+            }
+        }
+        return display.split(separator: " ", maxSplits: 1).map(String.init)
+    }
+
+    @ViewBuilder
+    private func formattedSpeedCell(for text: String) -> some View {
+        let components = parseSpeed(text)
+        if components.count == 2 {
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(components[0])
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                Text(components[1])
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+        } else {
+            Text(components.joined(separator: " "))
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+    }
+
+    @ViewBuilder
+    private func formattedETACell(for text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     @ViewBuilder
@@ -303,25 +376,7 @@ struct DownloadTable: View {
         }
     }
 
-    @ViewBuilder
-    private func progressBarCell(for item: DownloadItem) -> some View {
-        if item.status == .completed {
-            Text("Completed")
-                .foregroundStyle(.green)
-                .lineLimit(1)
-                .truncationMode(.tail)
-        } else {
-            HStack(spacing: 4) {
-                ProgressView(value: item.progress)
-                    .progressViewStyle(.linear)
-                    .tint(statusColor(for: item.status))
-                
-                Text(item.progress.formatted(.percent.precision(.fractionLength(0))))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .frame(width: 35, alignment: .trailing)
-            }
-        }
-    }
+
 
     private func formatted(_ date: Date?) -> String {
         guard let date else { return "-" }

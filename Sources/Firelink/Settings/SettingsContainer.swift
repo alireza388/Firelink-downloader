@@ -1,6 +1,32 @@
 import AppKit
 import SwiftUI
 
+enum SettingsSidebarFilter: String, CaseIterable, Hashable {
+    case downloads = "Downloads"
+    case lookAndFeel = "Look and feel"
+    case network = "Network"
+    case locations = "Locations"
+    case siteLogins = "Site Logins"
+    case power = "Power"
+    case engine = "Engine"
+    case integration = "Integrations"
+    case about = "About"
+
+    var symbolName: String {
+        switch self {
+        case .downloads: "arrow.down.circle"
+        case .lookAndFeel: "paintpalette"
+        case .network: "network"
+        case .locations: "folder"
+        case .siteLogins: "key.fill"
+        case .power: "moon.zzz"
+        case .engine: "terminal"
+        case .integration: "puzzlepiece.extension"
+        case .about: "info.circle"
+        }
+    }
+}
+
 struct SettingsPaneContainer: View {
     @AppStorage("lastSettingsTab") private var activeTab: SettingsSidebarFilter = .downloads
 

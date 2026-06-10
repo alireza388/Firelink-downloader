@@ -15,9 +15,6 @@ struct AboutSettingsPane: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Development"
-    }
 
     var body: some View {
         Form {
@@ -31,7 +28,7 @@ struct AboutSettingsPane: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Firelink")
                             .font(.title2.weight(.bold))
-                        Text("Version \(appVersion) (\(buildNumber))")
+                        Text("Version \(appVersion)")
                             .foregroundStyle(.secondary)
                         Text("A native macOS download manager for fast, organized, segmented transfers.")
                             .font(.caption)

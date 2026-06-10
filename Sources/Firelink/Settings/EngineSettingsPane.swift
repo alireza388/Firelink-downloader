@@ -20,15 +20,16 @@ struct EngineSettingsPane: View {
                         .textSelection(.enabled)
                 }
 
-                LabeledContent("Binary Path") {
-                    Text(executableURL?.path ?? "Not found")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
+                LabeledContent("Binary") {
+                    if let url = executableURL {
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: "")
+                        }
+                    } else {
+                        Text("Not found")
+                            .foregroundStyle(.red)
+                    }
                 }
-                .help(executableURL?.path ?? "")
             } header: {
                 Text("Core Downloader (Aria2)")
             } footer: {
@@ -46,13 +47,16 @@ struct EngineSettingsPane: View {
                 addonStatusRow(title: "FFmpeg", state: engineManager.ffmpegState, path: engineManager.binaryPath(for: .ffmpeg))
 
                 LabeledContent("Browser Cookies") {
-                    Picker("", selection: $settings.mediaCookieSource) {
-                        ForEach(BrowserCookieSource.allCases, id: \.self) { source in
-                            Text(source.rawValue).tag(source)
+                    HStack {
+                        Spacer()
+                        Picker("", selection: $settings.mediaCookieSource) {
+                            ForEach(BrowserCookieSource.allCases, id: \.self) { source in
+                                Text(source.rawValue).tag(source)
+                            }
                         }
+                        .labelsHidden()
+                        .fixedSize()
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 200)
                 }
             } header: {
                 Text("Media Extractors")
@@ -75,7 +79,7 @@ struct EngineSettingsPane: View {
     @ViewBuilder
     private func addonStatusRow(title: String, state: AddonState, path: URL?) -> some View {
         LabeledContent(title) {
-            VStack(alignment: .trailing) {
+            HStack(spacing: 8) {
                 switch state {
                 case .notInstalled:
                     Text("Missing")
@@ -89,13 +93,12 @@ struct EngineSettingsPane: View {
                         .foregroundStyle(.red)
                         .help(error)
                 }
-
-                Text(path?.path ?? "Not found")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                
+                if let path {
+                    Button("Reveal") {
+                        NSWorkspace.shared.selectFile(path.path, inFileViewerRootedAtPath: "")
+                    }
+                }
             }
         }
     }

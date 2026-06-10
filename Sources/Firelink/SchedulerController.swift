@@ -32,6 +32,8 @@ enum SchedulerDay: Int, Codable, CaseIterable, Identifiable {
 struct SchedulerSettings: Codable, Equatable {
     var isEnabled: Bool = false
     var startTime: Date = Calendar.current.date(bySettingHour: 0, minute: 0, second: 0, of: Date()) ?? Date()
+    var stopTimeEnabled: Bool = false
+    var stopTime: Date = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
     var isEveryday: Bool = true
     var selectedDays: Set<SchedulerDay> = Set(SchedulerDay.allCases)
     var postQueueAction: PostQueueAction = .doNothing
@@ -117,19 +119,36 @@ final class SchedulerController: ObservableObject {
         let currentMinute = calendar.component(.minute, from: now)
         let currentWeekday = calendar.component(.weekday, from: now)
 
-        if startHour == currentHour && startMinute == currentMinute {
-            let shouldRun: Bool
-            if settings.isEveryday {
-                shouldRun = true
-            } else {
-                let day = SchedulerDay(rawValue: currentWeekday)
-                shouldRun = day.map { settings.selectedDays.contains($0) } ?? false
-            }
+        let shouldRunToday: Bool
+        if settings.isEveryday {
+            shouldRunToday = true
+        } else {
+            let day = SchedulerDay(rawValue: currentWeekday)
+            shouldRunToday = day.map { settings.selectedDays.contains($0) } ?? false
+        }
 
-            if shouldRun {
+        if shouldRunToday {
+            if startHour == currentHour && startMinute == currentMinute {
                 lastTriggeredMinute = now
                 triggerQueues()
             }
+            
+            if settings.stopTimeEnabled {
+                let stopHour = calendar.component(.hour, from: settings.stopTime)
+                let stopMinute = calendar.component(.minute, from: settings.stopTime)
+                
+                if stopHour == currentHour && stopMinute == currentMinute {
+                    lastTriggeredMinute = now
+                    pauseQueues()
+                }
+            }
+        }
+    }
+
+    private func pauseQueues() {
+        let targetQueueIDs = effectiveTargetQueueIDs()
+        for queueID in targetQueueIDs {
+            downloadController.pauseActiveDownloads(queueID: queueID)
         }
     }
 

@@ -386,6 +386,8 @@ final class YTDLPProgressParser: @unchecked Sendable {
     private var accumulatedBytes: Int64 = 0
     private var currentFileBytes: Int64 = 0
     private var lastFraction: Double = 0
+    private var fileIndex: Int = 0
+    private var lastReportedOverallFraction: Double = 0
 
     init(totalExpectedBytes: Int64?) {
         self.totalExpectedBytes = totalExpectedBytes
@@ -398,13 +400,22 @@ final class YTDLPProgressParser: @unchecked Sendable {
     ) -> (overallFraction: Double, displaySizeStr: String) {
         if fraction < lastFraction && lastFraction > 0.95 {
             accumulatedBytes += currentFileBytes
+            fileIndex += 1
         }
         
         currentFileBytes = parsedSize
         lastFraction = fraction
         
         let totalDownloadedBytes = accumulatedBytes + Int64(Double(parsedSize) * fraction)
-        let overallTotalBytes = max(totalExpectedBytes ?? 0, accumulatedBytes + parsedSize)
+        var overallTotalBytes = max(totalExpectedBytes ?? 0, accumulatedBytes + parsedSize)
+        
+        // If we are on the first file, and its size is taking up almost all of totalExpectedBytes,
+        // we pad overallTotalBytes by 20% to leave room for a potential audio track. 
+        // This prevents the progress bar from prematurely hitting 100%.
+        if fileIndex == 0 {
+            let paddedSize = Int64(Double(parsedSize) * 1.2)
+            overallTotalBytes = max(overallTotalBytes, paddedSize)
+        }
         
         var overallFraction = fraction
         var displaySizeStr = sizeStr
@@ -413,6 +424,10 @@ final class YTDLPProgressParser: @unchecked Sendable {
             overallFraction = Double(totalDownloadedBytes) / Double(overallTotalBytes)
             displaySizeStr = ByteFormatter.string(overallTotalBytes)
         }
+        
+        // Ensure overallFraction never decreases visually
+        overallFraction = max(lastReportedOverallFraction, overallFraction)
+        lastReportedOverallFraction = overallFraction
         
         return (overallFraction, displaySizeStr)
     }

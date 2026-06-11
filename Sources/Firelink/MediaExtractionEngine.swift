@@ -59,7 +59,7 @@ enum MediaExtractionEngine {
     }
     nonisolated(unsafe) private static let metadataCache = NSCache<NSURL, CacheEntry>()
 
-    private static let metadataTimeoutSeconds: UInt64 = 30
+    private static let metadataTimeoutSeconds: UInt64 = 120
 
     enum ExtractionError: Error, LocalizedError {
         case processFailed(String)

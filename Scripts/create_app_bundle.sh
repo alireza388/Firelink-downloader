@@ -28,32 +28,22 @@ is_valid_mach_o() {
 
 ensure_ytdlp() {
   local ytdlp_path="$ROOT_DIR/Sources/Firelink/yt-dlp"
-  local ytdlp_internal_path="$ROOT_DIR/Sources/Firelink/_internal"
 
-  if [[ -x "$ytdlp_path" ]] && [[ -d "$ytdlp_internal_path" ]] && is_valid_mach_o "$ytdlp_path"; then
+  if [[ -x "$ytdlp_path" ]] && is_valid_mach_o "$ytdlp_path"; then
     return
   fi
 
-  if ! command -v curl >/dev/null || ! command -v unzip >/dev/null; then
-    echo "WARNING: yt-dlp or its runtime is missing or malformed, and curl/unzip are not available to refresh it." >&2
+  if ! command -v curl >/dev/null; then
+    echo "WARNING: yt-dlp is missing, and curl is not available to refresh it." >&2
     return
   fi
 
   echo "Refreshing bundled yt-dlp runtime..."
-  local temp_dir
-  temp_dir="$(mktemp -d)"
-  curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip -o "$temp_dir/yt-dlp.zip"
-  unzip -q -o "$temp_dir/yt-dlp.zip" -d "$temp_dir"
-  cp "$temp_dir/yt-dlp_macos" "$ytdlp_path"
+  curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o "$ytdlp_path"
   chmod +x "$ytdlp_path"
-
-  if [[ -d "$temp_dir/_internal" ]]; then
-    rm -rf "$ROOT_DIR/Sources/Firelink/_internal"
-    cp -R "$temp_dir/_internal" "$ROOT_DIR/Sources/Firelink/_internal"
-    touch "$ROOT_DIR/Sources/Firelink/_internal/.gitkeep"
-  fi
-
-  rm -rf "$temp_dir"
+  
+  # Remove legacy _internal directory if it exists
+  rm -rf "$ROOT_DIR/Sources/Firelink/_internal"
 }
 
 ensure_ytdlp

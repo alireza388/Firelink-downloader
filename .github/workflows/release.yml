@@ -67,13 +67,8 @@ jobs:
         run: |
           mkdir -p Sources/Firelink
 
-          # Download the one-folder macOS build. The direct one-file binary is not code-signable.
-          curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip -o yt-dlp.zip
-          mkdir -p yt-dlp-macos
-          unzip -q -o yt-dlp.zip -d yt-dlp-macos
-          mv yt-dlp-macos/yt-dlp_macos Sources/Firelink/yt-dlp
-          cp -R yt-dlp-macos/_internal Sources/Firelink/_internal
-          rm -rf yt-dlp.zip yt-dlp-macos
+          # Download the one-file macOS build. PyInstaller on macOS now properly supports code-signing without corrupting the archive.
+          curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o Sources/Firelink/yt-dlp
           chmod +x Sources/Firelink/yt-dlp
 
           # Download latest FFmpeg release build for macOS ARM64 from Martin Riedl's build server

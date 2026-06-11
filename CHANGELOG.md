@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-11
+
+### New Features & Improvements
+- Add Deno to about credits and engines list.
+- Enhance speed and ETA display logic during pause and drop.
+- Accumulate track sizes to present a unified overall progress bar.
+
+### Fixes
+- Resolve unknown speed flickering and ultra-wide high-resolution detection.
+- Emit distinct status messages for individual tracks during download.
+- Pad overall progress total for first track to prevent 100% snapback.
+
 ## [0.7.2] - 2026-06-11
 
 ### Fixed

@@ -271,7 +271,7 @@ enum MediaExtractionEngine {
 
         let availableResolutions = standardResolutions.filter { resolution, _ in
             rawFormats.contains { format in
-                isVideo(format) && (format.height ?? 0) > 0 && (format.height ?? 0) <= resolution && (format.height ?? 0) >= resolution - 100
+                isVideo(format) && matchesHeight(format, height: resolution)
             }
         }
         let videoQualities = [(nil as Int?, "Best")] + availableResolutions.map { (Optional($0.0), $0.1) }
@@ -415,8 +415,42 @@ enum MediaExtractionEngine {
 
     private static func matchesHeight(_ format: RawMediaFormat, height: Int?) -> Bool {
         guard let height else { return true }
+        
+        if let note = format.format_note {
+            if height == 2160 && (note.contains("2160p") || note.contains("4K") || note.contains("4k")) { return true }
+            if height == 1440 && note.contains("1440p") { return true }
+            if height == 1080 && note.contains("1080p") { return true }
+            if height == 720 && note.contains("720p") { return true }
+            if height == 480 && note.contains("480p") { return true }
+            if height == 360 && note.contains("360p") { return true }
+        }
+        
+        if let res = format.resolution {
+            let parts = res.split(separator: "x").compactMap { Int($0) }
+            if parts.count == 2 {
+                let maxDim = max(parts[0], parts[1])
+                switch height {
+                case 2160: return maxDim >= 3800
+                case 1440: return maxDim >= 2500 && maxDim < 3800
+                case 1080: return maxDim >= 1900 && maxDim < 2500
+                case 720:  return maxDim >= 1200 && maxDim < 1900
+                case 480:  return maxDim >= 800 && maxDim < 1200
+                case 360:  return maxDim >= 600 && maxDim < 800
+                default: break
+                }
+            }
+        }
+        
         guard let formatHeight = format.height else { return false }
-        return formatHeight <= height && formatHeight >= height - 100
+        
+        let tolerance: Int
+        if height >= 2160 { tolerance = 600 }
+        else if height >= 1440 { tolerance = 400 }
+        else if height >= 1080 { tolerance = 300 }
+        else if height >= 720 { tolerance = 200 }
+        else { tolerance = 100 }
+        
+        return formatHeight <= height && formatHeight >= height - tolerance
     }
 
     private static func formatSize(_ format: RawMediaFormat) -> Int64? {

@@ -554,8 +554,11 @@ final class DownloadController: ObservableObject {
                                     guard $0.status == .downloading else { return }
                                     $0.progress = progress.fraction
                                     $0.bytesText = progress.bytesText
-                                    $0.speedText = progress.speedText
-                                    $0.etaText = progress.etaText
+                                    let isUnknown = progress.speedText.lowercased() == "unknown" || progress.speedText == "-"
+                                    if !isUnknown || $0.speedText == "-" || $0.speedText.lowercased() == "unknown" {
+                                        $0.speedText = progress.speedText
+                                        $0.etaText = progress.etaText
+                                    }
                                     $0.connectionCount = progress.connectionCount
                                     if $0.message == "Starting" {
                                         $0.message = "Downloading Media"
@@ -612,8 +615,11 @@ final class DownloadController: ObservableObject {
                                     guard $0.status == .downloading else { return }
                                     $0.progress = progress.fraction
                                     $0.bytesText = progress.bytesText
-                                    $0.speedText = progress.speedText
-                                    $0.etaText = progress.etaText
+                                    let isUnknown = progress.speedText.lowercased() == "unknown" || progress.speedText == "-"
+                                    if !isUnknown || $0.speedText == "-" || $0.speedText.lowercased() == "unknown" {
+                                        $0.speedText = progress.speedText
+                                        $0.etaText = progress.etaText
+                                    }
                                     $0.connectionCount = progress.connectionCount
                                     $0.message = "Downloading"
                                 }

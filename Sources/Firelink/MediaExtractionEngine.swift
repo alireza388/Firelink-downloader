@@ -452,25 +452,19 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             process.standardError = errorPipe
             process.standardInput = nil
 
-            let readGroup = DispatchGroup()
-
-            readGroup.enter()
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
-                    readGroup.leave()
                 } else {
                     outputBuffer.append(data)
                 }
             }
 
-            readGroup.enter()
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
-                    readGroup.leave()
                 } else {
                     errorBuffer.append(data)
                 }
@@ -481,7 +475,10 @@ private final class YTDLPMetadataProcess: @unchecked Sendable {
             }
 
             process.terminationHandler = { finishedProcess in
-                readGroup.notify(queue: .global()) {
+                // Allow a brief moment for final pipe data to flush
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
                     if finishedProcess.terminationStatus == 0 {
                         continuation.resume(returning: outputBuffer.data)
                     } else {

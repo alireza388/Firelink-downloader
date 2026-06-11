@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Applied rate-limiting and text length bounds to the custom `firelink://` scheme to mitigate DoS and injection attempts.
 
 ### Fixes
+- Fixed a metadata extraction timeout when downloading from YouTube by preventing child processes from holding process pipes open.
+- Resolved an issue to correctly assign filenames for auto-captured downloads.
 - Restored the UUID fallback for token generation to prevent silent failures if secure random byte generation fails.
 - Hardened local API security by immediately rejecting requests if the expected pairing token is completely empty.
 - Implemented a thread-safe cleanup mechanism for temporary directories to resolve a concurrency race condition during engine cancellation.

@@ -8,6 +8,7 @@
   <a href="https://aria2.github.io/"><img src="https://img.shields.io/badge/Engine-aria2c-red?logo=terminal&logoColor=white" alt="Engine" /></a>
   <a href="https://github.com/yt-dlp/yt-dlp"><img src="https://img.shields.io/badge/Engine-yt--dlp-red?logo=youtube&logoColor=white" alt="yt-dlp Engine" /></a>
   <a href="https://ffmpeg.org/"><img src="https://img.shields.io/badge/Engine-ffmpeg-red?logo=ffmpeg&logoColor=white" alt="ffmpeg Engine" /></a>
+  <a href="https://deno.com/"><img src="https://img.shields.io/badge/Engine-deno-blue?logo=deno&logoColor=white" alt="Deno Engine" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License" /></a>
 </div>
 
@@ -85,6 +86,7 @@ Firelink stands on the shoulders of giants. A massive thank you to the contribut
 - **[aria2](https://aria2.github.io/)** - The legendary multi-protocol download utility driving our core engine.
 - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** - The definitive command-line audio/video downloader.
 - **[FFmpeg](https://ffmpeg.org/)** - The industry standard for media stream manipulation and merging.
+- **[Deno](https://deno.com/)** - The secure runtime for JavaScript and TypeScript solving complex media extraction challenges.
 
 ---
 

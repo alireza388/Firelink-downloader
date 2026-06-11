@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-11
+
 ### Fixed
 - Prevented yt-dlp and JavaScript child processes from keeping metadata fetches or canceled downloads alive indefinitely.
 - Replaced the repeatedly extracted one-file yt-dlp build with a stable prewarmed runtime cache.

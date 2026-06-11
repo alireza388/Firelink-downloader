@@ -156,6 +156,10 @@ final class LocalExtensionServer: @unchecked Sendable {
         }
 
         let expectedToken = currentPairingToken
+        guard !expectedToken.isEmpty else {
+            return .forbidden
+        }
+        
         let bodyString = String(data: request.body, encoding: .utf8) ?? ""
         guard let signatureHex = request.header(named: "x-firelink-signature"),
               let timestampStr = request.header(named: "x-firelink-timestamp"),

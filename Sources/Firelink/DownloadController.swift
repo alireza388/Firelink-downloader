@@ -31,6 +31,7 @@ final class DownloadController: ObservableObject {
     private var pendingNotifications: [(title: String, body: String)] = []
     private var notificationDebounceTask: Task<Void, Never>?
     private var lastProgressUpdateTimes: [UUID: Date] = [:]
+    private var speedUnknownSince: [UUID: Date] = [:]
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -557,6 +558,17 @@ final class DownloadController: ObservableObject {
                                     let isUnknown = progress.speedText.lowercased() == "unknown" || progress.speedText == "-"
                                     if !isUnknown || $0.speedText == "-" || $0.speedText.lowercased() == "unknown" {
                                         $0.speedText = progress.speedText
+                                        self?.speedUnknownSince[item.id] = nil
+                                    } else {
+                                        if self?.speedUnknownSince[item.id] == nil {
+                                            self?.speedUnknownSince[item.id] = Date()
+                                        }
+                                        if let since = self?.speedUnknownSince[item.id], Date().timeIntervalSince(since) > 3.0 {
+                                            $0.speedText = "0 KiB/s"
+                                        }
+                                    }
+                                    let isEtaUnknown = progress.etaText.lowercased() == "unknown" || progress.etaText == "-"
+                                    if !isEtaUnknown || $0.etaText == "-" || $0.etaText.lowercased() == "unknown" {
                                         $0.etaText = progress.etaText
                                     }
                                     $0.connectionCount = progress.connectionCount
@@ -618,6 +630,17 @@ final class DownloadController: ObservableObject {
                                     let isUnknown = progress.speedText.lowercased() == "unknown" || progress.speedText == "-"
                                     if !isUnknown || $0.speedText == "-" || $0.speedText.lowercased() == "unknown" {
                                         $0.speedText = progress.speedText
+                                        self?.speedUnknownSince[item.id] = nil
+                                    } else {
+                                        if self?.speedUnknownSince[item.id] == nil {
+                                            self?.speedUnknownSince[item.id] = Date()
+                                        }
+                                        if let since = self?.speedUnknownSince[item.id], Date().timeIntervalSince(since) > 3.0 {
+                                            $0.speedText = "0 KiB/s"
+                                        }
+                                    }
+                                    let isEtaUnknown = progress.etaText.lowercased() == "unknown" || progress.etaText == "-"
+                                    if !isEtaUnknown || $0.etaText == "-" || $0.etaText.lowercased() == "unknown" {
                                         $0.etaText = progress.etaText
                                     }
                                     $0.connectionCount = progress.connectionCount

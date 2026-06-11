@@ -199,11 +199,13 @@ struct DownloadItem: Identifiable, Codable, Equatable, Sendable {
     }
 
     var displaySpeedText: String {
-        status == .downloading ? speedText : "-"
+        if status == .completed || status == .paused || status == .queued || status == .canceled { return "-" }
+        return speedText
     }
 
     var displayETAText: String {
-        status == .downloading ? etaText : "-"
+        if status == .completed || status == .queued || status == .canceled { return "-" }
+        return etaText
     }
 
     var destinationPath: String {

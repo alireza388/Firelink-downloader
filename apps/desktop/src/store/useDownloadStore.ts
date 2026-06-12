@@ -40,6 +40,42 @@ const syncSystemIntegrations = () => {
   }
 };
 
+const speedLimitToKiB = (value?: string | null): number | null => {
+  if (!value) return null;
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*([kmgt]?)b?(?:\/s)?$/i);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const multipliers: Record<string, number> = {
+    '': 1,
+    k: 1,
+    m: 1024,
+    g: 1024 * 1024,
+    t: 1024 * 1024 * 1024
+  };
+  return Math.max(1, Math.round(amount * multipliers[match[2].toLowerCase()]));
+};
+
+const effectiveSpeedLimit = (
+  itemLimit: string | null | undefined,
+  globalLimit: string,
+  maxConcurrentDownloads: number
+): string | null => {
+  const itemKiB = speedLimitToKiB(itemLimit);
+  const globalKiB = speedLimitToKiB(globalLimit);
+  const perSlotGlobalKiB = globalKiB
+    ? Math.max(1, Math.floor(globalKiB / Math.max(maxConcurrentDownloads, 1)))
+    : null;
+
+  const effectiveKiB = itemKiB && perSlotGlobalKiB
+    ? Math.min(itemKiB, perSlotGlobalKiB)
+    : itemKiB ?? perSlotGlobalKiB;
+
+  return effectiveKiB ? `${effectiveKiB}K` : null;
+};
+
 export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'failed' | 'queued';
 export type DownloadCategory = 'Documents' | 'Images' | 'Audio' | 'Video' | 'Apps' | 'Archives' | 'Other';
 
@@ -76,7 +112,10 @@ interface DownloadState {
   removeDownload: (id: string) => Promise<void>;
   clearFinished: () => void;
   redownload: (id: string) => void;
-  processQueue: () => void;
+  processQueue: () => Promise<void>;
+  startMainQueue: () => Promise<number>;
+  pauseMainQueue: () => Promise<number>;
+  restartActiveDownloads: () => Promise<number>;
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
@@ -145,9 +184,71 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }));
     get().processQueue();
   },
+  startMainQueue: async () => {
+    const runnableIds = get().downloads
+      .filter(item => item.status === 'queued' || item.status === 'paused' || item.status === 'failed')
+      .map(item => item.id);
+
+    if (runnableIds.length === 0) return 0;
+
+    set((state) => ({
+      downloads: state.downloads.map(item =>
+        runnableIds.includes(item.id)
+          ? { ...item, status: 'queued', speed: '-', eta: '-' }
+          : item
+      )
+    }));
+    await get().processQueue();
+    return runnableIds.length;
+  },
+  pauseMainQueue: async () => {
+    const activeIds = get().downloads
+      .filter(item => item.status === 'downloading')
+      .map(item => item.id);
+
+    if (activeIds.length === 0) return 0;
+
+    set((state) => ({
+      downloads: state.downloads.map(item =>
+        activeIds.includes(item.id)
+          ? { ...item, status: 'paused', speed: '-', eta: '-' }
+          : item
+      )
+    }));
+    await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
+    syncSystemIntegrations();
+    return activeIds.length;
+  },
+  restartActiveDownloads: async () => {
+    const activeIds = get().downloads
+      .filter(item => item.status === 'downloading')
+      .map(item => item.id);
+
+    if (activeIds.length === 0) return 0;
+
+    set((state) => ({
+      downloads: state.downloads.map(item =>
+        activeIds.includes(item.id)
+          ? { ...item, status: 'paused', speed: '-', eta: '-' }
+          : item
+      )
+    }));
+    await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
+    await new Promise(resolve => window.setTimeout(resolve, 350));
+    set((state) => ({
+      downloads: state.downloads.map(item =>
+        activeIds.includes(item.id)
+          ? { ...item, status: 'queued' }
+          : item
+      )
+    }));
+    await get().processQueue();
+    return activeIds.length;
+  },
   processQueue: async () => {
     const { downloads, updateDownload } = get();
-    const { maxConcurrentDownloads } = useSettingsStore.getState();
+    const settingsSnapshot = useSettingsStore.getState();
+    const { maxConcurrentDownloads } = settingsSnapshot;
     
     const activeCount = downloads.filter(d => d.status === 'downloading').length;
     if (activeCount >= maxConcurrentDownloads) return;
@@ -169,21 +270,32 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                          '~/Downloads';
 
         if (item.isMedia) {
+          const speedLimit = effectiveSpeedLimit(
+            item.speedLimit,
+            settings.globalSpeedLimit,
+            settings.maxConcurrentDownloads
+          );
           await invoke('start_media_download', {
             id: item.id,
             url: item.url,
             destination: destPath,
             filename: item.fileName,
-            formatSelector: item.mediaFormatSelector || null
+            formatSelector: item.mediaFormatSelector || null,
+            speedLimit
           });
         } else {
+          const speedLimit = effectiveSpeedLimit(
+            item.speedLimit,
+            settings.globalSpeedLimit,
+            settings.maxConcurrentDownloads
+          );
           await invoke('start_download', {
             id: item.id,
             url: item.url,
             destination: destPath,
             filename: item.fileName,
             connections: item.connections || settings.perServerConnections || null,
-            speedLimit: item.speedLimit || settings.globalSpeedLimit || null,
+            speedLimit,
             username: item.username || (login ? login.username : null),
             password: item.password || (login ? login.password : null),
             headers: item.headers || null,

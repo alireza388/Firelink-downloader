@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
@@ -9,6 +9,15 @@ import { useDownloadStore } from "./store/useDownloadStore";
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { invoke } from "@tauri-apps/api/core";
+import SchedulerView from "./components/SchedulerView";
+import SpeedLimiterView from "./components/SpeedLimiterView";
+
+const localDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -19,6 +28,10 @@ function App() {
   const appFontSize = useSettingsStore(state => state.appFontSize);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const activeDownloadCount = useDownloadStore(state => state.downloads.filter(download => download.status === 'downloading').length);
+  const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
+  const downloads = useDownloadStore(state => state.downloads);
+  const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
+  const previousSpeedLimit = useRef(globalSpeedLimit);
 
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
@@ -27,6 +40,69 @@ function App() {
   useEffect(() => {
     invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
   }, [showDockBadge, activeDownloadCount]);
+
+  useEffect(() => {
+    if (previousSpeedLimit.current === globalSpeedLimit) return;
+    previousSpeedLimit.current = globalSpeedLimit;
+    const timeout = window.setTimeout(() => {
+      useDownloadStore.getState().restartActiveDownloads().catch(error => {
+        console.error('Failed to apply global speed limit:', error);
+      });
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [globalSpeedLimit]);
+
+  useEffect(() => {
+    const checkSchedule = async () => {
+      const state = useSettingsStore.getState();
+      const scheduler = state.scheduler;
+      if (!scheduler.enabled) return;
+
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const allowedToday = scheduler.everyday || scheduler.selectedDays.includes(now.getDay());
+      if (!allowedToday) return;
+
+      const dateKey = localDateKey(now);
+      if (scheduler.startTime === currentTime) {
+        const triggerKey = `${dateKey}-${currentTime}`;
+        if (state.schedulerLastStartKey !== triggerKey) {
+          state.setSchedulerLastStartKey(triggerKey);
+          const started = await useDownloadStore.getState().startMainQueue();
+          state.setSchedulerRunning(started > 0);
+        }
+      }
+
+      if (scheduler.stopTimeEnabled && scheduler.stopTime === currentTime) {
+        const triggerKey = `${dateKey}-${currentTime}`;
+        if (state.schedulerLastStopKey !== triggerKey) {
+          state.setSchedulerLastStopKey(triggerKey);
+          await useDownloadStore.getState().pauseMainQueue();
+          state.setSchedulerRunning(false);
+        }
+      }
+    };
+
+    void checkSchedule();
+    const interval = window.setInterval(() => void checkSchedule(), 10_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!schedulerRunning) return;
+    const hasPendingScheduledWork = downloads.some(download =>
+      download.status === 'queued' || download.status === 'downloading'
+    );
+    if (hasPendingScheduledWork) return;
+
+    const settings = useSettingsStore.getState();
+    settings.setSchedulerRunning(false);
+    if (settings.scheduler.postQueueAction !== 'none') {
+      invoke('perform_system_action', { action: settings.scheduler.postQueueAction }).catch(error => {
+        console.error('Scheduled post action failed:', error);
+      });
+    }
+  }, [downloads, schedulerRunning]);
 
   useEffect(() => {
     // Request notification permissions
@@ -104,11 +180,10 @@ function App() {
   return (
     <div className="flex h-screen w-screen bg-main-bg text-text-primary overflow-hidden">
       {isSidebarVisible && <Sidebar selectedFilter={filter} onSelectFilter={(f) => { setFilter(f); useSettingsStore.getState().setActiveView('downloads'); }} />}
-      {activeView === 'downloads' ? (
-        <DownloadTable filter={filter} />
-      ) : (
-        <SettingsView />
-      )}
+      {activeView === 'downloads' && <DownloadTable filter={filter} />}
+      {activeView === 'settings' && <SettingsView />}
+      {activeView === 'scheduler' && <SchedulerView />}
+      {activeView === 'speedLimiter' && <SpeedLimiterView />}
       <AddDownloadsModal />
       <PropertiesModal />
     </div>

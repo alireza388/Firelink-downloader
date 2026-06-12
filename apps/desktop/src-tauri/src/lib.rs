@@ -470,6 +470,7 @@ async fn start_media_download(
     destination: String,
     filename: String,
     format_selector: Option<String>,
+    speed_limit: Option<String>,
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -508,6 +509,12 @@ async fn start_media_download(
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
        .arg("-o").arg(out_path.to_string_lossy().to_string());
+
+    if let Some(limit) = speed_limit {
+        if !limit.is_empty() {
+            cmd.arg("--limit-rate").arg(limit);
+        }
+    }
 
     if let Some(format) = format_selector {
         cmd.arg("-f").arg(format);
@@ -673,6 +680,112 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
 }
 
 #[tauri::command]
+fn perform_system_action(action: String) -> Result<(), String> {
+    let status = match action.as_str() {
+        "sleep" => {
+            #[cfg(target_os = "macos")]
+            {
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg("tell application \"Finder\" to sleep")
+                    .status()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                Command::new("rundll32.exe")
+                    .arg("powrprof.dll,SetSuspendState")
+                    .arg("0,1,0")
+                    .status()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Command::new("systemctl").arg("suspend").status()
+            }
+        }
+        "restart" => {
+            #[cfg(target_os = "macos")]
+            {
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg("tell application \"Finder\" to restart")
+                    .status()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                Command::new("shutdown").args(["/r", "/t", "0"]).status()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Command::new("systemctl").arg("reboot").status()
+            }
+        }
+        "shutdown" => {
+            #[cfg(target_os = "macos")]
+            {
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg("tell application \"Finder\" to shut down")
+                    .status()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                Command::new("shutdown").args(["/s", "/t", "0"]).status()
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Command::new("systemctl").arg("poweroff").status()
+            }
+        }
+        _ => return Err("Unsupported system action".to_string()),
+    };
+
+    match status {
+        Ok(result) if result.success() => Ok(()),
+        Ok(result) => Err(format!("System action exited with status {result}")),
+        Err(error) => Err(format!("Failed to perform system action: {error}")),
+    }
+}
+
+#[tauri::command]
+fn request_automation_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"Finder\" to get name")
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("Automation permission was not granted".to_string())
+        };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+#[tauri::command]
+fn open_automation_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+            .status()
+            .map_err(|error| error.to_string())?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("Failed to open Automation settings".to_string())
+        };
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err("Automation settings are only available on macOS".to_string())
+}
+
+#[tauri::command]
 fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, String> {
     use sysinfo::Disks;
     use tauri::Manager;
@@ -730,7 +843,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             greet, test_ytdlp, test_aria2c, test_ffmpeg, open_file, show_in_folder,
-            start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata, update_dock_badge, set_prevent_sleep, get_free_space
+            start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,
+            update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
+            request_automation_permission, open_automation_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

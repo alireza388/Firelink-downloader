@@ -11,6 +11,18 @@ export interface SiteLogin {
 export type AppFontSize = 'small' | 'standard' | 'large';
 export type ListRowDensity = 'compact' | 'standard' | 'relaxed';
 export type SettingsTab = 'downloads' | 'lookandfeel' | 'network' | 'locations' | 'sitelogins' | 'power' | 'engine' | 'integrations' | 'about';
+export type ActiveView = 'downloads' | 'settings' | 'scheduler' | 'speedLimiter';
+export type PostQueueAction = 'none' | 'sleep' | 'restart' | 'shutdown';
+
+export interface SchedulerSettings {
+  enabled: boolean;
+  startTime: string;
+  stopTimeEnabled: boolean;
+  stopTime: string;
+  everyday: boolean;
+  selectedDays: number[];
+  postQueueAction: PostQueueAction;
+}
 
 export interface SettingsState {
   theme: 'dark' | 'light' | 'system' | 'dracula' | 'nord';
@@ -18,8 +30,13 @@ export interface SettingsState {
   maxConcurrentDownloads: number;
   globalSpeedLimit: string;
   isSidebarVisible: boolean;
-  activeView: 'downloads' | 'settings';
+  activeView: ActiveView;
   activeSettingsTab: SettingsTab;
+  scheduler: SchedulerSettings;
+  schedulerRunning: boolean;
+  schedulerLastStartKey: string;
+  schedulerLastStopKey: string;
+  lastCustomSpeedLimitKiB: number;
 
   // Replicated SwiftUI App Settings
   perServerConnections: number;
@@ -45,8 +62,13 @@ export interface SettingsState {
   setDefaultDownloadPath: (path: string) => void;
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
-  setActiveView: (view: 'downloads' | 'settings') => void;
+  setActiveView: (view: ActiveView) => void;
   setActiveSettingsTab: (tab: SettingsTab) => void;
+  setScheduler: (settings: SchedulerSettings) => void;
+  setSchedulerRunning: (running: boolean) => void;
+  setSchedulerLastStartKey: (key: string) => void;
+  setSchedulerLastStopKey: (key: string) => void;
+  setLastCustomSpeedLimitKiB: (limit: number) => void;
   toggleSidebar: () => void;
 
   setPerServerConnections: (count: number) => void;
@@ -114,6 +136,19 @@ export const useSettingsStore = create<SettingsState>()(
       activeView: 'downloads',
       activeSettingsTab: 'downloads',
       isSidebarVisible: true,
+      scheduler: {
+        enabled: false,
+        startTime: '00:00',
+        stopTimeEnabled: false,
+        stopTime: '08:00',
+        everyday: true,
+        selectedDays: [0, 1, 2, 3, 4, 5, 6],
+        postQueueAction: 'none'
+      },
+      schedulerRunning: false,
+      schedulerLastStartKey: '',
+      schedulerLastStopKey: '',
+      lastCustomSpeedLimitKiB: 1024,
 
       // Replicated SwiftUI defaults
       perServerConnections: 16,
@@ -149,6 +184,11 @@ export const useSettingsStore = create<SettingsState>()(
       setGlobalSpeedLimit: (limit) => set({ globalSpeedLimit: limit }),
       setActiveView: (view) => set({ activeView: view }),
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
+      setScheduler: (scheduler) => set({ scheduler }),
+      setSchedulerRunning: (schedulerRunning) => set({ schedulerRunning }),
+      setSchedulerLastStartKey: (schedulerLastStartKey) => set({ schedulerLastStartKey }),
+      setSchedulerLastStopKey: (schedulerLastStopKey) => set({ schedulerLastStopKey }),
+      setLastCustomSpeedLimitKiB: (lastCustomSpeedLimitKiB) => set({ lastCustomSpeedLimitKiB }),
       toggleSidebar: () => set((state) => ({ isSidebarVisible: !state.isSidebarVisible })),
 
       setPerServerConnections: (perServerConnections) => set({ perServerConnections }),
@@ -187,6 +227,10 @@ export const useSettingsStore = create<SettingsState>()(
         globalSpeedLimit: state.globalSpeedLimit,
         isSidebarVisible: state.isSidebarVisible,
         activeSettingsTab: state.activeSettingsTab,
+        scheduler: state.scheduler,
+        schedulerLastStartKey: state.schedulerLastStartKey,
+        schedulerLastStopKey: state.schedulerLastStopKey,
+        lastCustomSpeedLimitKiB: state.lastCustomSpeedLimitKiB,
         
         perServerConnections: state.perServerConnections,
         maxAutomaticRetries: state.maxAutomaticRetries,

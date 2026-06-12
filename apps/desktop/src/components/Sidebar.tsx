@@ -5,7 +5,7 @@ import {
   List, CalendarClock, Gauge, Settings, Plus
 } from 'lucide-react';
 import { useDownloadStore, DownloadCategory } from '../store/useDownloadStore';
-import { useSettingsStore } from '../store/useSettingsStore';
+import { ActiveView, useSettingsStore } from '../store/useSettingsStore';
 import { WindowDragRegion } from './WindowDragRegion';
 
 export type SidebarFilter = 'all' | 'active' | 'completed' | 'unfinished' | DownloadCategory | 'settings';
@@ -57,6 +57,22 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     );
   };
 
+  const ToolItem = ({ icon: Icon, label, view }: { icon: any; label: string; view: ActiveView }) => {
+    const isSelected = activeView === view;
+    return (
+      <button
+        type="button"
+        onClick={() => useSettingsStore.getState().setActiveView(view)}
+        className={`flex w-full items-center px-2.5 py-1.5 rounded-lg text-[13px] text-left cursor-default transition-colors mb-0.5 ${
+          isSelected ? 'bg-accent text-white font-medium' : 'text-text-primary hover:bg-item-hover'
+        }`}
+      >
+        <Icon className={`w-4 h-4 mr-2 ${isSelected ? 'text-white' : 'text-text-secondary'}`} strokeWidth={isSelected ? 2.25 : 2} />
+        <span>{label}</span>
+      </button>
+    );
+  };
+
   return (
     <aside className="w-[220px] min-w-[190px] max-w-[260px] bg-sidebar-bg border-r border-border-color flex flex-col relative shrink-0">
       <WindowDragRegion />
@@ -94,12 +110,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
         <section>
           <div className="text-[11px] font-semibold text-text-muted px-2.5 mb-1.5">Tools</div>
-          <div className="flex items-center px-2.5 py-1.5 rounded-lg text-[13px] text-text-primary hover:bg-item-hover cursor-default transition-colors mb-0.5">
-            <CalendarClock className="w-4 h-4 mr-2 text-text-secondary" strokeWidth={2} /><span>Scheduler</span>
-          </div>
-          <div className="flex items-center px-2.5 py-1.5 rounded-lg text-[13px] text-text-primary hover:bg-item-hover cursor-default transition-colors">
-            <Gauge className="w-4 h-4 mr-2 text-text-secondary" strokeWidth={2} /><span>Speed Limiter</span>
-          </div>
+          <ToolItem icon={CalendarClock} label="Scheduler" view="scheduler" />
+          <ToolItem icon={Gauge} label="Speed Limiter" view="speedLimiter" />
         </section>
       </div>
 

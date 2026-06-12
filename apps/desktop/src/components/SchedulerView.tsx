@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  CheckCircle2, Clock3, List, LockKeyhole, Moon,
+  CheckCircle2, Clock3, List, Moon, LockKeyhole,
   Pause, Play, Power, RotateCcw, Save
 } from 'lucide-react';
 import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/useSettingsStore';
-import { useDownloadStore } from '../store/useDownloadStore';
+import { useDownloadStore, MAIN_QUEUE_ID } from '../store/useDownloadStore';
 import { WindowDragRegion } from './WindowDragRegion';
 
 const days = [
@@ -97,7 +97,7 @@ export default function SchedulerView() {
   };
 
   const runNow = async () => {
-    const count = await useDownloadStore.getState().startMainQueue();
+    const count = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
     if (count > 0) {
       useSettingsStore.getState().setSchedulerRunning(true);
       setToast(`Started ${count} download${count === 1 ? '' : 's'}`);
@@ -107,7 +107,7 @@ export default function SchedulerView() {
   };
 
   const pauseNow = async () => {
-    const count = await useDownloadStore.getState().pauseMainQueue();
+    const count = await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
     useSettingsStore.getState().setSchedulerRunning(false);
     setToast(count > 0 ? `Paused ${count} active download${count === 1 ? '' : 's'}` : 'No active downloads');
   };

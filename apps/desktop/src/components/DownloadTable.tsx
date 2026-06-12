@@ -44,6 +44,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const filteredDownloads = downloads.filter((d: DownloadItem) => {
+    if (filter.startsWith('queue:')) {
+      return d.queueId === filter.replace('queue:', '');
+    }
     switch (filter) {
       case 'all': return true;
       case 'active': return d.status === 'downloading';
@@ -54,6 +57,11 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   });
 
   const getFilterTitle = () => {
+    if (filter.startsWith('queue:')) {
+      const qid = filter.replace('queue:', '');
+      const queue = useDownloadStore.getState().queues.find(q => q.id === qid);
+      return queue ? queue.name : 'Unknown Queue';
+    }
     switch (filter) {
       case 'all': return 'All Downloads';
       case 'active': return 'Active';

@@ -25,9 +25,16 @@ export default function SettingsView() {
   const activeTab = settings.activeSettingsTab;
 
   // Local state for versions
-  const [aria2Version, setAria2Version] = useState('Checking...');
-  const [ytdlpVersion, setYtdlpVersion] = useState('Checking...');
-  const [ffmpegVersion, setFfmpegVersion] = useState('Checking...');
+  const [aria2Version, setAria2Version] = useState<string>('Checking...');
+  const [ytdlpVersion, setYtdlpVersion] = useState<string>('Checking...');
+  const [ffmpegVersion, setFfmpegVersion] = useState<string>('Checking...');
+  const [denoVersion, setDenoVersion] = useState<string>('Checking...');
+
+  const getEngineStatus = (v: string) => {
+    if (v === 'Checking...') return <span className="text-text-muted font-medium">Checking...</span>;
+    if (v.startsWith('Error')) return <span className="text-red-500 font-medium">Error / Missing</span>;
+    return <span className="text-green-500 font-medium">Ready</span>;
+  };
 
   // Local state for adding site login
   const [loginPattern, setLoginPattern] = useState('');
@@ -59,6 +66,10 @@ export default function SettingsView() {
       invoke<string>('test_ffmpeg')
         .then(v => setFfmpegVersion(v))
         .catch(e => setFfmpegVersion('Error: ' + e));
+
+      invoke<string>('test_deno')
+        .then(v => setDenoVersion(v))
+        .catch(e => setDenoVersion('Error: ' + e));
     }
   }, [settings.activeView, activeTab]);
 
@@ -626,7 +637,7 @@ export default function SettingsView() {
                   </div>
                   <div className="grid grid-cols-[120px_1fr] text-[13px] items-center">
                     <span className="text-text-secondary">Status:</span>
-                    <span className="text-green-500 font-medium">Ready</span>
+                    {getEngineStatus(aria2Version)}
                   </div>
                 </div>
 
@@ -634,17 +645,23 @@ export default function SettingsView() {
                   <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
                     <Terminal size={14} className="text-orange-500" /> Media Extractors
                   </h4>
-                  <div className="grid grid-cols-[120px_1fr] text-[13px] pb-1">
+                  
+                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
                     <span className="text-text-secondary font-semibold">yt-dlp:</span>
-                    <span className="font-mono text-xs text-text-muted select-all">{ytdlpVersion}</span>
+                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{ytdlpVersion}</span>
+                    {getEngineStatus(ytdlpVersion)}
                   </div>
-                  <div className="grid grid-cols-[120px_1fr] text-[13px] pb-1">
+                  
+                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
                     <span className="text-text-secondary font-semibold">FFmpeg:</span>
-                    <span className="font-mono text-xs text-text-muted select-all">{ffmpegVersion}</span>
+                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{ffmpegVersion}</span>
+                    {getEngineStatus(ffmpegVersion)}
                   </div>
-                  <div className="grid grid-cols-[120px_1fr] text-[13px] pb-1">
+                  
+                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
                     <span className="text-text-secondary font-semibold">Deno:</span>
-                    <span className="text-red-500 text-xs font-semibold">Not Installed (Local Extension Only)</span>
+                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{denoVersion}</span>
+                    {getEngineStatus(denoVersion)}
                   </div>
 
                   <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px] border-t border-border-modal/50 pt-3 mt-2">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useDownloadStore } from '../store/useDownloadStore';
+import { useDownloadStore, MAIN_QUEUE_ID, getSiteLogin } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { DownloadCategory } from '../store/useDownloadStore';
 import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music } from 'lucide-react';
@@ -249,8 +249,10 @@ const isMediaUrl = (url: string) => {
 
 
 export const AddDownloadsModal = () => {
-  const { isAddModalOpen, toggleAddModal, addDownload } = useDownloadStore();
+  const { isAddModalOpen, toggleAddModal, addDownload, queues } = useDownloadStore();
   const { defaultDownloadPath } = useSettingsStore();
+
+  const [selectedQueueId, setSelectedQueueId] = useState<string>(MAIN_QUEUE_ID);
 
   const [urls, setUrls] = useState('');
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
@@ -281,6 +283,7 @@ export const AddDownloadsModal = () => {
       setUrls('');
       setParsedItems([]);
       setSelectedItemIndex(null);
+      setSelectedQueueId(queues.find(q => q.isMain)?.id || MAIN_QUEUE_ID);
     }
   }, [isAddModalOpen, defaultDownloadPath]);
 
@@ -319,10 +322,17 @@ export const AddDownloadsModal = () => {
         try {
           new URL(url);
           if (isMediaUrl(url)) {
-            const { mediaCookieSource } = useSettingsStore.getState();
+            const settingsStore = useSettingsStore.getState();
+            const { mediaCookieSource } = settingsStore;
             const browserArg = mediaCookieSource !== 'none' ? mediaCookieSource : null;
+            const login = getSiteLogin(url, settingsStore);
 
-            const jsonStr = await invoke<string>('fetch_media_metadata', { url, cookieBrowser: browserArg });
+            const jsonStr = await invoke<string>('fetch_media_metadata', { 
+              url, 
+              cookieBrowser: browserArg,
+              username: login?.username || null,
+              password: login?.password || null
+            });
             const mediaData = parseMediaFormats(jsonStr);
             if (mediaData && mediaData.formats.length > 0) {
               updatedItems[i] = {
@@ -339,7 +349,13 @@ export const AddDownloadsModal = () => {
               throw new Error("Invalid media metadata or no formats found");
             }
           } else {
-            const meta = await invoke<{filename: string, size: string, size_bytes: number}>('fetch_metadata', { url });
+            const settingsStore = useSettingsStore.getState();
+            const login = getSiteLogin(url, settingsStore);
+            const meta = await invoke<{filename: string, size: string, size_bytes: number}>('fetch_metadata', { 
+              url,
+              username: login?.username || null,
+              password: login?.password || null
+            });
             updatedItems[i] = { url, file: meta.filename, size: meta.size, sizeBytes: meta.size_bytes, status: 'Ready' };
           }
           if (firstReadyIndex === null) firstReadyIndex = i;
@@ -423,7 +439,8 @@ export const AddDownloadsModal = () => {
           headers: headers.trim() || undefined,
           destination: finalLocation,
           isMedia: item.isMedia,
-          mediaFormatSelector: formatSelector
+          mediaFormatSelector: formatSelector,
+          queueId: selectedQueueId
         });
       } catch (e) {
         console.error("Invalid URL or failed to add:", e);
@@ -627,9 +644,18 @@ export const AddDownloadsModal = () => {
                 <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
                   <Settings size={16} className="text-blue-500" /> Transfer Settings
                 </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-text-secondary font-medium">Connections per File</label>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-text-secondary font-medium">Target Queue</label>
+                      <select value={selectedQueueId} onChange={e=>setSelectedQueueId(e.target.value)} className="w-32 bg-bg-input border border-border-modal rounded-md px-2 py-1 text-xs text-text-primary focus:border-blue-500 focus:outline-none">
+                        {queues.map(q => (
+                          <option key={q.id} value={q.id}>{q.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-text-secondary font-medium">Connections per File</label>
                     <div className="flex items-center gap-2">
                       <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="w-24 accent-blue-500" disabled={parsedItems.some(i => i.isMedia)} />
                       <span className="text-xs text-text-primary font-mono w-4 text-right">{connections}</span>

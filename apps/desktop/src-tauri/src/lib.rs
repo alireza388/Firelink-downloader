@@ -15,7 +15,7 @@ struct MetadataResponse {
 }
 
 #[tauri::command]
-async fn fetch_metadata(url: String, user_agent: Option<String>) -> Result<MetadataResponse, String> {
+async fn fetch_metadata(url: String, user_agent: Option<String>, username: Option<String>, password: Option<String>) -> Result<MetadataResponse, String> {
     let mut builder = reqwest::Client::builder();
     if let Some(ua) = user_agent {
         if !ua.is_empty() {
@@ -29,10 +29,22 @@ async fn fetch_metadata(url: String, user_agent: Option<String>) -> Result<Metad
 
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let mut res = client.head(&url).send().await.map_err(|e| e.to_string())?;
+    let mut head_req = client.head(&url);
+    if let Some(ref user) = username {
+        if !user.is_empty() {
+            head_req = head_req.basic_auth(user, password.as_deref());
+        }
+    }
+    let mut res = head_req.send().await.map_err(|e| e.to_string())?;
 
     if !res.status().is_success() {
-        res = client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let mut get_req = client.get(&url);
+        if let Some(ref user) = username {
+            if !user.is_empty() {
+                get_req = get_req.basic_auth(user, password.as_deref());
+            }
+        }
+        res = get_req.send().await.map_err(|e| e.to_string())?;
     }
 
     let mut filename = String::new();
@@ -81,7 +93,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>) -> Result<Metad
 }
 
 #[tauri::command]
-async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>) -> Result<String, String> {
+async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<String, String> {
     println!("fetch_media_metadata called for: {}", url);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
     let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
@@ -100,6 +112,16 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
             cmd.arg("--cookies-from-browser").arg(&browser);
+        }
+    }
+    if let Some(user) = username {
+        if !user.is_empty() {
+            cmd.arg("--username").arg(&user);
+        }
+    }
+    if let Some(pass) = password {
+        if !pass.is_empty() {
+            cmd.arg("--password").arg(&pass);
         }
     }
 
@@ -172,8 +194,9 @@ async fn test_aria2c(app_handle: tauri::AppHandle) -> Result<String, String> {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         // aria2c prints a lot, just get the first line for the version
         let first_line = text.lines().next().unwrap_or("").to_string();
-        println!("aria2c output: {}", first_line);
-        Ok(first_line)
+        let clean = first_line.replace("aria2 version ", "");
+        println!("aria2c output: {}", clean);
+        Ok(clean)
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
         println!("aria2c error output: {}", err);
@@ -200,12 +223,44 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let first_line = text.lines().next().unwrap_or("").to_string();
-        println!("ffmpeg output: {}", first_line);
-        Ok(first_line)
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
+        let clean = parts.get(2).unwrap_or(&first_line.as_str()).split('-').next().unwrap_or("").to_string();
+        println!("ffmpeg output: {}", clean);
+        Ok(clean)
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
         println!("ffmpeg error output: {}", err);
         Err(format!("ffmpeg error: {}", err))
+    }
+}
+
+#[tauri::command]
+async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("test_deno called!");
+    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
+    let deno_path = resource_dir.join("binaries").join("deno");
+    println!("Resolved deno path: {:?}", deno_path);
+
+    let output = Command::new(&deno_path)
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            println!("Failed to execute: {}", e);
+            format!("Failed to execute deno: {}", e)
+        })?;
+
+    println!("deno execution finished with status: {}", output.status);
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let first_line = text.lines().next().unwrap_or("").to_string();
+        let parts: Vec<&str> = first_line.split_whitespace().collect();
+        let clean = parts.get(1).unwrap_or(&first_line.as_str()).to_string();
+        println!("deno output: {}", clean);
+        Ok(clean)
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        println!("deno error output: {}", err);
+        Err(format!("deno error: {}", err))
     }
 }
 
@@ -363,11 +418,13 @@ async fn start_download(
     if let Some(user) = username {
         if !user.is_empty() {
             cmd.arg(format!("--http-user={}", user));
+            cmd.arg(format!("--ftp-user={}", user));
         }
     }
     if let Some(pass) = password {
         if !pass.is_empty() {
             cmd.arg(format!("--http-passwd={}", pass));
+            cmd.arg(format!("--ftp-passwd={}", pass));
         }
     }
     if let Some(hdr) = headers {
@@ -471,6 +528,8 @@ async fn start_media_download(
     filename: String,
     format_selector: Option<String>,
     speed_limit: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -534,6 +593,17 @@ async fn start_media_download(
             } else {
                 cmd.arg("--merge-output-format").arg("mkv");
             }
+        }
+    }
+
+    if let Some(user) = username {
+        if !user.is_empty() {
+            cmd.arg("--username").arg(&user);
+        }
+    }
+    if let Some(pass) = password {
+        if !pass.is_empty() {
+            cmd.arg("--password").arg(&pass);
         }
     }
 
@@ -842,7 +912,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            greet, test_ytdlp, test_aria2c, test_ffmpeg, open_file, show_in_folder,
+            greet, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
             start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings

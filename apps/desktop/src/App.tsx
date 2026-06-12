@@ -5,7 +5,7 @@ import { AddDownloadsModal } from "./components/AddDownloadsModal";
 import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
 import { listen } from "@tauri-apps/api/event";
-import { useDownloadStore } from "./store/useDownloadStore";
+import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { invoke } from "@tauri-apps/api/core";
@@ -68,7 +68,7 @@ function App() {
         const triggerKey = `${dateKey}-${currentTime}`;
         if (state.schedulerLastStartKey !== triggerKey) {
           state.setSchedulerLastStartKey(triggerKey);
-          const started = await useDownloadStore.getState().startMainQueue();
+          const started = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
           state.setSchedulerRunning(started > 0);
         }
       }
@@ -77,7 +77,7 @@ function App() {
         const triggerKey = `${dateKey}-${currentTime}`;
         if (state.schedulerLastStopKey !== triggerKey) {
           state.setSchedulerLastStopKey(triggerKey);
-          await useDownloadStore.getState().pauseMainQueue();
+          await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
           state.setSchedulerRunning(false);
         }
       }

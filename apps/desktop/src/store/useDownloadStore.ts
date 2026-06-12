@@ -9,7 +9,7 @@ const getProxyArgs = (settings: ReturnType<typeof useSettingsStore.getState>) =>
   return null;
 };
 
-const getSiteLogin = (url: string, settings: ReturnType<typeof useSettingsStore.getState>) => {
+export const getSiteLogin = (url: string, settings: ReturnType<typeof useSettingsStore.getState>) => {
   try {
     const urlObj = new URL(url);
     const host = urlObj.hostname.toLowerCase();
@@ -79,6 +79,14 @@ const effectiveSpeedLimit = (
 export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'failed' | 'queued';
 export type DownloadCategory = 'Documents' | 'Images' | 'Audio' | 'Video' | 'Apps' | 'Archives' | 'Other';
 
+export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
+
+export interface Queue {
+  id: string;
+  name: string;
+  isMain: boolean;
+}
+
 export interface DownloadItem {
   id: string;
   url: string;
@@ -99,10 +107,12 @@ export interface DownloadItem {
   destination?: string;
   isMedia?: boolean;
   mediaFormatSelector?: string;
+  queueId: string;
 }
 
 interface DownloadState {
   downloads: DownloadItem[];
+  queues: Queue[];
   isAddModalOpen: boolean;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
@@ -113,13 +123,17 @@ interface DownloadState {
   clearFinished: () => void;
   redownload: (id: string) => void;
   processQueue: () => Promise<void>;
-  startMainQueue: () => Promise<number>;
-  pauseMainQueue: () => Promise<number>;
+  startQueue: (queueId: string) => Promise<number>;
+  pauseQueue: (queueId: string) => Promise<number>;
+  addQueue: (name: string) => void;
+  renameQueue: (id: string, name: string) => void;
+  removeQueue: (id: string) => void;
   restartActiveDownloads: () => Promise<number>;
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
   downloads: [],
+  queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
   isAddModalOpen: false,
   selectedPropertiesDownloadId: null,
   toggleAddModal: (isOpen) => set({ isAddModalOpen: isOpen }),
@@ -184,9 +198,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }));
     get().processQueue();
   },
-  startMainQueue: async () => {
+  startQueue: async (queueId) => {
     const runnableIds = get().downloads
-      .filter(item => item.status === 'queued' || item.status === 'paused' || item.status === 'failed')
+      .filter(item => item.queueId === queueId && (item.status === 'queued' || item.status === 'paused' || item.status === 'failed'))
       .map(item => item.id);
 
     if (runnableIds.length === 0) return 0;
@@ -201,9 +215,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     await get().processQueue();
     return runnableIds.length;
   },
-  pauseMainQueue: async () => {
+  pauseQueue: async (queueId) => {
     const activeIds = get().downloads
-      .filter(item => item.status === 'downloading')
+      .filter(item => item.queueId === queueId && item.status === 'downloading')
       .map(item => item.id);
 
     if (activeIds.length === 0) return 0;
@@ -218,6 +232,20 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
     syncSystemIntegrations();
     return activeIds.length;
+  },
+  addQueue: (name) => {
+    set((state) => ({ queues: [...state.queues, { id: crypto.randomUUID(), name, isMain: false }] }));
+  },
+  renameQueue: (id, name) => {
+    set((state) => ({
+      queues: state.queues.map(q => q.id === id ? { ...q, name } : q)
+    }));
+  },
+  removeQueue: (id) => {
+    set((state) => ({
+      queues: state.queues.filter(q => q.id !== id || q.isMain),
+      downloads: state.downloads.map(d => d.queueId === id ? { ...d, queueId: MAIN_QUEUE_ID } : d)
+    }));
   },
   restartActiveDownloads: async () => {
     const activeIds = get().downloads
@@ -281,7 +309,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             destination: destPath,
             filename: item.fileName,
             formatSelector: item.mediaFormatSelector || null,
-            speedLimit
+            speedLimit,
+            username: item.username || (login ? login.username : null),
+            password: item.password || (login ? login.password : null)
           });
         } else {
           const speedLimit = effectiveSpeedLimit(

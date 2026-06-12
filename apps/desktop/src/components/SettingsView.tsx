@@ -116,17 +116,27 @@ export default function SettingsView() {
     }
   };
 
-  const handleAddLogin = () => {
+  const handleAddLogin = async () => {
     if (!loginPattern.trim() || !loginUser.trim()) {
       setLoginError("Please enter a URL pattern and a username.");
       return;
     }
     const id = crypto.randomUUID();
+    
+    if (loginPass) {
+      try {
+        await invoke('set_keychain_password', { id, password: loginPass });
+      } catch (e) {
+        console.error("Failed to save password to keychain:", e);
+        setLoginError("Failed to save password securely.");
+        return;
+      }
+    }
+
     settings.addSiteLogin({
       id,
       urlPattern: loginPattern.trim(),
-      username: loginUser.trim(),
-      password: loginPass
+      username: loginUser.trim()
     });
     setLoginPattern('');
     setLoginUser('');
@@ -534,7 +544,12 @@ export default function SettingsView() {
                         <p className="text-text-secondary text-xs">User: {login.username}</p>
                       </div>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
+                          try {
+                            await invoke('delete_keychain_password', { id: login.id });
+                          } catch (e) {
+                            console.warn("Could not delete password from keychain:", e);
+                          }
                           settings.removeSiteLogin(login.id);
                           showToast("Deleted credential");
                         }}

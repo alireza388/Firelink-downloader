@@ -5,7 +5,6 @@ export interface SiteLogin {
   id: string;
   urlPattern: string;
   username: string;
-  password?: string;
 }
 
 export type AppFontSize = 'small' | 'standard' | 'large';

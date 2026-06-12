@@ -291,6 +291,14 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       try {
         const settings = useSettingsStore.getState();
         const login = getSiteLogin(item.url, settings);
+        let keychainPassword = null;
+        if (login) {
+          try {
+            keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+          } catch (e) {
+            console.warn("Could not fetch keychain password for login:", e);
+          }
+        }
         
         const destPath = item.destination || 
                          (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
@@ -311,7 +319,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             formatSelector: item.mediaFormatSelector || null,
             speedLimit,
             username: item.username || (login ? login.username : null),
-            password: item.password || (login ? login.password : null)
+            password: item.password || keychainPassword
           });
         } else {
           const speedLimit = effectiveSpeedLimit(
@@ -327,7 +335,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             connections: item.connections || settings.perServerConnections || null,
             speedLimit,
             username: item.username || (login ? login.username : null),
-            password: item.password || (login ? login.password : null),
+            password: item.password || keychainPassword,
             headers: item.headers || null,
             userAgent: settings.customUserAgent || null,
             maxTries: settings.maxAutomaticRetries,

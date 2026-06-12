@@ -902,6 +902,26 @@ fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, 
     }
 }
 
+#[tauri::command]
+fn set_keychain_password(id: String, password: String) -> Result<(), String> {
+    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
+    entry.set_password(&password).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_keychain_password(id: String) -> Result<String, String> {
+    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
+    entry.get_password().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_keychain_password(id: String) -> Result<(), String> {
+    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
+    let _ = entry.delete_credential(); // Ignore error if it doesn't exist
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -915,7 +935,8 @@ pub fn run() {
             greet, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
             start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
-            request_automation_permission, open_automation_settings
+            request_automation_permission, open_automation_settings,
+            set_keychain_password, get_keychain_password, delete_keychain_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -326,12 +326,20 @@ export const AddDownloadsModal = () => {
             const { mediaCookieSource } = settingsStore;
             const browserArg = mediaCookieSource !== 'none' ? mediaCookieSource : null;
             const login = getSiteLogin(url, settingsStore);
+            let keychainPassword = null;
+            if (login) {
+              try {
+                keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+              } catch (e) {
+                console.warn("Could not fetch keychain password:", e);
+              }
+            }
 
             const jsonStr = await invoke<string>('fetch_media_metadata', { 
               url, 
               cookieBrowser: browserArg,
               username: login?.username || null,
-              password: login?.password || null
+              password: keychainPassword
             });
             const mediaData = parseMediaFormats(jsonStr);
             if (mediaData && mediaData.formats.length > 0) {
@@ -351,10 +359,18 @@ export const AddDownloadsModal = () => {
           } else {
             const settingsStore = useSettingsStore.getState();
             const login = getSiteLogin(url, settingsStore);
+            let keychainPassword = null;
+            if (login) {
+              try {
+                keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+              } catch (e) {
+                console.warn("Could not fetch keychain password:", e);
+              }
+            }
             const meta = await invoke<{filename: string, size: string, size_bytes: number}>('fetch_metadata', { 
               url,
               username: login?.username || null,
-              password: login?.password || null
+              password: keychainPassword
             });
             updatedItems[i] = { url, file: meta.filename, size: meta.size, sizeBytes: meta.size_bytes, status: 'Ready' };
           }

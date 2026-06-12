@@ -8,6 +8,10 @@ export interface SiteLogin {
   password?: string;
 }
 
+export type AppFontSize = 'small' | 'standard' | 'large';
+export type ListRowDensity = 'compact' | 'standard' | 'relaxed';
+export type SettingsTab = 'downloads' | 'lookandfeel' | 'network' | 'locations' | 'sitelogins' | 'power' | 'engine' | 'integrations' | 'about';
+
 export interface SettingsState {
   theme: 'dark' | 'light' | 'system' | 'dracula' | 'nord';
   defaultDownloadPath: string;
@@ -15,14 +19,17 @@ export interface SettingsState {
   globalSpeedLimit: string;
   isSidebarVisible: boolean;
   activeView: 'downloads' | 'settings';
+  activeSettingsTab: SettingsTab;
 
   // Replicated SwiftUI App Settings
   perServerConnections: number;
   maxAutomaticRetries: number;
   showNotifications: boolean;
   playCompletionSound: boolean;
-  appFontSize: 'standard' | 'large' | 'extra-large';
-  listRowDensity: 'compact' | 'standard' | 'spacious';
+  appFontSize: AppFontSize;
+  listRowDensity: ListRowDensity;
+  showDockBadge: boolean;
+  showMenuBarIcon: boolean;
   proxyMode: 'none' | 'system' | 'custom';
   proxyHost: string;
   proxyPort: number;
@@ -39,14 +46,17 @@ export interface SettingsState {
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
   setActiveView: (view: 'downloads' | 'settings') => void;
+  setActiveSettingsTab: (tab: SettingsTab) => void;
   toggleSidebar: () => void;
 
   setPerServerConnections: (count: number) => void;
   setMaxAutomaticRetries: (count: number) => void;
   setShowNotifications: (show: boolean) => void;
   setPlayCompletionSound: (play: boolean) => void;
-  setAppFontSize: (size: 'standard' | 'large' | 'extra-large') => void;
-  setListRowDensity: (density: 'compact' | 'standard' | 'spacious') => void;
+  setAppFontSize: (size: AppFontSize) => void;
+  setListRowDensity: (density: ListRowDensity) => void;
+  setShowDockBadge: (show: boolean) => void;
+  setShowMenuBarIcon: (show: boolean) => void;
   setProxyMode: (mode: 'none' | 'system' | 'custom') => void;
   setProxyHost: (host: string) => void;
   setProxyPort: (port: number) => void;
@@ -102,6 +112,7 @@ export const useSettingsStore = create<SettingsState>()(
       maxConcurrentDownloads: 3,
       globalSpeedLimit: '',
       activeView: 'downloads',
+      activeSettingsTab: 'downloads',
       isSidebarVisible: true,
 
       // Replicated SwiftUI defaults
@@ -111,6 +122,8 @@ export const useSettingsStore = create<SettingsState>()(
       playCompletionSound: true,
       appFontSize: 'standard',
       listRowDensity: 'standard',
+      showDockBadge: true,
+      showMenuBarIcon: true,
       proxyMode: 'none',
       proxyHost: '',
       proxyPort: 8080,
@@ -135,6 +148,7 @@ export const useSettingsStore = create<SettingsState>()(
       setMaxConcurrentDownloads: (max) => set({ maxConcurrentDownloads: max }),
       setGlobalSpeedLimit: (limit) => set({ globalSpeedLimit: limit }),
       setActiveView: (view) => set({ activeView: view }),
+      setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
       toggleSidebar: () => set((state) => ({ isSidebarVisible: !state.isSidebarVisible })),
 
       setPerServerConnections: (perServerConnections) => set({ perServerConnections }),
@@ -143,6 +157,8 @@ export const useSettingsStore = create<SettingsState>()(
       setPlayCompletionSound: (playCompletionSound) => set({ playCompletionSound }),
       setAppFontSize: (appFontSize) => set({ appFontSize }),
       setListRowDensity: (listRowDensity) => set({ listRowDensity }),
+      setShowDockBadge: (showDockBadge) => set({ showDockBadge }),
+      setShowMenuBarIcon: (showMenuBarIcon) => set({ showMenuBarIcon }),
       setProxyMode: (proxyMode) => set({ proxyMode }),
       setProxyHost: (proxyHost) => set({ proxyHost }),
       setProxyPort: (proxyPort) => set({ proxyPort }),
@@ -170,6 +186,7 @@ export const useSettingsStore = create<SettingsState>()(
         maxConcurrentDownloads: state.maxConcurrentDownloads,
         globalSpeedLimit: state.globalSpeedLimit,
         isSidebarVisible: state.isSidebarVisible,
+        activeSettingsTab: state.activeSettingsTab,
         
         perServerConnections: state.perServerConnections,
         maxAutomaticRetries: state.maxAutomaticRetries,
@@ -177,6 +194,8 @@ export const useSettingsStore = create<SettingsState>()(
         playCompletionSound: state.playCompletionSound,
         appFontSize: state.appFontSize,
         listRowDensity: state.listRowDensity,
+        showDockBadge: state.showDockBadge,
+        showMenuBarIcon: state.showMenuBarIcon,
         proxyMode: state.proxyMode,
         proxyHost: state.proxyHost,
         proxyPort: state.proxyPort,
@@ -191,6 +210,8 @@ export const useSettingsStore = create<SettingsState>()(
       merge: (persistedState: any, currentState) => ({
         ...currentState,
         ...persistedState,
+        appFontSize: persistedState?.appFontSize === 'extra-large' ? 'large' : (persistedState?.appFontSize || currentState.appFontSize),
+        listRowDensity: persistedState?.listRowDensity === 'spacious' ? 'relaxed' : (persistedState?.listRowDensity || currentState.listRowDensity),
         downloadDirectories: (persistedState && typeof persistedState === 'object' && persistedState.downloadDirectories)
           ? persistedState.downloadDirectories
           : currentState.downloadDirectories,

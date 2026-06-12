@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useDownloadStore } from "./store/useDownloadStore";
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { invoke } from "@tauri-apps/api/core";
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -16,10 +17,16 @@ function App() {
   const isSidebarVisible = useSettingsStore(state => state.isSidebarVisible);
   const activeView = useSettingsStore(state => state.activeView);
   const appFontSize = useSettingsStore(state => state.appFontSize);
+  const showDockBadge = useSettingsStore(state => state.showDockBadge);
+  const activeDownloadCount = useDownloadStore(state => state.downloads.filter(download => download.status === 'downloading').length);
 
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
   }, [appFontSize]);
+
+  useEffect(() => {
+    invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
+  }, [showDockBadge, activeDownloadCount]);
 
   useEffect(() => {
     // Request notification permissions

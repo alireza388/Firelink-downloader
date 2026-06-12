@@ -32,7 +32,7 @@ const getSiteLogin = (url: string, settings: ReturnType<typeof useSettingsStore.
 const syncSystemIntegrations = () => {
   const settings = useSettingsStore.getState();
   const activeCount = useDownloadStore.getState().downloads.filter(d => d.status === 'downloading').length;
-  invoke('update_dock_badge', { count: activeCount }).catch(() => {});
+  invoke('update_dock_badge', { count: settings.showDockBadge ? activeCount : 0 }).catch(() => {});
   if (settings.preventsSleepWhileDownloading) {
     invoke('set_prevent_sleep', { prevent: activeCount > 0 }).catch(() => {});
   } else {

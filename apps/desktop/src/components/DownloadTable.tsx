@@ -5,7 +5,7 @@ import { SidebarFilter } from './Sidebar';
 import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { WindowDragRegion } from './WindowDragRegion';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -18,7 +18,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const getPaddingY = () => {
     switch (listRowDensity) {
       case 'compact': return 'py-1';
-      case 'spacious': return 'py-4';
+      case 'relaxed': return 'py-4';
       default: return 'py-3';
     }
   };
@@ -103,58 +103,54 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   return (
     <div className="flex-1 flex flex-col bg-main-bg h-full relative">
+      <div className="glass-panel shrink-0 border-b border-border-color/60">
+        <WindowDragRegion className={!isSidebarVisible ? 'pl-24' : ''} />
 
-      {/* Modern Toolbar */}
-      <div
-        className={`flex px-6 py-4 items-center glass-panel z-10 sticky top-0 ${!isSidebarVisible ? 'pl-24' : ''}`}
-        onPointerDown={(e) => {
-          if (e.button === 0 && (e.target as HTMLElement).closest('.no-drag') === null) {
-            getCurrentWindow().startDragging();
-          }
-        }}
-      >
-        <button
-          onClick={toggleSidebar}
-          className="no-drag mr-4 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-item-hover transition-colors"
-          title="Toggle Sidebar"
-        >
-          <PanelLeft size={18} strokeWidth={2} />
-        </button>
-        <h2 className="text-[15px] font-bold mr-auto text-text-primary tracking-tight cursor-default">{getFilterTitle()}</h2>
+        {/* Download Toolbar */}
+        <div className={`flex px-6 pb-4 items-center ${!isSidebarVisible ? 'pl-24' : ''}`}>
+          <button
+            onClick={toggleSidebar}
+            className="mr-4 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-item-hover transition-colors"
+            title="Toggle Sidebar"
+          >
+            <PanelLeft size={18} strokeWidth={2} />
+          </button>
+          <h2 className="text-[15px] font-bold mr-auto text-text-primary tracking-tight cursor-default">{getFilterTitle()}</h2>
 
-        <div className="flex gap-1.5 items-center no-drag">
-          <button
-            onClick={() => toggleAddModal(true)}
-            className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
-            title="Add Download"
-          >
-            <Plus size={16} strokeWidth={2} />
-          </button>
-          <button
-            onClick={() => {
-              filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
-            }}
-            className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
-            title="Resume All"
-          >
-            <Play size={16} fill="currentColor" className="opacity-90" />
-          </button>
-          <button
-            onClick={() => {
-              filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
-            }}
-            className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
-            title="Pause All"
-          >
-            <Pause size={16} fill="currentColor" className="opacity-90" />
-          </button>
-          <button
-            onClick={clearFinished}
-            className="p-1.5 rounded-md text-text-secondary hover:text-red-400 hover:bg-item-hover transition-all duration-200"
-            title="Clear Finished"
-          >
-            <Trash2 size={16} />
-          </button>
+          <div className="flex gap-1.5 items-center">
+            <button
+              onClick={() => toggleAddModal(true)}
+              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              title="Add Download"
+            >
+              <Plus size={16} strokeWidth={2} />
+            </button>
+            <button
+              onClick={() => {
+                filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
+              }}
+              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              title="Resume All"
+            >
+              <Play size={16} fill="currentColor" className="opacity-90" />
+            </button>
+            <button
+              onClick={() => {
+                filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
+              }}
+              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              title="Pause All"
+            >
+              <Pause size={16} fill="currentColor" className="opacity-90" />
+            </button>
+            <button
+              onClick={clearFinished}
+              className="p-1.5 rounded-md text-text-secondary hover:text-red-400 hover:bg-item-hover transition-all duration-200"
+              title="Clear Finished"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         </div>
       </div>
 

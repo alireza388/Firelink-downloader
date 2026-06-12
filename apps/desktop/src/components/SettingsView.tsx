@@ -1,17 +1,28 @@
 import { useState, useEffect } from 'react';
-import { useSettingsStore } from '../store/useSettingsStore';
+import { SettingsTab, useSettingsStore } from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
   Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { WindowDragRegion } from './WindowDragRegion';
 
-type TabType = 'downloads' | 'lookandfeel' | 'network' | 'locations' | 'sitelogins' | 'power' | 'engine' | 'integrations' | 'about';
+const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[] = [
+  { type: 'downloads', label: 'Downloads', icon: Download },
+  { type: 'lookandfeel', label: 'Look and feel', icon: Palette },
+  { type: 'network', label: 'Network', icon: Globe },
+  { type: 'locations', label: 'Locations', icon: Folder },
+  { type: 'sitelogins', label: 'Site Logins', icon: Key },
+  { type: 'power', label: 'Power', icon: Moon },
+  { type: 'engine', label: 'Engine', icon: Terminal },
+  { type: 'integrations', label: 'Integrations', icon: Puzzle },
+  { type: 'about', label: 'About', icon: Info },
+];
 
 export default function SettingsView() {
   const settings = useSettingsStore();
-  const [activeTab, setActiveTab] = useState<TabType>('downloads');
+  const activeTab = settings.activeSettingsTab;
 
   // Local state for versions
   const [aria2Version, setAria2Version] = useState('Checking...');
@@ -118,57 +129,55 @@ export default function SettingsView() {
     showToast("Token copied to clipboard!");
   };
 
-  const TabButton = ({ type, icon: Icon, label }: { type: TabType; icon: any; label: string }) => {
+  const activeTabLabel = settingsTabs.find(tab => tab.type === activeTab)?.label ?? 'Downloads';
+
+  const TabButton = ({ type, icon: Icon, label }: { type: SettingsTab; icon: typeof Download; label: string }) => {
     const active = activeTab === type;
     return (
       <button
-        onClick={() => setActiveTab(type)}
-        className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all text-center min-w-[76px] cursor-default ${
+        type="button"
+        onClick={() => settings.setActiveSettingsTab(type)}
+        className={`flex min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-1 py-2 text-center cursor-default transition-colors ${
           active
-            ? 'bg-blue-600/15 text-blue-500 font-semibold'
-            : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
+            ? 'bg-accent text-white'
+            : 'text-text-primary hover:bg-item-hover'
         }`}
       >
-        <Icon size={18} className="mb-1" />
-        <span className="text-[10px] whitespace-nowrap">{label}</span>
+        <Icon size={16} strokeWidth={2} />
+        <span className="settings-tab-label mt-1 w-full whitespace-nowrap font-medium">{label}</span>
       </button>
     );
   };
 
   return (
     <div className="flex-1 flex flex-col bg-main-bg relative h-full overflow-hidden">
+        <WindowDragRegion />
 
         {/* Toast Notification */}
         {toastMessage && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[13px] font-medium py-2 px-4 rounded-full shadow-lg z-50 animate-bounce">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-accent text-white text-[13px] font-medium py-2 px-4 rounded-full shadow-lg z-50 animate-bounce">
             {toastMessage}
           </div>
         )}
 
-        {/* Header (Horizontal Tab Bar) */}
-        <div className="flex flex-col">
-          <div className="flex items-center justify-between p-4 px-6 border-b border-border-color">
-            <h2 className="text-[15px] font-bold tracking-tight text-text-primary">Preferences</h2>
-          </div>
-          <div className="flex items-center gap-2 p-3 overflow-x-auto justify-center bg-bg-input/30 border-b border-border-color shadow-sm">
-            <TabButton type="downloads" icon={Download} label="Downloads" />
-            <TabButton type="lookandfeel" icon={Palette} label="Look & Feel" />
-            <TabButton type="network" icon={Globe} label="Network" />
-            <TabButton type="locations" icon={Folder} label="Locations" />
-            <TabButton type="sitelogins" icon={Key} label="Site Logins" />
-            <TabButton type="power" icon={Moon} label="Power" />
-            <TabButton type="engine" icon={Terminal} label="Engine" />
-            <TabButton type="integrations" icon={Puzzle} label="Integrations" />
-            <TabButton type="about" icon={Info} label="About" />
+        {/* SwiftUI SettingsPaneContainer-style horizontal tab strip */}
+        <div className="border-b border-border-color">
+          <div className="flex items-stretch gap-1 px-8 py-4">
+            {settingsTabs.map(tab => (
+              <TabButton key={tab.type} {...tab} />
+            ))}
           </div>
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-6 bg-main-bg/10">
+        <div className="flex-1 overflow-y-auto bg-main-bg">
+          <div className="w-full p-8">
+            <h1 className="mb-6 text-[28px] font-semibold tracking-tight text-text-primary">{activeTabLabel}</h1>
+            <div className="max-w-[720px]">
 
           {/* Downloads Pane */}
           {activeTab === 'downloads' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Download Options</h3>
 
               <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
@@ -178,7 +187,7 @@ export default function SettingsView() {
                     type="range" min="1" max="12"
                     value={settings.maxConcurrentDownloads}
                     onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
-                    className="flex-1 accent-blue-500"
+                    className="flex-1 accent-accent"
                   />
                   <span className="w-8 text-center font-mono font-bold bg-item-hover px-2 py-1 rounded border border-border-modal text-text-secondary">
                     {settings.maxConcurrentDownloads}
@@ -193,7 +202,7 @@ export default function SettingsView() {
                     type="number" min="1" max="16"
                     value={settings.perServerConnections}
                     onChange={(e) => settings.setPerServerConnections(Number(e.target.value))}
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-blue-500"
+                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-accent"
                   />
                   <span className="text-text-muted text-xs">For new downloads (1 to 16)</span>
                 </div>
@@ -207,7 +216,7 @@ export default function SettingsView() {
                     value={settings.globalSpeedLimit}
                     onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
                     placeholder="Unlimited"
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-32 font-mono text-text-primary focus:outline-none focus:border-blue-500"
+                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-32 font-mono text-text-primary focus:outline-none focus:border-accent"
                   />
                   <span className="text-text-muted text-xs">e.g. 500K, 1M, or 0 for unlimited</span>
                 </div>
@@ -220,7 +229,7 @@ export default function SettingsView() {
                     type="number" min="0" max="10"
                     value={settings.maxAutomaticRetries}
                     onChange={(e) => settings.setMaxAutomaticRetries(Number(e.target.value))}
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-blue-500"
+                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-accent"
                   />
                   <span className="text-text-muted text-xs">If a connection fails (0 to 10)</span>
                 </div>
@@ -232,7 +241,7 @@ export default function SettingsView() {
                     type="checkbox"
                     checked={settings.showNotifications}
                     onChange={(e) => settings.setShowNotifications(e.target.checked)}
-                    className="mt-0.5 rounded accent-blue-500"
+                    className="mt-0.5 rounded accent-accent"
                   />
                   <div>
                     <p className="font-semibold text-text-primary">Show notification when download completes</p>
@@ -246,7 +255,7 @@ export default function SettingsView() {
                     checked={settings.playCompletionSound && settings.showNotifications}
                     disabled={!settings.showNotifications}
                     onChange={(e) => settings.setPlayCompletionSound(e.target.checked)}
-                    className="mt-0.5 rounded accent-blue-500 disabled:opacity-40"
+                    className="mt-0.5 rounded accent-accent disabled:opacity-40"
                   />
                   <div>
                     <p className={`font-semibold ${settings.showNotifications ? 'text-text-primary' : 'text-text-muted'}`}>Play sound when download completes</p>
@@ -258,39 +267,47 @@ export default function SettingsView() {
 
           {/* Look & Feel Pane */}
           {activeTab === 'lookandfeel' && (
-            <div className="space-y-6 max-w-xl mx-auto">
-              <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Appearance Settings</h3>
+            <div className="space-y-6 max-w-[720px]">
+              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2">App Theme</h3>
 
               <div className="grid grid-cols-[180px_1fr] items-start gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium pt-1">App Theme:</label>
+                <label className="text-text-secondary font-medium pt-1">Theme:</label>
                 <div className="space-y-2">
-                  {['system', 'dark', 'light', 'dracula', 'nord'].map((t) => (
-                    <label key={t} className="flex items-center gap-2 cursor-default select-none text-text-secondary capitalize">
+                  {[
+                    { value: 'system', label: 'System Default' },
+                    { value: 'light', label: 'Light' },
+                    { value: 'dark', label: 'Dark' },
+                    { value: 'dracula', label: 'Dracula' },
+                    { value: 'nord', label: 'Nord' },
+                  ].map(({ value, label }) => (
+                    <label key={value} className="flex items-center gap-2 cursor-default select-none text-text-primary">
                       <input
                         type="radio"
                         name="themeRadio"
-                        value={t}
-                        checked={settings.theme === t}
-                        onChange={() => settings.setTheme(t as any)}
-                        className="accent-blue-500"
+                        value={value}
+                        checked={settings.theme === value}
+                        onChange={() => settings.setTheme(value as typeof settings.theme)}
+                        className="accent-accent"
                       />
-                      {t === 'system' ? 'System Default' : t}
+                      {label}
                     </label>
                   ))}
                   <p className="text-text-muted text-xs mt-2">Select a color palette for the app's user interface.</p>
                 </div>
               </div>
 
+              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2 pt-2">Display</h3>
+
               <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
                 <label className="text-text-secondary font-medium">Font Size:</label>
                 <select
                   value={settings.appFontSize}
                   onChange={(e) => settings.setAppFontSize(e.target.value as any)}
-                  className="bg-bg-input border border-border-modal rounded-lg p-2 text-[13px] text-text-primary focus:outline-none focus:border-blue-500 max-w-[200px]"
+                  className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent max-w-[200px]"
                 >
+                  <option value="small">Small</option>
                   <option value="standard">Standard</option>
                   <option value="large">Large</option>
-                  <option value="extra-large">Extra Large</option>
                 </select>
               </div>
 
@@ -299,24 +316,39 @@ export default function SettingsView() {
                 <select
                   value={settings.listRowDensity}
                   onChange={(e) => settings.setListRowDensity(e.target.value as any)}
-                  className="bg-bg-input border border-border-modal rounded-lg p-2 text-[13px] text-text-primary focus:outline-none focus:border-blue-500 max-w-[200px]"
+                  className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent max-w-[200px]"
                 >
                   <option value="compact">Compact</option>
                   <option value="standard">Standard</option>
-                  <option value="spacious">Spacious</option>
+                  <option value="relaxed">Relaxed</option>
                 </select>
               </div>
 
-              <div className="border-t border-border-color/30 pt-4 space-y-3">
+              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2 pt-2">macOS Integration</h3>
+
+              <div className="space-y-4">
                 <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
                   <input
                     type="checkbox"
-                    checked={settings.showNotifications} // mapped to dock badge placeholder
-                    className="mt-0.5 rounded accent-blue-500"
+                    checked={settings.showDockBadge}
+                    onChange={(e) => settings.setShowDockBadge(e.target.checked)}
+                    className="mt-0.5 rounded accent-accent"
                   />
                   <div>
                     <p className="font-semibold text-text-primary">Show badge on Dock/Taskbar icon</p>
                     <p className="text-text-muted text-xs mt-0.5">Displays the number of active downloads on the icon badge.</p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={settings.showMenuBarIcon}
+                    onChange={(e) => settings.setShowMenuBarIcon(e.target.checked)}
+                    className="mt-0.5 rounded accent-accent"
+                  />
+                  <div>
+                    <p className="font-semibold text-text-primary">Show menu bar icon</p>
+                    <p className="text-text-muted text-xs mt-0.5">Provides quick access to downloads and queues from the system menu bar.</p>
                   </div>
                 </label>
               </div>
@@ -325,7 +357,7 @@ export default function SettingsView() {
 
           {/* Network Pane */}
           {activeTab === 'network' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Proxy & User Agent</h3>
 
               <div className="grid grid-cols-[180px_1fr] items-start gap-4 text-[13px]">
@@ -336,7 +368,7 @@ export default function SettingsView() {
                       type="radio" name="proxyMode" value="none"
                       checked={settings.proxyMode === 'none'}
                       onChange={() => settings.setProxyMode('none')}
-                      className="accent-blue-500"
+                      className="accent-accent"
                     />
                     No proxy
                   </label>
@@ -345,7 +377,7 @@ export default function SettingsView() {
                       type="radio" name="proxyMode" value="system"
                       checked={settings.proxyMode === 'system'}
                       onChange={() => settings.setProxyMode('system')}
-                      className="accent-blue-500"
+                      className="accent-accent"
                     />
                     Use system proxy
                   </label>
@@ -354,7 +386,7 @@ export default function SettingsView() {
                       type="radio" name="proxyMode" value="custom"
                       checked={settings.proxyMode === 'custom'}
                       onChange={() => settings.setProxyMode('custom')}
-                      className="accent-blue-500"
+                      className="accent-accent"
                     />
                     Set proxy
                   </label>
@@ -393,7 +425,7 @@ export default function SettingsView() {
                     value={settings.customUserAgent}
                     onChange={(e) => settings.setCustomUserAgent(e.target.value)}
                     placeholder="e.g. Mozilla/5.0..."
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full font-mono text-[11px] text-text-primary focus:outline-none focus:border-blue-500"
+                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full font-mono text-[11px] text-text-primary focus:outline-none focus:border-accent"
                   />
                   <p className="text-text-muted text-xs">Spoofs browser User-Agent to bypass download restrictions. Leave blank for default.</p>
                 </div>
@@ -403,7 +435,7 @@ export default function SettingsView() {
 
           {/* Locations Pane */}
           {activeTab === 'locations' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Download Directories</h3>
 
               <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
@@ -411,7 +443,7 @@ export default function SettingsView() {
                   type="checkbox"
                   checked={settings.askWhereToSaveEachFile}
                   onChange={(e) => settings.setAskWhereToSaveEachFile(e.target.checked)}
-                  className="mt-0.5 rounded accent-blue-500"
+                  className="mt-0.5 rounded accent-accent"
                 />
                 <div>
                   <p className="font-semibold text-text-primary">Ask where to save each file before downloading</p>
@@ -432,7 +464,7 @@ export default function SettingsView() {
                     />
                     <button
                       onClick={handleBrowseBulk}
-                      className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded-md text-xs font-semibold shadow transition-colors"
+                      className="bg-accent hover:bg-accent text-white px-3 py-1 rounded-md text-xs font-semibold shadow transition-colors"
                     >
                       Choose Base
                     </button>
@@ -476,7 +508,7 @@ export default function SettingsView() {
 
           {/* Site Logins Pane */}
           {activeTab === 'sitelogins' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Site Credentials</h3>
 
               {/* Site Logins List */}
@@ -549,7 +581,7 @@ export default function SettingsView() {
                 <div className="flex justify-end pt-2">
                   <button
                     onClick={handleAddLogin}
-                    className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5"
+                    className="bg-accent hover:bg-accent text-white px-4 py-1.5 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5"
                   >
                     <Plus size={14} /> Add Login
                   </button>
@@ -560,7 +592,7 @@ export default function SettingsView() {
 
           {/* Power Pane */}
           {activeTab === 'power' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Power Management</h3>
 
               <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
@@ -568,7 +600,7 @@ export default function SettingsView() {
                   type="checkbox"
                   checked={settings.preventsSleepWhileDownloading}
                   onChange={(e) => settings.setPreventsSleepWhileDownloading(e.target.checked)}
-                  className="mt-0.5 rounded accent-blue-500"
+                  className="mt-0.5 rounded accent-accent"
                 />
                 <div>
                   <p className="font-semibold text-text-primary">Prevent system sleep while downloads are active</p>
@@ -580,13 +612,13 @@ export default function SettingsView() {
 
           {/* Engine Pane */}
           {activeTab === 'engine' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Media Downloader & Engines</h3>
 
               <div className="space-y-4">
                 <div className="border border-border-modal rounded-lg p-4 space-y-3 bg-item-hover/5">
                   <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
-                    <Terminal size={14} className="text-blue-500" /> Core Downloader (Aria2)
+                    <Terminal size={14} className="text-accent" /> Core Downloader (Aria2)
                   </h4>
                   <div className="grid grid-cols-[120px_1fr] text-[13px]">
                     <span className="text-text-secondary">Version:</span>
@@ -620,7 +652,7 @@ export default function SettingsView() {
                     <select
                       value={settings.mediaCookieSource}
                       onChange={(e) => settings.setMediaCookieSource(e.target.value as any)}
-                      className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-blue-500"
+                      className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent"
                     >
                       <option value="none">None</option>
                       <option value="safari">Safari</option>
@@ -638,7 +670,7 @@ export default function SettingsView() {
 
           {/* Integrations Pane */}
           {activeTab === 'integrations' && (
-            <div className="space-y-6 max-w-xl mx-auto">
+            <div className="space-y-6 max-w-[720px]">
               <div className="flex items-center gap-3 border-b border-border-color/30 pb-3">
                 <Puzzle size={28} className="text-orange-500" />
                 <div>
@@ -654,8 +686,8 @@ export default function SettingsView() {
                 <div className="border border-border-modal rounded-lg p-4 bg-item-hover/5 flex flex-col justify-between h-[190px]">
                   <div>
                     <div className="flex justify-between items-center mb-2">
-                      <span className="bg-blue-600/25 text-blue-500 font-bold rounded-full w-5 h-5 flex items-center justify-center text-xs">1</span>
-                      <Copy size={16} className="text-blue-500" />
+                      <span className="bg-accent/25 text-accent font-bold rounded-full w-5 h-5 flex items-center justify-center text-xs">1</span>
+                      <Copy size={16} className="text-accent" />
                     </div>
                     <h4 className="text-[13px] font-bold text-text-primary mb-1">Copy Token</h4>
                     <p className="text-text-muted text-[11px] leading-relaxed">This secure token authorizes your browser extension.</p>
@@ -663,7 +695,7 @@ export default function SettingsView() {
                   <div className="space-y-2">
                     <button
                       onClick={copyToken}
-                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 shadow transition-colors"
+                      className="w-full bg-accent hover:bg-accent text-white font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 shadow transition-colors"
                     >
                       <Copy size={11} /> Copy Token
                     </button>
@@ -731,7 +763,7 @@ export default function SettingsView() {
           {/* About Pane */}
           {activeTab === 'about' && (
             <div className="space-y-6 max-w-md mx-auto text-center py-6">
-              <div className="w-16 h-16 bg-blue-600 text-white font-extrabold text-2xl flex items-center justify-center rounded-2xl mx-auto shadow-lg shadow-blue-500/20">
+              <div className="w-16 h-16 bg-accent text-white font-extrabold text-2xl flex items-center justify-center rounded-2xl mx-auto shadow-lg shadow-accent/20">
                 FL
               </div>
               <div className="space-y-2">
@@ -742,7 +774,7 @@ export default function SettingsView() {
                 </p>
               </div>
 
-              <div className="border-t border-border-color/30 pt-4 flex justify-center gap-4 text-xs text-blue-500">
+              <div className="border-t border-border-color/30 pt-4 flex justify-center gap-4 text-xs text-accent">
                 <a href="https://github.com/nimbold/Firelink" target="_blank" rel="noreferrer" className="hover:underline">GitHub Repository</a>
                 <span>•</span>
                 <a href="https://github.com/nimbold/Firelink/issues" target="_blank" rel="noreferrer" className="hover:underline">Report Issues</a>
@@ -751,15 +783,8 @@ export default function SettingsView() {
             </div>
           )}
 
-        </div>
-
-        <div className="p-4 border-t border-border-modal bg-sidebar-bg/50 flex justify-end gap-3">
-          <button
-            onClick={() => settings.setActiveView('downloads')}
-            className="px-5 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/20 transition-all active:scale-95"
-          >
-            Done
-          </button>
+            </div>
+          </div>
         </div>
 
     </div>

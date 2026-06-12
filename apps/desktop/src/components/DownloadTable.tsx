@@ -99,18 +99,19 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   const getCategoryIcon = (category: string) => {
     switch(category) {
+      case 'Musics': return <Music size={16} className="text-pink-400" />;
+      case 'Movies': return <Film size={16} className="text-red-400" />;
       case 'Documents': return <FileText size={16} className="text-blue-400" />;
-      case 'Images': return <ImageIcon size={16} className="text-purple-400" />;
-      case 'Audio': return <Music size={16} className="text-pink-400" />;
-      case 'Video': return <Film size={16} className="text-red-400" />;
-      case 'Apps': return <Box size={16} className="text-orange-400" />;
-      case 'Archives': return <Archive size={16} className="text-yellow-400" />;
+      case 'Applications': return <Box size={16} className="text-indigo-400" />;
+      case 'Pictures': return <ImageIcon size={16} className="text-purple-400" />;
+      case 'Compressed': return <Archive size={16} className="text-amber-600" />;
+      case 'Other': return <FileQuestion size={16} className="text-gray-400" />;
       default: return <FileQuestion size={16} className="text-gray-400" />;
     }
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-main-bg h-full relative">
+    <div className="flex-1 flex flex-col bg-transparent h-full relative">
       <div className="glass-panel shrink-0 border-b border-border-color/60">
         <WindowDragRegion className={!isSidebarVisible ? 'pl-24' : ''} />
 
@@ -163,7 +164,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto bg-main-bg">
+      <div className="flex-1 overflow-auto bg-transparent">
         <table className="w-full border-collapse text-left">
           <thead className="sticky top-0 bg-main-bg z-0 border-b border-border-color">
             <tr className="text-text-muted/60 text-[10px] font-bold tracking-widest uppercase">
@@ -267,11 +268,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             )}
           </tbody>
         </table>
-      </div>
-
-      {/* Status Bar */}
-      <div className="px-6 py-2 border-t border-border-color text-[11px] font-medium text-text-muted bg-sidebar-bg/50 backdrop-blur-md">
-        {downloads.length} Item{downloads.length !== 1 ? 's' : ''}
       </div>
 
       {/* Floating Context Menu */}

@@ -77,7 +77,7 @@ const effectiveSpeedLimit = (
 };
 
 export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'failed' | 'queued';
-export type DownloadCategory = 'Documents' | 'Images' | 'Audio' | 'Video' | 'Apps' | 'Archives' | 'Other';
+export type DownloadCategory = 'Musics' | 'Movies' | 'Compressed' | 'Documents' | 'Pictures' | 'Applications' | 'Other';
 
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 

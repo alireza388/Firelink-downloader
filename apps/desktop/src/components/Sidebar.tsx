@@ -168,7 +168,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   };
 
   return (
-    <aside className="w-[220px] min-w-[190px] max-w-[260px] bg-sidebar-bg border-r border-border-color flex flex-col relative shrink-0">
+    <aside className="w-full h-full flex flex-col relative shrink-0">
       <WindowDragRegion />
       <div className="overflow-y-auto flex-1 px-2 pb-3">
         <section className="mb-4">
@@ -181,12 +181,12 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
         <section className="mb-4">
           <div className="text-[11px] font-semibold text-text-muted px-2.5 mb-1.5">Folders</div>
-          <NavItem icon={Film} label="Video" filter="Video" />
-          <NavItem icon={Music} label="Audio" filter="Audio" />
+          <NavItem icon={Music} label="Musics" filter="Musics" />
+          <NavItem icon={Film} label="Movies" filter="Movies" />
+          <NavItem icon={Archive} label="Compressed" filter="Compressed" />
           <NavItem icon={FileText} label="Documents" filter="Documents" />
-          <NavItem icon={Box} label="Apps" filter="Apps" />
-          <NavItem icon={ImageIcon} label="Images" filter="Images" />
-          <NavItem icon={Archive} label="Archives" filter="Archives" />
+          <NavItem icon={ImageIcon} label="Pictures" filter="Pictures" />
+          <NavItem icon={Box} label="Applications" filter="Applications" />
           <NavItem icon={FileQuestion} label="Other" filter="Other" />
         </section>
 

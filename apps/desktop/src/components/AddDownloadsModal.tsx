@@ -8,12 +8,12 @@ import { invoke } from '@tauri-apps/api/core';
 
 function determineCategory(fileName: string): DownloadCategory {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  if (['mp4', 'mkv', 'webm', 'avi', 'mov', 'flv'].includes(ext)) return 'Video';
-  if (['mp3', 'm4a', 'wav', 'flac', 'ogg', 'aac'].includes(ext)) return 'Audio';
+  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v'].includes(ext)) return 'Movies';
+  if (['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma'].includes(ext)) return 'Musics';
   if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf'].includes(ext)) return 'Documents';
-  if (['exe', 'dmg', 'pkg', 'app', 'apk', 'deb', 'rpm'].includes(ext)) return 'Apps';
-  if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'bmp', 'tiff'].includes(ext)) return 'Images';
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(ext)) return 'Archives';
+  if (['exe', 'dmg', 'apk', 'app', 'pkg', 'deb', 'rpm', 'msi', 'iso', 'bin', 'run'].includes(ext)) return 'Applications';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg'].includes(ext)) return 'Pictures';
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'xz', 'bz2'].includes(ext)) return 'Compressed';
   return 'Other';
 }
 

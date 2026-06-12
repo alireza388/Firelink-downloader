@@ -27,9 +27,11 @@ function App() {
   const activeView = useSettingsStore(state => state.activeView);
   const appFontSize = useSettingsStore(state => state.appFontSize);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
-  const activeDownloadCount = useDownloadStore(state => state.downloads.filter(download => download.status === 'downloading').length);
-  const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const downloads = useDownloadStore(state => state.downloads);
+  const activeDownloadCount = downloads.filter(download => download.status === 'downloading').length;
+  const queuedCount = downloads.filter(download => download.status === 'queued').length;
+  const doneCount = downloads.filter(download => download.status === 'completed').length;
+  const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef(globalSpeedLimit);
 
@@ -179,11 +181,34 @@ function App() {
 
   return (
     <div className="flex h-screen w-screen bg-main-bg text-text-primary overflow-hidden">
-      {isSidebarVisible && <Sidebar selectedFilter={filter} onSelectFilter={(f) => { setFilter(f); useSettingsStore.getState().setActiveView('downloads'); }} />}
-      {activeView === 'downloads' && <DownloadTable filter={filter} />}
-      {activeView === 'settings' && <SettingsView />}
-      {activeView === 'scheduler' && <SchedulerView />}
-      {activeView === 'speedLimiter' && <SpeedLimiterView />}
+      
+      {/* Left Side Panel - Curved Second Layer on Top */}
+      {isSidebarVisible && (
+        <div className="w-[240px] bg-sidebar-bg rounded-r-[16px] shadow-[4px_0_24px_rgba(0,0,0,0.3)] border-r border-border-color/20 flex flex-col overflow-hidden relative z-20 shrink-0">
+          <Sidebar selectedFilter={filter} onSelectFilter={(f) => { setFilter(f); useSettingsStore.getState().setActiveView('downloads'); }} />
+        </div>
+      )}
+      
+      {/* Main Content - Base Layer */}
+      <div className="flex-1 flex flex-col h-full relative z-0">
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          {activeView === 'downloads' && <DownloadTable filter={filter} />}
+          {activeView === 'settings' && <SettingsView />}
+          {activeView === 'scheduler' && <SchedulerView />}
+          {activeView === 'speedLimiter' && <SpeedLimiterView />}
+        </div>
+        
+        {/* Status Bar */}
+        <div className="h-7 px-5 flex items-center justify-between text-[11px] text-text-muted font-medium shrink-0 border-t border-border-color/30">
+          <span>Ready</span>
+          <div className="flex gap-2">
+            <span>{activeDownloadCount} active</span>
+            <span>{queuedCount} queued</span>
+            <span>{doneCount} done</span>
+          </div>
+        </div>
+      </div>
+      
       <AddDownloadsModal />
       <PropertiesModal />
     </div>

@@ -93,12 +93,12 @@ export interface SettingsState {
 }
 
 const defaultDirectories = {
-  Video: '~/Downloads/Video',
-  Audio: '~/Downloads/Audio',
+  Musics: '~/Downloads/Musics',
+  Movies: '~/Downloads/Movies',
+  Compressed: '~/Downloads/Compressed',
   Documents: '~/Downloads/Documents',
-  Apps: '~/Downloads/Apps',
-  Images: '~/Downloads/Images',
-  Archives: '~/Downloads/Compressed',
+  Pictures: '~/Downloads/Pictures',
+  Applications: '~/Downloads/Applications',
   Other: '~/Downloads/Other'
 };
 

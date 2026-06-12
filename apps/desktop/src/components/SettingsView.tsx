@@ -95,21 +95,20 @@ export default function SettingsView() {
 
   const handleBrowseBulk = async () => {
     try {
-      const selected = await open({
+      const base = await open({
         directory: true,
         multiple: false
       });
-      if (selected && typeof selected === 'string') {
-        // Automatically populate all category folders
-        const cleanBase = selected.endsWith('/') ? selected.slice(0, -1) : selected;
-        settings.setCategoryDirectory('Video', `${cleanBase}/Video`);
-        settings.setCategoryDirectory('Audio', `${cleanBase}/Audio`);
+      if (base && typeof base === 'string') {
+        const cleanBase = base.replace(/\/$/, '');
+        settings.setCategoryDirectory('Musics', `${cleanBase}/Musics`);
+        settings.setCategoryDirectory('Movies', `${cleanBase}/Movies`);
+        settings.setCategoryDirectory('Compressed', `${cleanBase}/Compressed`);
         settings.setCategoryDirectory('Documents', `${cleanBase}/Documents`);
-        settings.setCategoryDirectory('Apps', `${cleanBase}/Apps`);
-        settings.setCategoryDirectory('Images', `${cleanBase}/Images`);
-        settings.setCategoryDirectory('Archives', `${cleanBase}/Archives`);
+        settings.setCategoryDirectory('Pictures', `${cleanBase}/Pictures`);
+        settings.setCategoryDirectory('Applications', `${cleanBase}/Applications`);
         settings.setCategoryDirectory('Other', `${cleanBase}/Other`);
-        showToast("Created subfolders for all categories");
+        showToast("Updated all categories to use base folder");
       }
     } catch (e) {
       console.error("Failed to browse base path:", e);
@@ -492,13 +491,13 @@ export default function SettingsView() {
                   </div>
                 </div>
 
-                {Object.keys(settings.downloadDirectories || {}).map((category) => (
+                {['Musics', 'Movies', 'Compressed', 'Documents', 'Pictures', 'Applications', 'Other'].map((category) => (
                   <div key={category} className="grid grid-cols-[150px_1fr] items-center gap-4 text-[13px]">
                     <label className="text-text-secondary capitalize">{category} folder:</label>
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        value={(settings.downloadDirectories || {})[category]}
+                        value={(settings.downloadDirectories || {})[category] || ''}
                         onChange={(e) => settings.setCategoryDirectory(category, e.target.value)}
                         className="flex-1 bg-bg-input border border-border-modal rounded-md px-3 py-1 text-xs text-text-primary font-mono"
                       />

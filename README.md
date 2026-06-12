@@ -64,9 +64,9 @@ We are live! Send downloads directly from your browser to the Firelink app with 
 
 ---
 
-## 🌍 Cross-Platform Evolution (Firelink v2)
+## 🌍 Cross-Platform Evolution (Firelink Reborn)
 
-We are currently rewriting Firelink from the ground up using **Tauri, React, and Rust** to bring our blazing-fast native experience to Windows and Linux, while maintaining our standard of excellence on macOS.
+I'm currently rewriting Firelink from the ground up using **Tauri, React, and Rust** to bring our blazing-fast native experience to Windows and Linux, while maintaining our standard of excellence on macOS.
 
 ### 🚀 Development Progress
 - [x] **Core Engine Port:** `aria2c` and `yt-dlp` integration in Rust

@@ -376,7 +376,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-mod queue;
 mod parity;
 pub mod error;
 pub use error::AppError;
@@ -384,11 +383,11 @@ pub use error::AppError;
 pub enum TaskHandle {
     Aria2(String),
     Pid(u32),
+    Queued,
 }
 
 pub struct AppState {
     pub tasks: Arc<Mutex<HashMap<String, TaskHandle>>>,
-    pub cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
     pub aria2_port: u16,
@@ -459,41 +458,10 @@ async fn start_download(
     max_tries: Option<i32>,
     proxy: Option<String>,
 ) -> Result<(), AppError> {
-    let task = queue::DownloadTask {
-        is_media: false,
-        id, url, destination, filename, connections, speed_limit, username, password, headers, checksum, cookies, mirrors, user_agent, max_tries, proxy,
-        format_selector: None, cookie_source: None,
-    };
-    crate::start_download_internal(app_handle, state.tasks.clone(), state.cmd_tx.clone(), task).await?;
-    Ok(())
-}
-
-pub(crate) async fn start_download_internal(
-    app_handle: tauri::AppHandle,
-    tasks_map: Arc<Mutex<HashMap<String, TaskHandle>>>,
-    _cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
-    task: queue::DownloadTask,
-) -> Result<(), AppError> {
-    let id = task.id;
-    let url = task.url;
-    let destination = task.destination;
-    let filename = task.filename;
-    let connections = task.connections;
-    let speed_limit = task.speed_limit;
-    let username = task.username;
-    let password = task.password;
-    let headers = task.headers;
-    let checksum = task.checksum;
-    let cookies = task.cookies;
-    let mirrors = task.mirrors;
-    let user_agent = task.user_agent;
-    let max_tries = task.max_tries;
-    let proxy = task.proxy;
-
-    println!("start_download_internal called for id: {}", id);
-    let state = app_handle.state::<AppState>();
-    let rpc_port = state.aria2_port;
-    let rpc_secret = state.aria2_secret.clone();
+    println!("start_download called for id: {}", id);
+    let state_aria2_port = state.aria2_port;
+    let state_aria2_secret = state.aria2_secret.clone();
+    let tasks_map = state.tasks.clone();
 
     let mut resolved_dest = std::path::PathBuf::from(&destination);
     if destination.starts_with("~/") {
@@ -578,13 +546,14 @@ pub(crate) async fn start_download_internal(
 
     let uris = collect_download_uris(&url, mirrors.as_deref());
     
-    let _ = rpc_call(rpc_port, &rpc_secret, "aria2.addUri", serde_json::json!([uris, options])).await?;
+    let _ = rpc_call(state_aria2_port, &state_aria2_secret, "aria2.addUri", serde_json::json!([uris, options])).await?;
 
     Ok(())
 }
 
 #[tauri::command]
 async fn start_media_download(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
     url: String,
@@ -600,36 +569,66 @@ async fn start_media_download(
     user_agent: Option<String>,
     max_tries: Option<i32>,
 ) -> Result<(), String> {
-    let task = queue::DownloadTask {
-        is_media: true,
-        id, url, destination, filename, speed_limit, username, password, headers, proxy,
-        connections: None, checksum: None, cookies: None, mirrors: None, user_agent, max_tries,
-        format_selector, cookie_source,
-    };
-    state.cmd_tx.send(queue::DownloadCommand::Enqueue(task)).map_err(|e| e.to_string())?;
+    let tasks_map = state.tasks.clone();
+    let media_semaphore = state.media_semaphore.clone();
+
+    // Mark task as queued
+    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Queued);
+
+    let id_clone = id.clone();
+    tauri::async_runtime::spawn(async move {
+        // Wait in queue via semaphore
+        let permit = media_semaphore.acquire().await;
+        
+        // Check if user cancelled the task while it was waiting in queue
+        {
+            let map = tasks_map.lock().unwrap();
+            if !map.contains_key(&id_clone) {
+                return;
+            }
+        }
+
+        let _ = start_media_download_internal(
+            app_handle,
+            tasks_map,
+            id_clone,
+            url,
+            destination,
+            filename,
+            format_selector,
+            cookie_source,
+            speed_limit,
+            username,
+            password,
+            headers,
+            proxy,
+            user_agent,
+            max_tries,
+        ).await;
+        
+        drop(permit); // Release semaphore permit
+    });
+
     Ok(())
 }
 
 pub(crate) async fn start_media_download_internal(
     app_handle: tauri::AppHandle,
     tasks_map: Arc<Mutex<HashMap<String, TaskHandle>>>,
-    cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
-    task: queue::DownloadTask,
+    id: String,
+    url: String,
+    destination: String,
+    filename: String,
+    format_selector: Option<String>,
+    cookie_source: Option<String>,
+    speed_limit: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    headers: Option<String>,
+    proxy: Option<String>,
+    user_agent: Option<String>,
+    max_tries: Option<i32>,
 ) -> Result<(), String> {
-    let id = task.id;
-    let url = task.url;
-    let destination = task.destination;
-    let filename = task.filename;
-    let format_selector = task.format_selector;
-    let cookie_source = task.cookie_source;
-    let speed_limit = task.speed_limit;
-    let username = task.username;
-    let password = task.password;
-    let headers = task.headers;
-    let proxy = task.proxy;
-    let user_agent = task.user_agent;
-    let max_tries = task.max_tries;
-
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
     let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
@@ -751,12 +750,13 @@ pub(crate) async fn start_media_download_internal(
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
     let pid = child.id().unwrap_or(0);
+    
+    // Update task handle from Queued to Pid
     tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Pid(pid));
 
     let stdout = child.stdout.take().unwrap();
     let app_handle_clone = app_handle.clone();
     let id_clone = id.clone();
-    let id_clone_tx = id.clone();
 
     // yt-dlp parsing regex
     let pct_re = Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap();
@@ -814,7 +814,7 @@ pub(crate) async fn start_media_download_internal(
                         if exit_status.success() {
                             let _ = app_handle_clone.emit("download-complete", id_clone.clone());
                         } else {
-                            // If it exited with error, emit failed (7 means paused/aborted usually, but we emit failed anyway, UI can filter)
+                            // If it exited with error, emit failed
                             let _ = app_handle_clone.emit("download-failed", id_clone.clone());
                         }
                     }
@@ -822,9 +822,8 @@ pub(crate) async fn start_media_download_internal(
                 }
             }
         }
-        let _ = cmd_tx.send(queue::DownloadCommand::TaskFinished(id_clone_tx));
     });
-
+    
     Ok(())
 }
 
@@ -836,6 +835,11 @@ async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result
         match handle {
             TaskHandle::Aria2(gid) => {
                 let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([gid])).await;
+            }
+            TaskHandle::Queued => {
+                // If it was just queued, it's already removed from tasks map.
+                // The waiting Tokio task will wake up, see it's missing, and abort silently.
+                println!("Queued download {} aborted before starting", id);
             }
             TaskHandle::Pid(pid) => {
                 if pid > 0 {
@@ -971,7 +975,6 @@ fn perform_system_action(action: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -> Result<(), String> {
-    let _ = state.cmd_tx.send(queue::DownloadCommand::SetLimit(limit));
     let _ = rpc_call(
         state.aria2_port,
         &state.aria2_secret,
@@ -1228,8 +1231,6 @@ pub fn run() {
         .map(|addr| addr.port())
         .unwrap_or(6800);
     let aria2_secret = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
-
-    let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -1240,7 +1241,6 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(AppState {
             tasks: Arc::new(Mutex::new(HashMap::new())),
-            cmd_tx,
             extension_pairing_token,
             extension_frontend_ready,
             aria2_port,
@@ -1357,8 +1357,6 @@ pub fn run() {
                     }
                 }
             });
-
-            queue::setup_queue(app.handle().clone(), cmd_rx);
             let ext_app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match extension_server::start_server(

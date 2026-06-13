@@ -378,12 +378,22 @@ use std::sync::{Arc, Mutex, RwLock};
 
 mod queue;
 mod parity;
+pub mod error;
+pub use error::AppError;
+
+pub enum TaskHandle {
+    Aria2(String),
+    Pid(u32),
+}
 
 pub struct AppState {
-    pub tasks: Arc<Mutex<HashMap<String, u32>>>,
+    pub tasks: Arc<Mutex<HashMap<String, TaskHandle>>>,
     pub cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
+    pub aria2_port: u16,
+    pub aria2_secret: String,
+    pub media_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone, Serialize)]
@@ -431,6 +441,7 @@ async fn rpc_call(port: u16, secret: &str, method: &str, params: serde_json::Val
 
 #[tauri::command]
 async fn start_download(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
     url: String,
@@ -447,22 +458,22 @@ async fn start_download(
     user_agent: Option<String>,
     max_tries: Option<i32>,
     proxy: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let task = queue::DownloadTask {
         is_media: false,
         id, url, destination, filename, connections, speed_limit, username, password, headers, checksum, cookies, mirrors, user_agent, max_tries, proxy,
         format_selector: None, cookie_source: None,
     };
-    state.cmd_tx.send(queue::DownloadCommand::Enqueue(task)).map_err(|e| e.to_string())?;
+    crate::start_download_internal(app_handle, state.tasks.clone(), state.cmd_tx.clone(), task).await?;
     Ok(())
 }
 
 pub(crate) async fn start_download_internal(
     app_handle: tauri::AppHandle,
-    tasks_map: Arc<Mutex<HashMap<String, u32>>>,
-    cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
+    tasks_map: Arc<Mutex<HashMap<String, TaskHandle>>>,
+    _cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
     task: queue::DownloadTask,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let id = task.id;
     let url = task.url;
     let destination = task.destination;
@@ -480,8 +491,9 @@ pub(crate) async fn start_download_internal(
     let proxy = task.proxy;
 
     println!("start_download_internal called for id: {}", id);
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let aria2c_path = resource_dir.join("binaries").join("aria2c");
+    let state = app_handle.state::<AppState>();
+    let rpc_port = state.aria2_port;
+    let rpc_secret = state.aria2_secret.clone();
 
     let mut resolved_dest = std::path::PathBuf::from(&destination);
     if destination.starts_with("~/") {
@@ -493,192 +505,80 @@ pub(crate) async fn start_download_internal(
             resolved_dest = home;
         }
     }
-    println!("Resolved destination path: {:?}", resolved_dest);
-
+    
     if !resolved_dest.exists() {
-        if let Err(e) = std::fs::create_dir_all(&resolved_dest) {
-            println!("Failed to create destination directory: {}", e);
-        }
+        let _ = std::fs::create_dir_all(&resolved_dest);
     }
 
-    let rpc_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|addr| addr.port())
-        .unwrap_or(6800);
-    let rpc_secret = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let gid: String = id.replace("-", "").chars().take(16).collect();
+    // ensure exactly 16 chars
+    let gid = format!("{:0<16}", gid);
+    
+    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Aria2(gid.clone()));
 
-    let mut cmd = AsyncCommand::new(&aria2c_path);
-    cmd.arg("--enable-rpc=true")
-       .arg(format!("--rpc-listen-port={}", rpc_port))
-       .arg("--rpc-listen-all=false")
-       .arg("--continue=true")
-       .arg("--allow-overwrite=false")
-       .arg("--summary-interval=1")
-       .arg("--console-log-level=warn")
-       .arg("--download-result=hide")
-       .arg("--check-certificate=false")
-       .arg(format!("--dir={}", resolved_dest.to_string_lossy()))
-       .arg(format!("--out={}", filename));
-
+    let mut options = serde_json::Map::new();
+    options.insert("gid".to_string(), serde_json::json!(gid));
+    options.insert("dir".to_string(), serde_json::json!(resolved_dest.to_string_lossy().to_string()));
+    options.insert("out".to_string(), serde_json::json!(filename));
+    
     if let Some(conn) = connections {
-        cmd.arg(format!("--split={}", conn));
-        cmd.arg(format!("--max-connection-per-server={}", conn));
+        options.insert("split".to_string(), serde_json::json!(conn.to_string()));
+        options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
     }
     if let Some(limit) = speed_limit {
         if !limit.is_empty() {
-            cmd.arg(format!("--max-overall-download-limit={}", limit));
+            options.insert("max-download-limit".to_string(), serde_json::json!(limit));
         }
     }
     
-    let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
-    let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
-            config_content.push_str(&format!("http-user={}\nftp-user={}\n", user, user));
+            options.insert("http-user".to_string(), serde_json::json!(user));
+            options.insert("ftp-user".to_string(), serde_json::json!(user));
+            if let Some(pass) = password {
+                options.insert("http-passwd".to_string(), serde_json::json!(pass));
+                options.insert("ftp-passwd".to_string(), serde_json::json!(pass));
+            }
         }
     }
-    if let Some(pass) = password {
-        if !pass.is_empty() {
-            config_content.push_str(&format!("http-passwd={}\nftp-passwd={}\n", pass, pass));
-        }
-    }
+    
+    let mut hdrs = Vec::new();
     if let Some(hdr) = headers {
         for header in hdr.lines().map(str::trim).filter(|h| !h.is_empty()) {
-            config_content.push_str(&format!("header={}\n", header));
+            hdrs.push(header.to_string());
         }
     }
     if let Some(cks) = cookies {
         if !cks.is_empty() {
-            config_content.push_str(&format!("header=Cookie: {}\n", cks));
+            hdrs.push(format!("Cookie: {}", cks));
         }
     }
+    if !hdrs.is_empty() {
+        options.insert("header".to_string(), serde_json::json!(hdrs));
+    }
+    
     if let Some(p) = proxy {
         if !p.is_empty() {
-            config_content.push_str(&format!("all-proxy={}\n", p));
+            options.insert("all-proxy".to_string(), serde_json::json!(p));
         }
     }
-    use std::io::Write;
-    config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
-    let config_path = config_file.into_temp_path();
-    if !config_content.is_empty() {
-        cmd.arg(format!("--conf-path={}", config_path.display()));
-    }
-
     if let Some(ua) = user_agent {
         if !ua.is_empty() {
-            cmd.arg(format!("--user-agent={}", ua));
+            options.insert("user-agent".to_string(), serde_json::json!(ua));
         }
     }
     if let Some(chk) = checksum {
         if !chk.is_empty() {
-            cmd.arg(format!("--checksum={}", chk));
+            options.insert("checksum".to_string(), serde_json::json!(chk));
         }
     }
     if let Some(tries) = max_tries {
-        cmd.arg(format!("--max-tries={}", tries));
+        options.insert("max-tries".to_string(), serde_json::json!(tries.to_string()));
     }
 
-    for uri in collect_download_uris(&url, mirrors.as_deref()) {
-        cmd.arg(uri);
-    }
-
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-    // We remove kill_on_drop(true) so we can gracefully SIGTERM it
-    // cmd.kill_on_drop(true);
-
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn aria2c: {}", e))?;
-
-    let pid = child.id().unwrap_or(0);
-    tasks_map.lock().unwrap().insert(id.clone(), pid);
-
-    let app_handle_clone = app_handle.clone();
-    let id_clone = id.clone();
-    let id_clone_tx = id.clone();
-
-    tokio::spawn(async move {
-        let _keep_alive = config_path; // Keep the temp file alive
-        
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-            if let Ok(Some(status)) = child.try_wait() {
-                if status.success() {
-                    let _ = app_handle_clone.emit("download-complete", id_clone.clone());
-                } else {
-                    let _ = app_handle_clone.emit("download-failed", id_clone.clone());
-                }
-                break;
-            }
-
-            if let Ok(json) = rpc_call(rpc_port, &rpc_secret, "aria2.tellActive", serde_json::json!([["status", "completedLength", "totalLength", "downloadSpeed"]])).await {
-                if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
-                    if let Some(item) = arr.first() {
-                        let completed = item.get("completedLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                        let total = item.get("totalLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-                        let speed_bytes = item.get("downloadSpeed").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                        
-                        let fraction = if total > 0.0 { completed / total } else { 0.0 };
-                        let speed = if speed_bytes > 1024.0 * 1024.0 {
-                            format!("{:.1} MB/s", speed_bytes / (1024.0 * 1024.0))
-                        } else if speed_bytes > 1024.0 {
-                            format!("{:.1} KB/s", speed_bytes / 1024.0)
-                        } else {
-                            format!("{:.0} B/s", speed_bytes)
-                        };
-
-                        let eta = if speed_bytes > 0.0 && total > completed {
-                            let seconds = (total - completed) / speed_bytes;
-                            if seconds > 3600.0 {
-                                format!("{:.0}h {:.0}m", seconds / 3600.0, (seconds % 3600.0) / 60.0)
-                            } else if seconds > 60.0 {
-                                format!("{:.0}m {:.0}s", seconds / 60.0, seconds % 60.0)
-                            } else {
-                                format!("{:.0}s", seconds)
-                            }
-                        } else {
-                            "-".to_string()
-                        };
-
-                        let _ = app_handle_clone.emit("download-progress", DownloadProgressEvent {
-                            id: id_clone.clone(),
-                            fraction,
-                            speed,
-                            eta,
-                        });
-                        continue;
-                    }
-                }
-            }
-            
-            if let Ok(json) = rpc_call(rpc_port, &rpc_secret, "aria2.tellStopped", serde_json::json!([0, 10, ["status", "completedLength", "totalLength"]])).await {
-                if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
-                    if arr.iter().any(|item| item.get("status").and_then(|v| v.as_str()) == Some("complete")) {
-                        let _ = app_handle_clone.emit("download-complete", id_clone.clone());
-                        let _ = rpc_call(rpc_port, &rpc_secret, "aria2.shutdown", serde_json::json!([])).await;
-                        break;
-                    }
-                    if arr.iter().any(|item| item.get("status").and_then(|v| v.as_str()) == Some("error")) {
-                        // check if it actually completed length == total length
-                        if let Some(item) = arr.iter().find(|i| i.get("status").and_then(|v| v.as_str()) == Some("error")) {
-                            let comp = item.get("completedLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                            let tot = item.get("totalLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-                            if comp > 0.0 && comp >= tot {
-                                let _ = app_handle_clone.emit("download-complete", id_clone.clone());
-                                let _ = rpc_call(rpc_port, &rpc_secret, "aria2.shutdown", serde_json::json!([])).await;
-                                break;
-                            }
-                        }
-                        
-                        let _ = app_handle_clone.emit("download-failed", id_clone.clone());
-                        let _ = rpc_call(rpc_port, &rpc_secret, "aria2.shutdown", serde_json::json!([])).await;
-                        break;
-                    }
-                }
-            }
-        }
-        let _ = cmd_tx.send(queue::DownloadCommand::TaskFinished(id_clone_tx));
-    });
+    let uris = collect_download_uris(&url, mirrors.as_deref());
+    
+    let _ = rpc_call(rpc_port, &rpc_secret, "aria2.addUri", serde_json::json!([uris, options])).await?;
 
     Ok(())
 }
@@ -712,7 +612,7 @@ async fn start_media_download(
 
 pub(crate) async fn start_media_download_internal(
     app_handle: tauri::AppHandle,
-    tasks_map: Arc<Mutex<HashMap<String, u32>>>,
+    tasks_map: Arc<Mutex<HashMap<String, TaskHandle>>>,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<queue::DownloadCommand>,
     task: queue::DownloadTask,
 ) -> Result<(), String> {
@@ -851,7 +751,7 @@ pub(crate) async fn start_media_download_internal(
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
     let pid = child.id().unwrap_or(0);
-    tasks_map.lock().unwrap().insert(id.clone(), pid);
+    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Pid(pid));
 
     let stdout = child.stdout.take().unwrap();
     let app_handle_clone = app_handle.clone();
@@ -931,44 +831,88 @@ pub(crate) async fn start_media_download_internal(
 #[tauri::command]
 async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
     println!("pause_download called for id: {}", id);
-    if let Some(pid) = state.tasks.lock().unwrap().remove(&id) {
-        if pid > 0 {
-            use sysinfo::{System, Pid};
-            let mut sys = System::new_all();
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-            
-            let parent_pid = Pid::from_u32(pid);
-            let mut to_kill = vec![parent_pid];
-            let mut idx = 0;
-            
-            while idx < to_kill.len() {
-                let current = to_kill[idx];
-                for (proc_pid, proc) in sys.processes() {
-                    if let Some(p) = proc.parent() {
-                        if p == current {
-                            to_kill.push(*proc_pid);
-                        }
-                    }
-                }
-                idx += 1;
+    let handle_opt = state.tasks.lock().unwrap().remove(&id);
+    if let Some(handle) = handle_opt {
+        match handle {
+            TaskHandle::Aria2(gid) => {
+                let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([gid])).await;
             }
-            
-            for p in to_kill.into_iter().rev() {
-                if let Some(proc) = sys.process(p) {
-                    #[cfg(unix)]
-                    {
-                        if proc.kill_with(sysinfo::Signal::Term).is_none() {
-                            proc.kill(); // Fallback to SIGKILL
+            TaskHandle::Pid(pid) => {
+                if pid > 0 {
+                    use sysinfo::{System, Pid};
+                    let mut sys = System::new_all();
+                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                    
+                    let parent_pid = Pid::from_u32(pid);
+                    let mut to_kill = vec![parent_pid];
+                    let mut idx = 0;
+                    
+                    while idx < to_kill.len() {
+                        let current = to_kill[idx];
+                        for (proc_pid, proc) in sys.processes() {
+                            if let Some(p) = proc.parent() {
+                                if p == current {
+                                    to_kill.push(*proc_pid);
+                                }
+                            }
+                        }
+                        idx += 1;
+                    }
+                    
+                    for p in to_kill.into_iter().rev() {
+                        if let Some(proc) = sys.process(p) {
+                            #[cfg(unix)]
+                            {
+                                if proc.kill_with(sysinfo::Signal::Term).is_none() {
+                                    proc.kill(); // Fallback to SIGKILL
+                                }
+                            }
+                            #[cfg(windows)]
+                            proc.kill();
+                            
+                            println!("Sent termination signal to pid: {}", p.as_u32());
                         }
                     }
-                    #[cfg(windows)]
-                    proc.kill();
-                    
-                    println!("Sent termination signal to pid: {}", p.as_u32());
                 }
             }
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_download(state: tauri::State<'_, AppState>, id: String, filepath: Option<String>) -> Result<(), String> {
+    println!("remove_download called for id: {}", id);
+    
+    // Check if it's aria2 first, so we can call remove instead of pause
+    let mut is_aria2 = false;
+    let mut gid_to_remove = String::new();
+    if let Some(TaskHandle::Aria2(gid)) = state.tasks.lock().unwrap().get(&id) {
+        is_aria2 = true;
+        gid_to_remove = gid.clone();
+    }
+    
+    if is_aria2 {
+        state.tasks.lock().unwrap().remove(&id);
+        let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.remove", serde_json::json!([gid_to_remove])).await;
+    } else {
+        let _ = pause_download(state, id).await;
+    }
+    
+    if let Some(path) = filepath {
+        if !path.is_empty() {
+            let p = std::path::Path::new(&path);
+            if p.exists() {
+                let _ = std::fs::remove_file(p);
+            }
+            let aria2_path = format!("{}.aria2", path);
+            let p_aria2 = std::path::Path::new(&aria2_path);
+            if p_aria2.exists() {
+                let _ = std::fs::remove_file(p_aria2);
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -996,11 +940,11 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
                     .arg("-i")
                     .spawn()
                 {
-                    tasks.insert("sleep_prevent".to_string(), child.id());
+                    tasks.insert("sleep_prevent".to_string(), TaskHandle::Pid(child.id()));
                 }
             }
         } else {
-            if let Some(pid) = tasks.remove("sleep_prevent") {
+            if let Some(TaskHandle::Pid(pid)) = tasks.remove("sleep_prevent") {
                 let _ = std::process::Command::new("kill")
                     .arg("-15")
                     .arg(pid.to_string())
@@ -1026,8 +970,15 @@ fn perform_system_action(action: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) {
+async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -> Result<(), String> {
     let _ = state.cmd_tx.send(queue::DownloadCommand::SetLimit(limit));
+    let _ = rpc_call(
+        state.aria2_port,
+        &state.aria2_secret,
+        "aria2.changeGlobalOption",
+        serde_json::json!([{"max-concurrent-downloads": limit.to_string()}])
+    ).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1272,6 +1223,12 @@ pub fn run() {
     let extension_frontend_ready = Arc::new(AtomicBool::new(false));
     let server_frontend_ready = extension_frontend_ready.clone();
 
+    let aria2_port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .unwrap_or(6800);
+    let aria2_secret = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -1286,8 +1243,121 @@ pub fn run() {
             cmd_tx,
             extension_pairing_token,
             extension_frontend_ready,
+            aria2_port,
+            aria2_secret: aria2_secret.clone(),
+            media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
         })
         .setup(move |app| {
+            let resource_dir = app.path().resource_dir().unwrap();
+            let aria2c_path = resource_dir.join("binaries").join("aria2c");
+            
+            let mut cmd = std::process::Command::new(&aria2c_path);
+            cmd.arg("--enable-rpc=true")
+               .arg(format!("--rpc-listen-port={}", aria2_port))
+               .arg(format!("--rpc-secret={}", aria2_secret))
+               .arg("--rpc-listen-all=false")
+               .arg("--continue=true")
+               .arg("--allow-overwrite=false")
+               .arg("--summary-interval=1")
+               .arg("--console-log-level=warn")
+               .arg("--download-result=hide")
+               .arg("--check-certificate=false");
+
+            match cmd.spawn() {
+                Ok(_) => println!("Spawned global aria2c daemon on port {}", aria2_port),
+                Err(e) => eprintln!("Failed to spawn aria2c daemon: {}", e),
+            }
+
+            let app_handle_clone = app.handle().clone();
+            let aria2_port_clone = aria2_port;
+            let aria2_secret_clone = aria2_secret.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    
+                    let state = app_handle_clone.state::<AppState>();
+                    let tasks = state.tasks.clone();
+                    
+                    let mut gid_to_id = HashMap::new();
+                    {
+                        let map = tasks.lock().unwrap();
+                        for (id, handle) in map.iter() {
+                            if let TaskHandle::Aria2(gid) = handle {
+                                gid_to_id.insert(gid.clone(), id.clone());
+                            }
+                        }
+                    }
+
+                    if let Ok(json) = crate::rpc_call(aria2_port_clone, &aria2_secret_clone, "aria2.tellActive", serde_json::json!([["gid", "status", "completedLength", "totalLength", "downloadSpeed"]])).await {
+                        if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
+                            for item in arr {
+                                if let Some(gid) = item.get("gid").and_then(|v| v.as_str()) {
+                                    if let Some(id) = gid_to_id.get(gid) {
+                                        let completed = item.get("completedLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                                        let total = item.get("totalLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+                                        let speed_bytes = item.get("downloadSpeed").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                                        
+                                        let fraction = if total > 0.0 { completed / total } else { 0.0 };
+                                        let speed = if speed_bytes > 1024.0 * 1024.0 {
+                                            format!("{:.1} MB/s", speed_bytes / (1024.0 * 1024.0))
+                                        } else if speed_bytes > 1024.0 {
+                                            format!("{:.1} KB/s", speed_bytes / 1024.0)
+                                        } else {
+                                            format!("{:.0} B/s", speed_bytes)
+                                        };
+
+                                        let eta = if speed_bytes > 0.0 && total > completed {
+                                            let seconds = (total - completed) / speed_bytes;
+                                            if seconds > 3600.0 {
+                                                format!("{:.0}h {:.0}m", seconds / 3600.0, (seconds % 3600.0) / 60.0)
+                                            } else if seconds > 60.0 {
+                                                format!("{:.0}m {:.0}s", seconds / 60.0, seconds % 60.0)
+                                            } else {
+                                                format!("{:.0}s", seconds)
+                                            }
+                                        } else {
+                                            "-".to_string()
+                                        };
+
+                                        let _ = app_handle_clone.emit("download-progress", DownloadProgressEvent {
+                                            id: id.clone(),
+                                            fraction,
+                                            speed,
+                                            eta,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if let Ok(json) = crate::rpc_call(aria2_port_clone, &aria2_secret_clone, "aria2.tellStopped", serde_json::json!([0, 100, ["gid", "status", "completedLength", "totalLength"]])).await {
+                        if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
+                            for item in arr {
+                                if let Some(gid) = item.get("gid").and_then(|v| v.as_str()) {
+                                    if let Some(id) = gid_to_id.get(gid) {
+                                        let status = item.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                                        if status == "complete" {
+                                            let _ = app_handle_clone.emit("download-complete", id.clone());
+                                            tasks.lock().unwrap().remove(id);
+                                        } else if status == "error" {
+                                            let comp = item.get("completedLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                                            let tot = item.get("totalLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
+                                            if comp > 0.0 && comp >= tot {
+                                                let _ = app_handle_clone.emit("download-complete", id.clone());
+                                            } else {
+                                                let _ = app_handle_clone.emit("download-failed", id.clone());
+                                            }
+                                            tasks.lock().unwrap().remove(id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
             queue::setup_queue(app.handle().clone(), cmd_rx);
             match extension_server::start_server(
                 app.handle().clone(),
@@ -1312,8 +1382,8 @@ pub fn run() {
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
-            set_extension_frontend_ready, set_concurrent_limit,
-            parity::get_system_proxy, parity::get_file_category, parity::check_for_updates
+            set_extension_frontend_ready, set_concurrent_limit, remove_download,
+            parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

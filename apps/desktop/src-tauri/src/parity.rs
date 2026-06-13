@@ -249,3 +249,29 @@ fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
     }
     std::cmp::Ordering::Equal
 }
+
+#[tauri::command]
+pub fn is_supported_media(url: String) -> bool {
+    if let Ok(parsed_url) = reqwest::Url::parse(&url) {
+        if let Some(host) = parsed_url.host_str() {
+            let host_lower = host.to_lowercase();
+            let supported_domains = [
+                "youtube.com", "youtu.be",
+                "twitter.com", "x.com",
+                "vimeo.com",
+                "twitch.tv",
+                "instagram.com",
+                "tiktok.com",
+                "facebook.com", "fb.watch",
+                "reddit.com", "v.redd.it",
+                "soundcloud.com"
+            ];
+            for domain in supported_domains.iter() {
+                if host_lower == *domain || host_lower.ends_with(&format!(".{}", domain)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}

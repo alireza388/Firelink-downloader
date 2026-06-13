@@ -34,3 +34,4 @@ sha2 = "0.10"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tempfile = "3"
+thiserror = "2.0.18"

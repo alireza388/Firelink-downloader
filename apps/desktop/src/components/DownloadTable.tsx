@@ -13,16 +13,7 @@ interface DownloadTableProps {
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { downloads, toggleAddModal, updateDownload, removeDownload, clearFinished, redownload } = useDownloadStore();
-  const { isSidebarVisible, toggleSidebar, listRowDensity } = useSettingsStore();
-
-  const getPaddingY = () => {
-    switch (listRowDensity) {
-      case 'compact': return 'py-1';
-      case 'relaxed': return 'py-4';
-      default: return 'py-3';
-    }
-  };
-  const py = getPaddingY();
+  const { isSidebarVisible, toggleSidebar } = useSettingsStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
 
@@ -111,34 +102,35 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-transparent h-full relative">
-      <div className="glass-panel shrink-0 border-b border-border-color/60">
-        <WindowDragRegion className={!isSidebarVisible ? 'pl-24' : ''} />
+    <div className="flex-1 flex flex-col bg-transparent h-full relative p-4 pb-0">
+      <div className="glass-panel shrink-0 rounded-[16px] mb-3 shadow-sm border border-border-color/40 z-10">
+        <WindowDragRegion className={!isSidebarVisible ? 'pl-20' : ''} />
 
         {/* Download Toolbar */}
-        <div className={`flex px-6 pb-4 items-center ${!isSidebarVisible ? 'pl-24' : ''}`}>
+        <div className={`flex px-5 pb-3 pt-1 items-center ${!isSidebarVisible ? 'pl-20' : ''}`}>
           <button
             onClick={toggleSidebar}
-            className="mr-4 p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-item-hover transition-colors"
+            className="mr-4 p-1.5 rounded-lg text-text-secondary hover:text-text-primary hover:bg-item-hover transition-all duration-200 hover-lift"
             title="Toggle Sidebar"
           >
-            <PanelLeft size={18} strokeWidth={2} />
+            <PanelLeft size={18} strokeWidth={2.5} />
           </button>
           <h2 className="text-[15px] font-bold mr-auto text-text-primary tracking-tight cursor-default">{getFilterTitle()}</h2>
 
-          <div className="flex gap-1.5 items-center">
+          <div className="flex gap-2 items-center bg-item-hover/30 p-1 rounded-xl border border-border-color/30">
             <button
               onClick={() => toggleAddModal(true)}
-              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              className="p-1.5 rounded-lg text-text-secondary hover:text-white hover:bg-accent hover:shadow-md hover:shadow-accent/30 transition-all duration-200 hover-lift"
               title="Add Download"
             >
-              <Plus size={16} strokeWidth={2} />
+              <Plus size={16} strokeWidth={2.5} />
             </button>
+            <div className="w-[1px] h-4 bg-border-color/50"></div>
             <button
               onClick={() => {
                 filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
               }}
-              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              className="p-1.5 rounded-lg text-text-secondary hover:text-white hover:bg-green-500 hover:shadow-md hover:shadow-green-500/30 transition-all duration-200 hover-lift"
               title="Resume All"
             >
               <Play size={16} fill="currentColor" className="opacity-90" />
@@ -147,50 +139,49 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               onClick={() => {
                 filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
               }}
-              className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-item-hover transition-all duration-200"
+              className="p-1.5 rounded-lg text-text-secondary hover:text-white hover:bg-orange-500 hover:shadow-md hover:shadow-orange-500/30 transition-all duration-200 hover-lift"
               title="Pause All"
             >
               <Pause size={16} fill="currentColor" className="opacity-90" />
             </button>
+            <div className="w-[1px] h-4 bg-border-color/50"></div>
             <button
               onClick={clearFinished}
-              className="p-1.5 rounded-md text-text-secondary hover:text-red-400 hover:bg-item-hover transition-all duration-200"
+              className="p-1.5 rounded-lg text-text-secondary hover:text-white hover:bg-red-500 hover:shadow-md hover:shadow-red-500/30 transition-all duration-200 hover-lift"
               title="Clear Finished"
             >
-              <Trash2 size={16} />
+              <Trash2 size={16} strokeWidth={2} />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-auto bg-transparent">
-        <table className="w-full border-collapse text-left">
-          <thead className="sticky top-0 bg-main-bg z-0 border-b border-border-color">
-            <tr className="text-text-muted/60 text-[10px] font-bold tracking-widest uppercase">
-              <th className={`${py} px-3 pl-8`}>FILE</th>
-              <th className={`${py} px-3 w-40`}>SIZE</th>
-              <th className={`${py} px-3 w-36`}>STATUS</th>
-              <th className={`${py} px-3 w-28`}>SPEED</th>
-              <th className={`${py} px-3 w-28`}>ETA</th>
-              <th className={`${py} px-3 pr-8 w-36`}>DATE ADDED</th>
-            </tr>
-          </thead>
-          <tbody>
+      {/* List */}
+      <div className="flex-1 overflow-auto bg-transparent px-1 pb-4 relative">
+        <div className="w-full text-left">
+          <div className="flex text-text-muted/60 text-[10px] font-bold tracking-widest uppercase px-4 pb-2 pt-2 sticky top-0 z-0 bg-transparent backdrop-blur-md">
+            <div className="flex-1 min-w-[200px]">FILE</div>
+            <div className="w-32">SIZE</div>
+            <div className="w-32">STATUS</div>
+            <div className="w-28">SPEED</div>
+            <div className="w-28">ETA</div>
+            <div className="w-32 text-right pr-4">DATE ADDED</div>
+          </div>
+          <div className="flex flex-col gap-2">
             {filteredDownloads.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-16 text-center">
-                  <div className="flex flex-col items-center justify-center text-text-muted/50 gap-3">
-                    <Box size={48} strokeWidth={1} />
-                    <span className="text-sm font-medium">No downloads in this view</span>
+              <div className="p-16 text-center glass-card rounded-[16px] mx-2 mt-4">
+                <div className="flex flex-col items-center justify-center text-text-muted/50 gap-4">
+                  <div className="p-4 bg-item-hover rounded-full animate-float">
+                    <Box size={40} strokeWidth={1.5} />
                   </div>
-                </td>
-              </tr>
+                  <span className="text-[13px] font-medium tracking-wide">No downloads in this view</span>
+                </div>
+              </div>
             ) : (
               filteredDownloads.map(d => (
-                <tr
+                <div
                   key={d.id}
-                  className="border-b border-border-color/30 hover:bg-item-hover transition-colors duration-200 group cursor-default"
+                  className="flex items-center px-4 py-3 bg-item-hover/20 hover:bg-item-hover/50 border border-border-color/20 hover:border-border-color/40 rounded-[14px] transition-all duration-200 group cursor-default hover-lift shadow-sm mx-1"
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setContextMenu({
@@ -200,19 +191,19 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                     });
                   }}
                 >
-                  <td className={`${py} px-3 pl-8 text-[13px] text-text-primary`}>
+                  <div className="flex-1 min-w-[200px] text-[13px] text-text-primary pr-4">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-item-hover rounded-md border border-border-color/50 text-text-muted">
+                      <div className="p-2.5 bg-bg-modal shadow-sm rounded-xl border border-border-color/40 text-text-muted group-hover:scale-105 transition-transform">
                          {getCategoryIcon(d.category)}
                       </div>
                       <span className="font-medium truncate max-w-[280px]">{d.fileName}</span>
                     </div>
-                  </td>
-                  <td className={`${py} px-3`}>
+                  </div>
+                  <div className="w-32 pr-4">
                     {d.status === 'downloading' || d.status === 'paused' ? (
-                      <div className="w-full pr-4">
-                        <div className="w-full bg-[#3f3f3f] rounded-full h-1.5 mb-1.5 overflow-hidden">
-                          <div className={`h-1.5 rounded-full transition-all duration-300 ${d.status === 'paused' ? 'bg-orange-500' : 'bg-[#3B66DE]'}`} style={{ width: `${(d.fraction || 0) * 100}%` }}></div>
+                      <div className="w-full">
+                        <div className="w-full bg-border-color/30 rounded-full h-1.5 mb-1.5 overflow-hidden">
+                          <div className={`h-1.5 rounded-full transition-all duration-300 ${d.status === 'paused' ? 'bg-orange-500' : 'bg-accent'}`} style={{ width: `${(d.fraction || 0) * 100}%` }}></div>
                         </div>
                         <div className="text-[11px] text-text-muted font-medium">
                           {((d.fraction || 0) * 100).toFixed(1)}%
@@ -221,33 +212,33 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                     ) : (
                       <span className="text-[12px] text-text-secondary font-medium">{d.size || '-'}</span>
                     )}
-                  </td>
-                  <td className={`${py} px-3`}>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase ${
-                      d.status === 'completed' ? 'text-[#4CAF50]' :
-                      d.status === 'downloading' ? 'bg-[#1E3A8A] text-[#60A5FA]' :
-                      d.status === 'failed' ? 'text-red-400' :
-                      d.status === 'paused' ? 'text-orange-400' :
-                      'text-text-muted'
+                  </div>
+                  <div className="w-32">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-widest uppercase shadow-sm ${
+                      d.status === 'completed' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                      d.status === 'downloading' ? 'bg-accent/10 text-accent border border-accent/20' :
+                      d.status === 'failed' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
+                      d.status === 'paused' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
+                      'bg-item-hover text-text-muted border border-border-color/30'
                     }`}>
                       {d.status}
                     </span>
-                  </td>
-                  <td className={`${py} px-3 text-[12px] text-text-secondary font-medium`}>{d.speed}</td>
-                  <td className={`${py} px-3 text-[12px] text-text-secondary font-medium`}>{d.eta}</td>
-                  <td className={`${py} px-3 pr-8 relative`}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[12px] text-text-secondary font-medium">
+                  </div>
+                  <div className="w-28 text-[12px] text-text-secondary font-medium">{d.speed}</div>
+                  <div className="w-28 text-[12px] text-text-secondary font-medium">{d.eta}</div>
+                  <div className="w-32 relative text-right pr-4">
+                    <div className="flex items-center justify-end">
+                      <span className="text-[12px] text-text-secondary font-medium group-hover:opacity-0 transition-opacity duration-200">
                         {d.dateAdded ? new Date(d.dateAdded).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
                       </span>
-                      <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute right-8 top-1/2 -translate-y-1/2">
+                      <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute right-4 top-1/2 -translate-y-1/2">
                         {d.status === 'downloading' && (
-                          <button onClick={() => handlePause(d.id)} className="p-1 bg-[#2A2B2D] border border-[#3f3f3f] hover:bg-[#3f3f3f] rounded text-orange-400 transition-colors" title="Pause">
+                          <button onClick={() => handlePause(d.id)} className="p-1.5 bg-bg-modal border border-border-color shadow-sm hover:border-orange-500 hover:text-orange-500 rounded-lg text-text-muted transition-all hover-lift" title="Pause">
                             <Pause size={14} fill="currentColor" />
                           </button>
                         )}
                         {d.status === 'paused' && (
-                          <button onClick={() => handleResume(d)} className="p-1 bg-[#2A2B2D] border border-[#3f3f3f] hover:bg-[#3f3f3f] rounded text-green-400 transition-colors" title="Resume">
+                          <button onClick={() => handleResume(d)} className="p-1.5 bg-bg-modal border border-border-color shadow-sm hover:border-green-500 hover:text-green-500 rounded-lg text-text-muted transition-all hover-lift" title="Resume">
                             <Play size={14} fill="currentColor" />
                           </button>
                         )}
@@ -256,18 +247,18 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                              e.stopPropagation();
                              setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
                           }}
-                          className="p-1 bg-[#2A2B2D] border border-[#3f3f3f] hover:bg-[#3f3f3f] rounded text-text-muted hover:text-text-primary transition-colors"
+                          className="p-1.5 bg-bg-modal border border-border-color shadow-sm hover:border-accent hover:text-accent rounded-lg text-text-muted transition-all hover-lift"
                         >
                           <MoreVertical size={14} />
                         </button>
                       </div>
                     </div>
-                  </td>
-                </tr>
+                  </div>
+                </div>
               ))
             )}
-          </tbody>
-        </table>
+          </div>
+        </div>
       </div>
 
       {/* Floating Context Menu */}

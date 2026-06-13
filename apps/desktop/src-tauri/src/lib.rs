@@ -697,11 +697,13 @@ async fn start_media_download(
     password: Option<String>,
     headers: Option<String>,
     proxy: Option<String>,
+    user_agent: Option<String>,
+    max_tries: Option<i32>,
 ) -> Result<(), String> {
     let task = queue::DownloadTask {
         is_media: true,
         id, url, destination, filename, speed_limit, username, password, headers, proxy,
-        connections: None, checksum: None, cookies: None, mirrors: None, user_agent: None, max_tries: None,
+        connections: None, checksum: None, cookies: None, mirrors: None, user_agent, max_tries,
         format_selector, cookie_source,
     };
     state.cmd_tx.send(queue::DownloadCommand::Enqueue(task)).map_err(|e| e.to_string())?;
@@ -725,6 +727,8 @@ pub(crate) async fn start_media_download_internal(
     let password = task.password;
     let headers = task.headers;
     let proxy = task.proxy;
+    let user_agent = task.user_agent;
+    let max_tries = task.max_tries;
 
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -779,10 +783,21 @@ pub(crate) async fn start_media_download_internal(
         }
     }
 
-    if let Some(cs) = cookie_source {
+    if let Some(mut cs) = cookie_source {
         if !cs.is_empty() && cs != "none" {
+            if cs == "safari" { cs = "safari:".to_string() }
             cmd.arg("--cookies-from-browser").arg(cs);
         }
+    }
+
+    if let Some(ua) = user_agent {
+        if !ua.is_empty() {
+            cmd.arg("--user-agent").arg(ua);
+        }
+    }
+
+    if let Some(tries) = max_tries {
+        cmd.arg("--retries").arg(tries.to_string());
     }
 
     let mut config_file = tempfile::Builder::new().prefix("ytdlp-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
@@ -998,68 +1013,21 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
 #[tauri::command]
 fn perform_system_action(action: String) -> Result<(), String> {
     let status = match action.as_str() {
-        "sleep" => {
-            #[cfg(target_os = "macos")]
-            {
-                Command::new("osascript")
-                    .arg("-e")
-                    .arg("tell application \"Finder\" to sleep")
-                    .status()
-            }
-            #[cfg(target_os = "windows")]
-            {
-                Command::new("rundll32.exe")
-                    .arg("powrprof.dll,SetSuspendState")
-                    .arg("0,1,0")
-                    .status()
-            }
-            #[cfg(target_os = "linux")]
-            {
-                Command::new("systemctl").arg("suspend").status()
-            }
-        }
-        "restart" => {
-            #[cfg(target_os = "macos")]
-            {
-                Command::new("osascript")
-                    .arg("-e")
-                    .arg("tell application \"Finder\" to restart")
-                    .status()
-            }
-            #[cfg(target_os = "windows")]
-            {
-                Command::new("shutdown").args(["/r", "/t", "0"]).status()
-            }
-            #[cfg(target_os = "linux")]
-            {
-                Command::new("systemctl").arg("reboot").status()
-            }
-        }
-        "shutdown" => {
-            #[cfg(target_os = "macos")]
-            {
-                Command::new("osascript")
-                    .arg("-e")
-                    .arg("tell application \"Finder\" to shut down")
-                    .status()
-            }
-            #[cfg(target_os = "windows")]
-            {
-                Command::new("shutdown").args(["/s", "/t", "0"]).status()
-            }
-            #[cfg(target_os = "linux")]
-            {
-                Command::new("systemctl").arg("poweroff").status()
-            }
-        }
-        _ => return Err("Unsupported system action".to_string()),
+        "shutdown" => std::process::Command::new("osascript").arg("-e").arg("tell app \"System Events\" to shut down").status(),
+        "restart" => std::process::Command::new("osascript").arg("-e").arg("tell app \"System Events\" to restart").status(),
+        "sleep" => std::process::Command::new("osascript").arg("-e").arg("tell app \"System Events\" to sleep").status(),
+        _ => return Err("Invalid action".to_string())
     };
 
     match status {
-        Ok(result) if result.success() => Ok(()),
-        Ok(result) => Err(format!("System action exited with status {result}")),
-        Err(error) => Err(format!("Failed to perform system action: {error}")),
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string())
     }
+}
+
+#[tauri::command]
+fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) {
+    let _ = state.cmd_tx.send(queue::DownloadCommand::SetLimit(limit));
 }
 
 #[tauri::command]
@@ -1216,8 +1184,10 @@ fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), Stri
             let show_i = MenuItem::with_id(&app_handle, "show", "Show Firelink", true, None::<&str>).map_err(|e| e.to_string())?;
             let menu = Menu::with_items(&app_handle, &[&show_i, &quit_i]).map_err(|e| e.to_string())?;
 
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")).unwrap();
             let _tray = TrayIconBuilder::with_id("main")
-                .icon(app_handle.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
+                .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
@@ -1342,7 +1312,7 @@ pub fn run() {
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
-            set_extension_frontend_ready,
+            set_extension_frontend_ready, set_concurrent_limit,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates
         ])
         .run(tauri::generate_context!())

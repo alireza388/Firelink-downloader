@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { SettingsTab, useSettingsStore } from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
-  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw
+  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { WindowDragRegion } from './WindowDragRegion';
+import appIcon from '../assets/app-icon.png';
 
 const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[] = [
   { type: 'downloads', label: 'Downloads', icon: Download },
@@ -793,24 +794,72 @@ export default function SettingsView() {
 
           {/* About Pane */}
           {activeTab === 'about' && (
-            <div className="space-y-6 max-w-md mx-auto text-center py-6">
-              <div className="w-16 h-16 bg-accent text-white font-extrabold text-2xl flex items-center justify-center rounded-2xl mx-auto shadow-lg shadow-accent/20">
-                FL
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-bold text-text-primary">Firelink Desktop</h3>
-                <p className="text-text-secondary text-sm">Version 0.8.0-rewrite (Tauri v2)</p>
-                <p className="text-text-muted text-xs leading-relaxed max-w-sm mx-auto">
-                  A high-speed, cross-platform download engine rebuilt in Rust, React, and Tailwind, replicating the premium SwiftUI native look.
-                </p>
+            <div className="space-y-6 max-w-[720px]">
+              {/* Header Box */}
+              <div className="bg-bg-modal border border-border-modal/40 rounded-xl p-6 flex items-center gap-4">
+                <img src={appIcon} alt="Firelink Icon" className="w-[72px] h-[72px] drop-shadow-md rounded-xl" />
+                <div className="space-y-1">
+                  <h3 className="text-[17px] font-bold text-text-primary">Firelink</h3>
+                  <p className="text-text-secondary text-[12px] font-medium">Version 0.7.3</p>
+                  <p className="text-text-muted text-[11px]">
+                    A native macOS download manager for fast, organized, segmented transfers.
+                  </p>
+                </div>
               </div>
 
-              <div className="border-t border-border-color/30 pt-4 flex justify-center gap-4 text-xs text-accent">
-                <a href="https://github.com/nimbold/Firelink" target="_blank" rel="noreferrer" className="hover:underline">GitHub Repository</a>
-                <span>•</span>
-                <a href="https://github.com/nimbold/Firelink/issues" target="_blank" rel="noreferrer" className="hover:underline">Report Issues</a>
+              {/* Updates Section */}
+              <div className="space-y-2">
+                <h4 className="text-[12px] font-bold text-text-primary px-1">Updates</h4>
+                <div className="bg-bg-modal border border-border-modal/40 rounded-xl overflow-hidden">
+                  <div className="p-4 flex items-center justify-between border-b border-border-modal/40">
+                    <div>
+                      <p className="text-[13px] font-bold text-text-primary">Check for Updates</p>
+                      <p className="text-text-muted text-[11px] mt-0.5">Firelink checks GitHub Releases for new versions.</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        showToast("Checking for updates...");
+                        invoke('check_for_updates').then((res: any) => {
+                          if (res === "Up to date.") showToast("Firelink is up to date");
+                          else showToast(res);
+                        }).catch((e) => showToast(String(e)));
+                      }}
+                      className="bg-item-hover hover:bg-item-hover/80 text-text-primary px-4 py-1.5 rounded-lg text-xs font-semibold border border-border-modal/50 transition-colors"
+                    >
+                      Check Now
+                    </button>
+                  </div>
+                  <label className="p-4 flex items-center justify-between cursor-default">
+                    <span className="text-[13px] font-bold text-text-primary">Automatically check for updates</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={settings.autoCheckUpdates}
+                      onClick={() => settings.setAutoCheckUpdates(!settings.autoCheckUpdates)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-default items-center rounded-full transition-colors duration-200 ease-in-out border border-transparent ${settings.autoCheckUpdates ? 'bg-accent' : 'bg-border-color'}`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition duration-200 ease-in-out ${settings.autoCheckUpdates ? 'translate-x-4' : 'translate-x-0'}`} />
+                    </button>
+                  </label>
+                </div>
               </div>
-              <p className="text-[10px] text-text-muted pt-2">© 2026 Firelink Project. Released under the MIT License.</p>
+
+              {/* Credits Footer */}
+              <div className="bg-bg-modal border border-border-modal/40 rounded-xl p-4 text-[11px] space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-text-primary font-bold">Created by NimBold</span>
+                  <a href="https://github.com/nimbold/Firelink" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-text-secondary hover:text-accent transition-colors font-medium">
+                    <Code size={14} /> Source Code
+                  </a>
+                </div>
+                <div className="flex justify-between items-center text-text-muted">
+                  <span>Powered by <span className="text-accent">aria2</span> • <span className="text-accent">yt-dlp</span> • <span className="text-accent">ffmpeg</span> • <span className="text-accent">Deno</span></span>
+                  <a href="https://github.com/nimbold/Firelink/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-accent hover:underline">MIT License</a>
+                </div>
+                <div className="text-text-muted pt-1 border-t border-border-modal/40">
+                  Copyright © 2026 NimBold. All rights reserved.
+                </div>
+              </div>
             </div>
           )}
 

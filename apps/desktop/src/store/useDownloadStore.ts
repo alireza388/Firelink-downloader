@@ -394,7 +394,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             speedLimit,
             username: item.username || (login ? login.username : null),
             password: item.password || keychainPassword,
-            headers: item.headers || null
+            headers: item.headers || null,
+            proxy: getProxyArgs(settings),
+            userAgent: settings.customUserAgent || null,
+            maxTries: settings.maxAutomaticRetries
           });
         } else {
           const speedLimit = effectiveSpeedLimit(

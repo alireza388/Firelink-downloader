@@ -53,10 +53,15 @@ function App() {
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef(globalSpeedLimit);
+  const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
 
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
   }, [appFontSize]);
+
+  useEffect(() => {
+    invoke('set_concurrent_limit', { limit: maxConcurrentDownloads }).catch(console.error);
+  }, [maxConcurrentDownloads]);
 
   useEffect(() => {
     invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
@@ -231,14 +236,18 @@ function App() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen bg-main-bg text-text-primary overflow-hidden">
+    <div className="flex h-screen w-screen bg-main-bg app-bg-gradient text-text-primary overflow-hidden">
       
       {/* Left Side Panel - Curved Second Layer on Top */}
-      {isSidebarVisible && (
-        <div className="w-[240px] bg-sidebar-bg rounded-r-[16px] shadow-[4px_0_24px_rgba(0,0,0,0.3)] border-r border-border-color/20 flex flex-col overflow-hidden relative z-20 shrink-0">
+      <div
+        className={`flex flex-col overflow-hidden relative z-20 shrink-0 transition-all duration-300 ease-in-out glass-panel ${
+          isSidebarVisible ? 'w-[240px] opacity-100 shadow-[4px_0_24px_rgba(0,0,0,0.2)] border-r border-border-color/30' : 'w-0 opacity-0 border-r-0'
+        }`}
+      >
+        <div className="w-[240px] h-full flex flex-col shrink-0">
           <Sidebar selectedFilter={filter} onSelectFilter={(f) => { setFilter(f); useSettingsStore.getState().setActiveView('downloads'); }} />
         </div>
-      )}
+      </div>
       
       {/* Main Content - Base Layer */}
       <div className="flex-1 flex flex-col h-full relative z-0">
@@ -250,12 +259,21 @@ function App() {
         </div>
         
         {/* Status Bar */}
-        <div className="h-7 px-5 flex items-center justify-between text-[11px] text-text-muted font-medium shrink-0 border-t border-border-color/30">
-          <span>Ready</span>
-          <div className="flex gap-2">
-            <span>{activeDownloadCount} active</span>
-            <span>{queuedCount} queued</span>
-            <span>{doneCount} done</span>
+        <div className="h-8 px-6 flex items-center justify-between text-[11px] text-text-muted font-medium shrink-0 border-t border-border-color/20 glass-panel">
+          <span className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent/80 animate-pulse"></span>
+            Ready
+          </span>
+          <div className="flex gap-4">
+            <span className="flex items-center gap-1.5">
+              <span className="text-text-primary">{activeDownloadCount}</span> active
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-text-primary">{queuedCount}</span> queued
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-text-primary">{doneCount}</span> done
+            </span>
           </div>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface SiteLogin {
   id: string;
@@ -56,6 +57,7 @@ export interface SettingsState {
   downloadDirectories: Record<string, string>;
   siteLogins: SiteLogin[];
   extensionPairingToken: string;
+  autoCheckUpdates: boolean;
 
   setTheme: (theme: 'dark' | 'light' | 'system' | 'dracula' | 'nord') => void;
   setDefaultDownloadPath: (path: string) => void;
@@ -90,6 +92,7 @@ export interface SettingsState {
   addSiteLogin: (login: SiteLogin) => void;
   removeSiteLogin: (id: string) => void;
   regeneratePairingToken: () => void;
+  setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
 }
 
 const defaultDirectories = {
@@ -192,10 +195,14 @@ export const useSettingsStore = create<SettingsState>()(
       downloadDirectories: { ...defaultDirectories },
       siteLogins: [],
       extensionPairingToken: generateSecureToken(),
+      autoCheckUpdates: true,
 
       setTheme: (theme) => set({ theme }),
       setDefaultDownloadPath: (path) => set({ defaultDownloadPath: path }),
-      setMaxConcurrentDownloads: (max) => set({ maxConcurrentDownloads: max }),
+      setMaxConcurrentDownloads: (max) => {
+        set({ maxConcurrentDownloads: max });
+        invoke('set_concurrent_limit', { limit: max }).catch(console.error);
+      },
       setGlobalSpeedLimit: (limit) => set({ globalSpeedLimit: limit }),
       setActiveView: (view) => set({ activeView: view }),
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
@@ -232,6 +239,7 @@ export const useSettingsStore = create<SettingsState>()(
         siteLogins: state.siteLogins.filter((login) => login.id !== id)
       })),
       regeneratePairingToken: () => set({ extensionPairingToken: generateSecureToken() }),
+      setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
     }),
     {
       name: 'firelink-settings',
@@ -264,7 +272,8 @@ export const useSettingsStore = create<SettingsState>()(
         mediaCookieSource: state.mediaCookieSource,
         downloadDirectories: state.downloadDirectories,
         siteLogins: state.siteLogins,
-        extensionPairingToken: state.extensionPairingToken
+        extensionPairingToken: state.extensionPairingToken,
+        autoCheckUpdates: state.autoCheckUpdates
       }),
       merge: (persistedState: any, currentState) => ({
         ...currentState,

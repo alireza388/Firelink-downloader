@@ -1,92 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 :root {
-  /* Default/fallback Light, matching Theme.modernLight. */
+  /* Default/fallback Light */
   --main-bg: 0 0% 98%;
-  --sidebar-bg: 0 0% 94%;
-  --sidebar-glass: 0 0% 94% / 0.78;
+  --sidebar-bg: 0 0% 100% / 0.6;
+  --sidebar-glass: 0 0% 100% / 0.6;
   --border-color: 0 0% 88%;
   --item-hover: 0 0% 0% / 0.05;
   --item-selected: 211 100% 50% / 0.15;
   --accent-color: 211 100% 52%;
 
-  --text-primary: 0 0% 10%;
-  --text-secondary: 0 0% 30%;
-  --text-muted: 0 0% 50%;
+  --text-primary: 0 0% 15%;
+  --text-secondary: 0 0% 35%;
+  --text-muted: 0 0% 55%;
   --bg-modal: 0 0% 100%;
-  --bg-input: 0 0% 100%;
+  --bg-input: 0 0% 95%;
   --border-modal: 0 0% 85%;
 }
 
 .theme-light {
   color-scheme: light;
-  --main-bg: 0 0% 98%;
-  --sidebar-bg: 0 0% 94%;
-  --sidebar-glass: 0 0% 94% / 0.78;
-  --border-color: 0 0% 88%;
+  --main-bg: 210 20% 98%;
+  --sidebar-bg: 0 0% 100% / 0.7;
+  --sidebar-glass: 0 0% 100% / 0.7;
+  --border-color: 210 10% 88%;
   --item-hover: 0 0% 0% / 0.05;
-  --item-selected: 211 100% 50% / 0.15;
-  --accent-color: 211 100% 52%;
-  --text-primary: 0 0% 10%;
-  --text-secondary: 0 0% 30%;
-  --text-muted: 0 0% 50%;
+  --item-selected: 220 90% 56% / 0.15;
+  --accent-color: 220 90% 56%;
+  --text-primary: 220 20% 15%;
+  --text-secondary: 220 15% 40%;
+  --text-muted: 220 10% 55%;
   --bg-modal: 0 0% 100%;
-  --bg-input: 0 0% 100%;
+  --bg-input: 0 0% 0% / 0.04;
   --border-modal: 0 0% 85%;
 }
 
 .theme-dark {
   color-scheme: dark;
-  /* Native dark approximation for SwiftUI's system appearance. */
-  --main-bg: 0 0% 16%;
-  --sidebar-bg: 0 0% 14%;
-  --sidebar-glass: 0 0% 14% / 0.78;
-  --border-color: 0 0% 24%;
-  --item-hover: 0 0% 100% / 0.08;
-  --item-selected: 211 100% 50% / 0.2;
-  --accent-color: 211 100% 52%;
-  --text-primary: 0 0% 98%;
-  --text-secondary: 0 0% 75%;
-  --text-muted: 0 0% 55%;
-  --bg-modal: 0 0% 18%;
-  --bg-input: 0 0% 0% / 0.3;
-  --border-modal: 0 0% 28%;
+  --main-bg: 0 0% 6%; /* Deep, pure dark background */
+  --sidebar-bg: 0 0% 10% / 0.7;
+  --sidebar-glass: 0 0% 10% / 0.7;
+  --border-color: 0 0% 100% / 0.08; /* Subtle white opacity borders */
+  --item-hover: 0 0% 100% / 0.05;
+  --item-selected: 217 91% 60% / 0.15;
+  --accent-color: 217 91% 60%;
+  --text-primary: 0 0% 93%;
+  --text-secondary: 0 0% 60%;
+  --text-muted: 0 0% 40%;
+  --bg-modal: 0 0% 12%;
+  --bg-input: 0 0% 0% / 0.4;
+  --border-modal: 0 0% 100% / 0.1;
 }
 
 .theme-dracula {
   color-scheme: dark;
-  /* Exact values from Theme.dracula. */
-  --main-bg: 240 14% 19%;
-  --sidebar-bg: 233 13% 31%;
-  --sidebar-glass: 233 13% 31% / 0.78;
-  --border-color: 232 13% 38%;
-  --item-hover: 0 0% 100% / 0.08;
-  --item-selected: 340 100% 74% / 0.2;
-  --accent-color: 340 100% 74%;
-  --text-primary: 60 25% 96%;
-  --text-secondary: 222 21% 48%;
-  --text-muted: 222 17% 62%;
-  --bg-modal: 240 14% 21%;
-  --bg-input: 240 14% 15%;
-  --border-modal: 233 13% 39%;
+  --main-bg: 231 15% 12%;
+  --sidebar-bg: 231 15% 16% / 0.7;
+  --sidebar-glass: 231 15% 16% / 0.7;
+  --border-color: 0 0% 100% / 0.08;
+  --item-hover: 0 0% 100% / 0.05;
+  --item-selected: 326 100% 74% / 0.2;
+  --accent-color: 326 100% 74%;
+  --text-primary: 60 30% 96%;
+  --text-secondary: 225 27% 60%;
+  --text-muted: 225 20% 45%;
+  --bg-modal: 231 15% 16%;
+  --bg-input: 0 0% 0% / 0.4;
+  --border-modal: 0 0% 100% / 0.1;
 }
 
 .theme-nord {
   color-scheme: dark;
-  /* Exact values from Theme.nord. */
-  --main-bg: 220 16% 22%;
-  --sidebar-bg: 221 16% 28%;
-  --sidebar-glass: 221 16% 28% / 0.78;
-  --border-color: 220 15% 35%;
-  --item-hover: 0 0% 100% / 0.08;
+  --main-bg: 220 16% 16%;
+  --sidebar-bg: 220 16% 20% / 0.7;
+  --sidebar-glass: 220 16% 20% / 0.7;
+  --border-color: 0 0% 100% / 0.08;
+  --item-hover: 0 0% 100% / 0.05;
   --item-selected: 193 43% 67% / 0.2;
-  --accent-color: 194 44% 67%;
-  --text-primary: 220 25% 88%;
-  --text-secondary: 212 18% 64%;
-  --text-muted: 212 14% 72%;
-  --bg-modal: 220 16% 25%;
-  --bg-input: 220 16% 19%;
-  --border-modal: 220 15% 36%;
+  --accent-color: 193 43% 67%;
+  --text-primary: 218 27% 92%;
+  --text-secondary: 213 20% 65%;
+  --text-muted: 213 15% 50%;
+  --bg-modal: 220 16% 20%;
+  --bg-input: 0 0% 0% / 0.4;
+  --border-modal: 0 0% 100% / 0.1;
 }
 
 @theme {
@@ -105,7 +103,7 @@
   --color-bg-input: hsl(var(--bg-input));
   --color-border-modal: hsl(var(--border-modal));
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
 @layer base {
@@ -118,6 +116,7 @@
     -webkit-user-select: none;
     cursor: default;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -157,10 +156,24 @@
   }
 }
 
+/* Glassmorphism Classes */
 .glass-panel {
   background: var(--color-sidebar-glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+}
+
+.glass-card {
+  background: var(--color-sidebar-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border-color);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* Base App Background Gradient - Removed for Modern Minimalist Look */
+.app-bg-gradient {
+  background: transparent;
 }
 
 .settings-tab-label {
@@ -172,4 +185,22 @@
     font-size: 9px;
     letter-spacing: -0.01em;
   }
+}
+
+/* Micro Animations */
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-3px); }
+  100% { transform: translateY(0px); }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-1px) scale(1.01);
 }

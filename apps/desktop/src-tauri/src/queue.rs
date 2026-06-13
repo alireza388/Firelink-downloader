@@ -30,7 +30,7 @@ pub enum DownloadCommand {
 }
 
 pub fn setup_queue(app_handle: tauri::AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<DownloadCommand>) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let mut queue = std::collections::VecDeque::new();
         let mut active_count = 0;
         let mut limit = 3;

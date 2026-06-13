@@ -377,6 +377,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 mod queue;
+mod parity;
 
 pub struct AppState {
     pub tasks: Arc<Mutex<HashMap<String, u32>>>,
@@ -1341,7 +1342,8 @@ pub fn run() {
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
-            set_extension_frontend_ready
+            set_extension_frontend_ready,
+            parity::get_system_proxy, parity::get_file_category, parity::check_for_updates
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

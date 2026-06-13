@@ -104,6 +104,9 @@ export interface DownloadItem {
   username?: string | null;
   password?: string | null;
   headers?: string | null;
+  checksum?: string | null;
+  cookies?: string | null;
+  mirrors?: string | null;
   destination?: string;
   isMedia?: boolean;
   mediaFormatSelector?: string;
@@ -114,8 +117,10 @@ interface DownloadState {
   downloads: DownloadItem[];
   queues: Queue[];
   isAddModalOpen: boolean;
+  pendingAddUrls: string;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
+  openAddModalWithUrls: (urls: string) => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
   addDownload: (item: DownloadItem) => void;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
@@ -135,8 +140,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   downloads: [],
   queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
   isAddModalOpen: false,
+  pendingAddUrls: '',
   selectedPropertiesDownloadId: null,
   toggleAddModal: (isOpen) => set({ isAddModalOpen: isOpen }),
+  openAddModalWithUrls: (urls) => set({ isAddModalOpen: true, pendingAddUrls: urls }),
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
   addDownload: (item) => {
     set((state) => ({ downloads: [...state.downloads, item] }));
@@ -317,6 +324,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             destination: destPath,
             filename: item.fileName,
             formatSelector: item.mediaFormatSelector || null,
+            cookieSource: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
             speedLimit,
             username: item.username || (login ? login.username : null),
             password: item.password || keychainPassword
@@ -337,6 +345,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             username: item.username || (login ? login.username : null),
             password: item.password || keychainPassword,
             headers: item.headers || null,
+            checksum: item.checksum || null,
+            cookies: item.cookies || null,
+            mirrors: item.mirrors || null,
             userAgent: settings.customUserAgent || null,
             maxTries: settings.maxAutomaticRetries,
             proxy: getProxyArgs(settings)

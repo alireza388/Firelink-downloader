@@ -27,6 +27,7 @@ function App() {
   const activeView = useSettingsStore(state => state.activeView);
   const appFontSize = useSettingsStore(state => state.appFontSize);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
+  const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
   const downloads = useDownloadStore(state => state.downloads);
   const activeDownloadCount = downloads.filter(download => download.status === 'downloading').length;
   const queuedCount = downloads.filter(download => download.status === 'queued').length;
@@ -42,6 +43,10 @@ function App() {
   useEffect(() => {
     invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
   }, [showDockBadge, activeDownloadCount]);
+
+  useEffect(() => {
+    invoke('toggle_tray_icon', { show: showMenuBarIcon }).catch(console.error);
+  }, [showMenuBarIcon]);
 
   useEffect(() => {
     if (previousSpeedLimit.current === globalSpeedLimit) return;
@@ -172,10 +177,21 @@ function App() {
       }
     });
 
+    const unlistenExtension = listen('extension-add-download', (event: any) => {
+      const { url, token } = event.payload;
+      const settings = useSettingsStore.getState();
+      if (settings.extensionPairingToken && token === settings.extensionPairingToken) {
+        useDownloadStore.getState().openAddModalWithUrls(url);
+      } else {
+        console.warn('Extension add download rejected: invalid token');
+      }
+    });
+
     return () => {
       unlistenProgress.then(f => f());
       unlistenComplete.then(f => f());
       unlistenFailed.then(f => f());
+      unlistenExtension.then(f => f());
     };
   }, []);
 

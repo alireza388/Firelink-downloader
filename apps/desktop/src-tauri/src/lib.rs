@@ -371,6 +371,9 @@ async fn start_download(
     username: Option<String>,
     password: Option<String>,
     headers: Option<String>,
+    checksum: Option<String>,
+    cookies: Option<String>,
+    mirrors: Option<String>,
     user_agent: Option<String>,
     max_tries: Option<i32>,
     proxy: Option<String>,
@@ -432,6 +435,16 @@ async fn start_download(
             cmd.arg(format!("--header={}", hdr));
         }
     }
+    if let Some(chk) = checksum {
+        if !chk.is_empty() {
+            cmd.arg(format!("--checksum={}", chk));
+        }
+    }
+    if let Some(cks) = cookies {
+        if !cks.is_empty() {
+            cmd.arg(format!("--header=Cookie: {}", cks));
+        }
+    }
     if let Some(ua) = user_agent {
         if !ua.is_empty() {
             cmd.arg(format!("--user-agent={}", ua));
@@ -447,6 +460,18 @@ async fn start_download(
     }
 
     cmd.arg(&url);
+
+    if let Some(m) = mirrors {
+        if !m.is_empty() {
+            for mirror_url in m.lines() {
+                let trimmed = mirror_url.trim();
+                if !trimmed.is_empty() {
+                    cmd.arg(trimmed);
+                }
+            }
+        }
+    }
+
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
     // We remove kill_on_drop(true) so we can gracefully SIGTERM it
@@ -527,6 +552,7 @@ async fn start_media_download(
     destination: String,
     filename: String,
     format_selector: Option<String>,
+    cookie_source: Option<String>,
     speed_limit: Option<String>,
     username: Option<String>,
     password: Option<String>,
@@ -572,6 +598,12 @@ async fn start_media_download(
     if let Some(limit) = speed_limit {
         if !limit.is_empty() {
             cmd.arg("--limit-rate").arg(limit);
+        }
+    }
+
+    if let Some(cs) = cookie_source {
+        if !cs.is_empty() && cs != "none" {
+            cmd.arg("--cookies-from-browser").arg(cs);
         }
     }
 
@@ -958,9 +990,51 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
     }
 }
 
+#[tauri::command]
+fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), String> {
+    use tauri::tray::TrayIconBuilder;
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::Manager;
+
+    if show {
+        if app_handle.tray_by_id("main").is_none() {
+            let quit_i = MenuItem::with_id(&app_handle, "quit", "Quit", true, None::<&str>).map_err(|e| e.to_string())?;
+            let show_i = MenuItem::with_id(&app_handle, "show", "Show Firelink", true, None::<&str>).map_err(|e| e.to_string())?;
+            let menu = Menu::with_items(&app_handle, &[&show_i, &quit_i]).map_err(|e| e.to_string())?;
+
+            let _tray = TrayIconBuilder::with_id("main")
+                .icon(app_handle.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "quit" => {
+                        std::process::exit(0);
+                    }
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    _ => {}
+                })
+                .build(&app_handle)
+                .map_err(|e| e.to_string())?;
+        }
+    } else {
+        if let Some(_tray) = app_handle.tray_by_id("main") {
+            let _ = app_handle.remove_tray_by_id("main");
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            extension_server::start_server(app.handle().clone());
+            Ok(())
+        })
         .manage(AppState {
             tasks: Mutex::new(HashMap::new()),
         })
@@ -973,8 +1047,9 @@ pub fn run() {
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
-            check_file_exists, delete_file
+            check_file_exists, delete_file, toggle_tray_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+mod extension_server;

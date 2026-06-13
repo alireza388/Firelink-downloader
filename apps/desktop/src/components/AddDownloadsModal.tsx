@@ -250,7 +250,7 @@ const isMediaUrl = (url: string) => {
 
 
 export const AddDownloadsModal = () => {
-  const { isAddModalOpen, toggleAddModal, addDownload, queues } = useDownloadStore();
+  const { isAddModalOpen, pendingAddUrls, toggleAddModal, addDownload, queues } = useDownloadStore();
   const { defaultDownloadPath } = useSettingsStore();
 
   const [selectedQueueId, setSelectedQueueId] = useState<string>(MAIN_QUEUE_ID);
@@ -286,12 +286,12 @@ export const AddDownloadsModal = () => {
   useEffect(() => {
     if (isAddModalOpen) {
       setSaveLocation(defaultDownloadPath);
-      setUrls('');
+      setUrls(pendingAddUrls || '');
       setParsedItems([]);
       setSelectedItemIndex(null);
       setSelectedQueueId(queues.find(q => q.isMain)?.id || MAIN_QUEUE_ID);
     }
-  }, [isAddModalOpen, defaultDownloadPath]);
+  }, [isAddModalOpen, pendingAddUrls, defaultDownloadPath]);
 
   useEffect(() => {
     if (!saveLocation) return;

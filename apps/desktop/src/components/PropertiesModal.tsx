@@ -69,6 +69,19 @@ export const PropertiesModal = () => {
         }
 
         setHeaders(activeItem.headers || '');
+        setChecksumEnabled(!!activeItem.checksum);
+        if (activeItem.checksum) {
+           const [algo, val] = activeItem.checksum.split('=');
+           if (val) {
+               setChecksumAlgorithm(algo);
+               setChecksumValue(val);
+           }
+        } else {
+           setChecksumAlgorithm('SHA-256');
+           setChecksumValue('');
+        }
+        setCookies(activeItem.cookies || '');
+        setMirrors(activeItem.mirrors || '');
         setErrorMessage('');
       } else {
         setItem(null);
@@ -115,6 +128,9 @@ export const PropertiesModal = () => {
       username: loginMode === 'custom' ? username.trim() : null,
       password: loginMode === 'custom' ? password.trim() : null,
       headers: headers.trim() || null,
+      checksum: checksumEnabled && checksumValue.trim() ? `${checksumAlgorithm}=${checksumValue.trim()}` : null,
+      cookies: cookies.trim() || null,
+      mirrors: mirrors.trim() || null,
     };
     
     updateDownload(item.id, updates);

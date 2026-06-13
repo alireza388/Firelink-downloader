@@ -1359,17 +1359,20 @@ pub fn run() {
             });
 
             queue::setup_queue(app.handle().clone(), cmd_rx);
-            match extension_server::start_server(
-                app.handle().clone(),
-                server_pairing_token.clone(),
-                server_frontend_ready.clone(),
-            ) {
-                Ok(()) => println!(
-                    "Browser extension server listening on 127.0.0.1:{}",
-                    extension_server::EXTENSION_SERVER_PORT
-                ),
-                Err(error) => eprintln!("Browser extension server unavailable: {error}"),
-            }
+            let ext_app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match extension_server::start_server(
+                    ext_app_handle,
+                    server_pairing_token.clone(),
+                    server_frontend_ready.clone(),
+                ).await {
+                    Ok(()) => println!(
+                        "Browser extension server listening on 127.0.0.1:{}",
+                        extension_server::EXTENSION_SERVER_PORT
+                    ),
+                    Err(error) => eprintln!("Browser extension server unavailable: {error}"),
+                }
+            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

@@ -1,6 +1,5 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::{Manager, Emitter};
-use std::process::Command;
 use tokio::process::Command as AsyncCommand;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -183,9 +182,10 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
     let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
     println!("Resolved yt-dlp path: {:?}", ytdlp_path);
 
-    let output = Command::new(&ytdlp_path)
+    let output = AsyncCommand::new(&ytdlp_path)
         .arg("--version")
         .output()
+        .await
         .map_err(|e| {
             println!("Failed to execute: {}", e);
             format!("Failed to execute yt-dlp: {}", e)
@@ -210,9 +210,10 @@ async fn test_aria2c(app_handle: tauri::AppHandle) -> Result<String, String> {
     let aria2c_path = resource_dir.join("binaries").join("aria2c");
     println!("Resolved aria2c path: {:?}", aria2c_path);
 
-    let output = Command::new(&aria2c_path)
+    let output = AsyncCommand::new(&aria2c_path)
         .arg("--version")
         .output()
+        .await
         .map_err(|e| {
             println!("Failed to execute: {}", e);
             format!("Failed to execute aria2c: {}", e)
@@ -240,9 +241,10 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     let ffmpeg_path = resource_dir.join("binaries").join("ffmpeg");
     println!("Resolved ffmpeg path: {:?}", ffmpeg_path);
 
-    let output = Command::new(&ffmpeg_path)
+    let output = AsyncCommand::new(&ffmpeg_path)
         .arg("-version")
         .output()
+        .await
         .map_err(|e| {
             println!("Failed to execute: {}", e);
             format!("Failed to execute ffmpeg: {}", e)
@@ -270,9 +272,10 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     let deno_path = resource_dir.join("binaries").join("deno");
     println!("Resolved deno path: {:?}", deno_path);
 
-    let output = Command::new(&deno_path)
+    let output = AsyncCommand::new(&deno_path)
         .arg("--version")
         .output()
+        .await
         .map_err(|e| {
             println!("Failed to execute: {}", e);
             format!("Failed to execute deno: {}", e)
@@ -859,12 +862,18 @@ async fn remove_download(state: tauri::State<'_, AppState>, id: String, filepath
 fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
     #[cfg(target_os = "macos")]
     {
-        let label = if count > 0 { count.to_string() } else { "".to_string() };
-        let script = format!("tell application \"System Events\" to set the badge of application process \"Firelink\" to \"{}\"", label);
-        let _ = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(script)
-            .status();
+        use cocoa::appkit::NSApp;
+        use cocoa::base::{nil, id};
+        use cocoa::foundation::NSString;
+        use objc::{msg_send, sel, sel_impl};
+        
+        unsafe {
+            let app = NSApp();
+            let dock_tile: id = msg_send![app, dockTile];
+            let label = if count > 0 { count.to_string() } else { "".to_string() };
+            let ns_label = NSString::alloc(nil).init_str(&label);
+            let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
+        }
     }
 }
 
@@ -919,16 +928,21 @@ async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option
 fn request_automation_permission() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let status = Command::new("osascript")
-            .arg("-e")
-            .arg("tell application \"Finder\" to get name")
-            .status()
-            .map_err(|error| error.to_string())?;
-        return if status.success() {
-            Ok(())
-        } else {
-            Err("Automation permission was not granted".to_string())
-        };
+        use cocoa::foundation::NSString;
+        use cocoa::base::{nil, id};
+        use objc::{msg_send, sel, sel_impl, class};
+
+        unsafe {
+            let script_str = NSString::alloc(nil).init_str("tell application \"Finder\" to get name");
+            let ns_apple_script: id = msg_send![class!(NSAppleScript), alloc];
+            let ns_apple_script: id = msg_send![ns_apple_script, initWithSource: script_str];
+            let mut error_dict: id = nil;
+            let result: id = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
+            if result == nil {
+                return Err("Automation permission was not granted".to_string());
+            }
+        }
+        return Ok(());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -936,18 +950,13 @@ fn request_automation_permission() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_automation_settings() -> Result<(), String> {
+fn open_automation_settings(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let status = Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
-            .status()
-            .map_err(|error| error.to_string())?;
-        return if status.success() {
-            Ok(())
-        } else {
-            Err("Failed to open Automation settings".to_string())
-        };
+        use tauri_plugin_opener::OpenerExt;
+        app_handle.opener().open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", None::<String>)
+            .map_err(|e| format!("Failed to open Automation settings: {}", e))?;
+        return Ok(());
     }
 
     #[cfg(not(target_os = "macos"))]

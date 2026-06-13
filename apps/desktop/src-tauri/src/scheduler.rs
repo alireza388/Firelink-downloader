@@ -50,8 +50,8 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                         let date_key = now.format("%Y-%m-%d").to_string();
                         let trigger_key = format!("{}-{}", date_key, current_time);
 
-                        let last_start_key = settings.get("schedulerLastStartKey").and_then(|v| v.as_str()).unwrap_or("");
-                        let last_stop_key = settings.get("schedulerLastStopKey").and_then(|v| v.as_str()).unwrap_or("");
+                        let last_start_key = settings.get("schedulerLastStartKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let last_stop_key = settings.get("schedulerLastStopKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
                         if scheduler.start_time == current_time && last_start_key != trigger_key {
                             settings["schedulerLastStartKey"] = serde_json::json!(trigger_key.clone());

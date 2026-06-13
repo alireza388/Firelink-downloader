@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from './useSettingsStore';
+import {
+  categoryForFileName,
+  fileNameFromUrl,
+  isMediaUrl,
+  type DownloadCategory
+} from '../utils/downloads';
+
+export type { DownloadCategory } from '../utils/downloads';
 
 const getProxyArgs = (settings: ReturnType<typeof useSettingsStore.getState>) => {
   if (settings.proxyMode === 'custom' && settings.proxyHost) {
@@ -77,8 +85,6 @@ const effectiveSpeedLimit = (
 };
 
 export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'failed' | 'queued';
-export type DownloadCategory = 'Musics' | 'Movies' | 'Compressed' | 'Documents' | 'Pictures' | 'Applications' | 'Other';
-
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
 export interface Queue {
@@ -113,14 +119,24 @@ export interface DownloadItem {
   queueId: string;
 }
 
+export interface ExtensionDownloadRequest {
+  urls: string[];
+  referer?: string | null;
+  silent?: boolean;
+  filename?: string | null;
+}
+
 interface DownloadState {
   downloads: DownloadItem[];
   queues: Queue[];
   isAddModalOpen: boolean;
   pendingAddUrls: string;
+  pendingAddReferer: string;
+  pendingAddFilename: string;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
-  openAddModalWithUrls: (urls: string) => void;
+  openAddModalWithUrls: (urls: string, referer?: string | null, filename?: string | null) => void;
+  handleExtensionDownload: (request: ExtensionDownloadRequest) => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
   addDownload: (item: DownloadItem) => void;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
@@ -141,9 +157,59 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
   isAddModalOpen: false,
   pendingAddUrls: '',
+  pendingAddReferer: '',
+  pendingAddFilename: '',
   selectedPropertiesDownloadId: null,
-  toggleAddModal: (isOpen) => set({ isAddModalOpen: isOpen }),
-  openAddModalWithUrls: (urls) => set({ isAddModalOpen: true, pendingAddUrls: urls }),
+  toggleAddModal: (isOpen) => set({
+    isAddModalOpen: isOpen,
+    pendingAddUrls: '',
+    pendingAddReferer: '',
+    pendingAddFilename: ''
+  }),
+  openAddModalWithUrls: (urls, referer, filename) => set({
+    isAddModalOpen: true,
+    pendingAddUrls: urls,
+    pendingAddReferer: referer?.trim() || '',
+    pendingAddFilename: filename?.trim() || ''
+  }),
+  handleExtensionDownload: (request) => {
+    const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
+    if (urls.length === 0) return;
+
+    const settings = useSettingsStore.getState();
+    if (!request.silent || settings.askWhereToSaveEachFile) {
+      get().openAddModalWithUrls(
+        urls.join('\n'),
+        request.referer,
+        urls.length === 1 ? request.filename : null
+      );
+      return;
+    }
+
+    const referer = request.referer?.trim();
+    const headers = referer ? `Referer: ${referer}` : undefined;
+    const dateAdded = new Date().toISOString();
+    const downloads = urls.map((url, index): DownloadItem => {
+      const fileName = index === 0 && urls.length === 1 && request.filename?.trim()
+        ? request.filename.trim()
+        : fileNameFromUrl(url);
+      return {
+        id: crypto.randomUUID(),
+        url,
+        fileName,
+        status: 'queued',
+        category: categoryForFileName(fileName),
+        dateAdded,
+        connections: settings.perServerConnections,
+        headers,
+        isMedia: isMediaUrl(url),
+        queueId: MAIN_QUEUE_ID
+      };
+    });
+
+    set(state => ({ downloads: [...state.downloads, ...downloads] }));
+    void get().processQueue();
+  },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
   addDownload: (item) => {
     set((state) => ({ downloads: [...state.downloads, item] }));
@@ -327,7 +393,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             cookieSource: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
             speedLimit,
             username: item.username || (login ? login.username : null),
-            password: item.password || keychainPassword
+            password: item.password || keychainPassword,
+            headers: item.headers || null
           });
         } else {
           const speedLimit = effectiveSpeedLimit(

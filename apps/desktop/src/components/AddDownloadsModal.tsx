@@ -1,22 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useDownloadStore, MAIN_QUEUE_ID, getSiteLogin } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { DownloadCategory } from '../store/useDownloadStore';
 import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
-
-function determineCategory(fileName: string): DownloadCategory {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  if (['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v'].includes(ext)) return 'Movies';
-  if (['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a', 'wma'].includes(ext)) return 'Musics';
-  if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf'].includes(ext)) return 'Documents';
-  if (['exe', 'dmg', 'apk', 'app', 'pkg', 'deb', 'rpm', 'msi', 'iso', 'bin', 'run'].includes(ext)) return 'Applications';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg'].includes(ext)) return 'Pictures';
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'xz', 'bz2'].includes(ext)) return 'Compressed';
-  return 'Other';
-}
+import { categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
 
 interface RawMediaFormat {
   format_id?: string;
@@ -238,19 +227,16 @@ const parseMediaFormats = (jsonStr: string) => {
   }
 };
 
-const MEDIA_DOMAINS = ['youtube.com', 'youtu.be', 'twitter.com', 'x.com', 'twitch.tv', 'vimeo.com', 'instagram.com', 'tiktok.com', 'reddit.com', 'soundcloud.com', 'facebook.com'];
-const isMediaUrl = (url: string) => {
-  try {
-    const u = new URL(url);
-    return MEDIA_DOMAINS.some(d => u.hostname.includes(d));
-  } catch {
-    return false;
-  }
-};
-
-
 export const AddDownloadsModal = () => {
-  const { isAddModalOpen, pendingAddUrls, toggleAddModal, addDownload, queues } = useDownloadStore();
+  const {
+    isAddModalOpen,
+    pendingAddUrls,
+    pendingAddReferer,
+    pendingAddFilename,
+    toggleAddModal,
+    addDownload,
+    queues
+  } = useDownloadStore();
   const { defaultDownloadPath } = useSettingsStore();
 
   const [selectedQueueId, setSelectedQueueId] = useState<string>(MAIN_QUEUE_ID);
@@ -290,8 +276,24 @@ export const AddDownloadsModal = () => {
       setParsedItems([]);
       setSelectedItemIndex(null);
       setSelectedQueueId(queues.find(q => q.isMain)?.id || MAIN_QUEUE_ID);
+      setUseAuth(false);
+      setUsername('');
+      setPassword('');
+      setAdvancedExpanded(false);
+      setChecksumEnabled(false);
+      setChecksumAlgo('SHA-256');
+      setChecksumValue('');
+      setHeaders(pendingAddReferer ? `Referer: ${pendingAddReferer}` : '');
+      setCookies('');
+      setMirrors('');
     }
-  }, [isAddModalOpen, pendingAddUrls, defaultDownloadPath]);
+  }, [
+    isAddModalOpen,
+    pendingAddUrls,
+    pendingAddReferer,
+    defaultDownloadPath,
+    queues
+  ]);
 
   useEffect(() => {
     if (!saveLocation) return;
@@ -306,8 +308,9 @@ export const AddDownloadsModal = () => {
 
     // Immediately display items in loading state
     const initialItems: ParsedDownloadItem[] = lines.map(url => {
-      let fallbackFile = 'URL';
-      try { fallbackFile = new URL(url).pathname.split('/').pop() || 'download'; } catch {}
+      const fallbackFile = lines.length === 1 && pendingAddFilename
+        ? pendingAddFilename
+        : fileNameFromUrl(url);
       return { url, file: fallbackFile, size: '-', status: 'Loading', isMedia: isMediaUrl(url) };
     });
     setParsedItems(initialItems);
@@ -378,7 +381,13 @@ export const AddDownloadsModal = () => {
               username: login?.username || null,
               password: keychainPassword
             });
-            updatedItems[i] = { url, file: meta.filename, size: meta.size, sizeBytes: meta.size_bytes, status: 'Ready' };
+            updatedItems[i] = {
+              url,
+              file: lines.length === 1 && pendingAddFilename ? pendingAddFilename : meta.filename,
+              size: meta.size,
+              sizeBytes: meta.size_bytes,
+              status: 'Ready'
+            };
           }
           if (firstReadyIndex === null) firstReadyIndex = i;
         } catch (e) {
@@ -394,7 +403,7 @@ export const AddDownloadsModal = () => {
     }, 400);
 
     return () => clearTimeout(timer);
-  }, [urls]); // Re-fetch only on urls change
+  }, [urls, pendingAddFilename]);
 
   if (!isAddModalOpen) return null;
 
@@ -563,13 +572,18 @@ export const AddDownloadsModal = () => {
             url: item.url,
             fileName: finalFile,
             status: startImmediately ? 'queued' : 'paused',
-            category: determineCategory(finalFile),
+            category: categoryForFileName(finalFile),
             dateAdded: new Date().toISOString(),
             connections: Number(connections),
             speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
             username: useAuth ? username.trim() : undefined,
             password: useAuth ? password.trim() : undefined,
             headers: headers.trim() || undefined,
+            checksum: checksumEnabled && checksumValue.trim()
+              ? `${checksumAlgo}=${checksumValue.trim()}`
+              : undefined,
+            cookies: cookies.trim() || undefined,
+            mirrors: mirrors.trim() || undefined,
             destination: finalLocation,
             isMedia: item.isMedia,
             mediaFormatSelector: formatSelector,

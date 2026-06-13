@@ -777,7 +777,7 @@ export default function SettingsView() {
                     <Puzzle size={16} className="text-green-500" />
                   </div>
                   <h4 className="text-[13px] font-bold text-text-primary mb-1">Paste & Connect</h4>
-                  <p className="text-text-muted text-[11px] leading-relaxed">Click the Firelink icon in your browser's toolbar and paste thecopied token.</p>
+                  <p className="text-text-muted text-[11px] leading-relaxed">Click the Firelink icon in your browser's toolbar and paste the copied token.</p>
                 </div>
               </div>
 

@@ -102,6 +102,30 @@ const defaultDirectories = {
   Other: '~/Downloads/Other'
 };
 
+const normalizeDownloadDirectories = (directories: unknown): Record<string, string> => {
+  if (!directories || typeof directories !== 'object') {
+    return { ...defaultDirectories };
+  }
+
+  const values = directories as Record<string, unknown>;
+  const directory = (current: string, legacy?: string) => {
+    const value = values[current] ?? (legacy ? values[legacy] : undefined);
+    return typeof value === 'string' && value.length > 0
+      ? value
+      : defaultDirectories[current as keyof typeof defaultDirectories];
+  };
+
+  return {
+    Musics: directory('Musics', 'Audio'),
+    Movies: directory('Movies', 'Video'),
+    Compressed: directory('Compressed', 'Archives'),
+    Documents: directory('Documents'),
+    Pictures: directory('Pictures', 'Images'),
+    Applications: directory('Applications', 'Apps'),
+    Other: directory('Other')
+  };
+};
+
 const generateSecureToken = () => {
   try {
     const cryptoObj = typeof window !== 'undefined' ? (window.crypto || (window as any).msCrypto) : null;
@@ -165,15 +189,7 @@ export const useSettingsStore = create<SettingsState>()(
       askWhereToSaveEachFile: false,
       preventsSleepWhileDownloading: true,
       mediaCookieSource: 'none',
-      downloadDirectories: {
-        'Video': '~/Downloads/Video',
-        'Audio': '~/Downloads/Audio',
-        'Documents': '~/Downloads/Documents',
-        'Apps': '~/Downloads/Apps',
-        'Images': '~/Downloads/Images',
-        'Archives': '~/Downloads/Compressed',
-        'Other': '~/Downloads/Other'
-      },
+      downloadDirectories: { ...defaultDirectories },
       siteLogins: [],
       extensionPairingToken: generateSecureToken(),
 
@@ -255,9 +271,7 @@ export const useSettingsStore = create<SettingsState>()(
         ...persistedState,
         appFontSize: persistedState?.appFontSize === 'extra-large' ? 'large' : (persistedState?.appFontSize || currentState.appFontSize),
         listRowDensity: persistedState?.listRowDensity === 'spacious' ? 'relaxed' : (persistedState?.listRowDensity || currentState.listRowDensity),
-        downloadDirectories: (persistedState && typeof persistedState === 'object' && persistedState.downloadDirectories)
-          ? persistedState.downloadDirectories
-          : currentState.downloadDirectories,
+        downloadDirectories: normalizeDownloadDirectories(persistedState?.downloadDirectories),
         siteLogins: (persistedState && typeof persistedState === 'object' && Array.isArray(persistedState.siteLogins))
           ? persistedState.siteLogins
           : currentState.siteLogins

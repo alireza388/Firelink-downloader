@@ -344,10 +344,13 @@ async fn show_in_folder(path: String) -> Result<(), String> {
 }
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 struct AppState {
     tasks: Mutex<HashMap<String, u32>>,
+    extension_pairing_token: extension_server::SharedExtensionToken,
+    extension_frontend_ready: extension_server::SharedFrontendReady,
 }
 
 #[derive(Clone, Serialize)]
@@ -356,6 +359,17 @@ struct DownloadProgressEvent {
     fraction: f64,
     speed: String,
     eta: String,
+}
+
+fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<String> {
+    let mut uris = Vec::new();
+    for uri in std::iter::once(url).chain(mirrors.into_iter().flat_map(str::lines)) {
+        let uri = uri.trim();
+        if !uri.is_empty() && !uris.iter().any(|existing| existing == uri) {
+            uris.push(uri.to_string());
+        }
+    }
+    uris
 }
 
 #[tauri::command]
@@ -459,17 +473,8 @@ async fn start_download(
         }
     }
 
-    cmd.arg(&url);
-
-    if let Some(m) = mirrors {
-        if !m.is_empty() {
-            for mirror_url in m.lines() {
-                let trimmed = mirror_url.trim();
-                if !trimmed.is_empty() {
-                    cmd.arg(trimmed);
-                }
-            }
-        }
+    for uri in collect_download_uris(&url, mirrors.as_deref()) {
+        cmd.arg(uri);
     }
 
     cmd.stdout(Stdio::piped());
@@ -556,6 +561,7 @@ async fn start_media_download(
     speed_limit: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    headers: Option<String>,
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -636,6 +642,11 @@ async fn start_media_download(
     if let Some(pass) = password {
         if !pass.is_empty() {
             cmd.arg("--password").arg(&pass);
+        }
+    }
+    if let Some(headers) = headers {
+        for header in headers.lines().map(str::trim).filter(|header| !header.is_empty()) {
+            cmd.arg("--add-headers").arg(header);
         }
     }
 
@@ -1028,15 +1039,92 @@ fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+fn set_extension_pairing_token(
+    state: tauri::State<'_, AppState>,
+    token: String,
+) -> Result<(), String> {
+    if token.is_empty() || token.len() > 512 {
+        return Err("Invalid extension pairing token".to_string());
+    }
+
+    let mut pairing_token = state
+        .extension_pairing_token
+        .write()
+        .map_err(|_| "Extension pairing token lock is unavailable".to_string())?;
+    *pairing_token = token;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_extension_frontend_ready(
+    state: tauri::State<'_, AppState>,
+    ready: bool,
+) {
+    state
+        .extension_frontend_ready
+        .store(ready, Ordering::Release);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_download_uris;
+
+    #[test]
+    fn collects_primary_url_and_unique_mirrors_in_order() {
+        let uris = collect_download_uris(
+            "https://primary.example/file.zip",
+            Some(
+                "\nhttps://mirror-one.example/file.zip\n\
+                 https://primary.example/file.zip\n\
+                 https://mirror-two.example/file.zip\n",
+            ),
+        );
+
+        assert_eq!(
+            uris,
+            vec![
+                "https://primary.example/file.zip",
+                "https://mirror-one.example/file.zip",
+                "https://mirror-two.example/file.zip",
+            ]
+        );
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let extension_pairing_token = Arc::new(RwLock::new(String::new()));
+    let server_pairing_token = extension_pairing_token.clone();
+    let extension_frontend_ready = Arc::new(AtomicBool::new(false));
+    let server_frontend_ready = extension_frontend_ready.clone();
+
     tauri::Builder::default()
-        .setup(|app| {
-            extension_server::start_server(app.handle().clone());
-            Ok(())
-        })
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .manage(AppState {
             tasks: Mutex::new(HashMap::new()),
+            extension_pairing_token,
+            extension_frontend_ready,
+        })
+        .setup(move |app| {
+            match extension_server::start_server(
+                app.handle().clone(),
+                server_pairing_token.clone(),
+                server_frontend_ready.clone(),
+            ) {
+                Ok(()) => println!(
+                    "Browser extension server listening on 127.0.0.1:{}",
+                    extension_server::EXTENSION_SERVER_PORT
+                ),
+                Err(error) => eprintln!("Browser extension server unavailable: {error}"),
+            }
+            Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1047,7 +1135,8 @@ pub fn run() {
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
-            check_file_exists, delete_file, toggle_tray_icon
+            check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
+            set_extension_frontend_ready
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

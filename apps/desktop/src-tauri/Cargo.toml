@@ -25,7 +25,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "rt", "macros"] }
 regex = "1.10"
-reqwest = "0.12"
+reqwest = { version = "0.12", features = ["json"] }
 tauri-plugin-notification = "2.3.3"
 sysinfo = "0.39.3"
 keyring = "3"
@@ -33,3 +33,4 @@ hmac = "0.12"
 sha2 = "0.10"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tempfile = "3"

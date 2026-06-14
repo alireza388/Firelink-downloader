@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Firelink",
-        "width": 1024,
-        "height": 768,
-        "minWidth": 800,
-        "minHeight": 600,
+        "width": 1280,
+        "height": 760,
+        "minWidth": 1180,
+        "minHeight": 720,
         "titleBarStyle": "Overlay",
         "trafficLightPosition": {
           "x": 17,

@@ -33,6 +33,10 @@ const handleDeepLinks = (deepLinks: string[]) => {
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
+    return Number.isFinite(stored) && stored >= 190 && stored <= 260 ? stored : 220;
+  });
   const updateDownload = useDownloadStore(state => state.updateDownload);
   const theme = useSettingsStore(state => state.theme);
   const isSidebarVisible = useSettingsStore(state => state.isSidebarVisible);
@@ -49,6 +53,31 @@ function App() {
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef(globalSpeedLimit);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
+
+  const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = Math.min(260, Math.max(190, startWidth + moveEvent.clientX - startX));
+      setSidebarWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      document.body.classList.remove('is-resizing');
+    };
+
+    document.body.classList.add('is-resizing');
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
+  useEffect(() => {
+    window.localStorage.setItem('firelink-sidebar-width', String(sidebarWidth));
+  }, [sidebarWidth]);
 
   useEffect(() => {
     useDownloadStore.getState().initDB();
@@ -236,11 +265,12 @@ function App() {
   return (
     <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
       <div
-        className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-in-out ${
-          isSidebarVisible ? 'w-[244px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+        className={`app-sidebar-shell relative z-20 shrink-0 ${
+          isSidebarVisible ? 'opacity-100' : 'w-0 opacity-0 pointer-events-none'
         }`}
+        style={isSidebarVisible ? { width: sidebarWidth } : undefined}
       >
-        <div className="app-sidebar-panel h-full w-[244px]">
+        <div className="app-sidebar-panel h-full w-full">
           <Sidebar
             selectedFilter={filter}
             onSelectFilter={(f) => {
@@ -249,6 +279,11 @@ function App() {
             }}
           />
         </div>
+        <div
+          className="sidebar-resize-handle"
+          onPointerDown={startSidebarResize}
+          title="Resize Sidebar"
+        />
       </div>
 
       <div className="app-workspace relative z-0 flex-1 flex flex-col h-full overflow-hidden">
@@ -260,21 +295,12 @@ function App() {
         </div>
         
         {/* Status Bar */}
-        <div className="app-statusbar h-8 px-5 flex items-center justify-between text-[10px] text-text-muted font-medium shrink-0 border-t border-border-color">
-          <span className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--status-success))]"></span>
-            Ready
-          </span>
+        <div className="app-statusbar px-[14px] flex items-center justify-between text-text-muted shrink-0">
+          <span>Ready</span>
           <div className="flex gap-3 tabular-nums">
-            <span className="flex items-center gap-1.5">
-              <span className="text-text-primary">{activeDownloadCount}</span> active
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="text-text-primary">{queuedCount}</span> queued
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="text-text-primary">{doneCount}</span> done
-            </span>
+            <span>{activeDownloadCount} active</span>
+            <span>{queuedCount} queued</span>
+            <span>{doneCount} done</span>
           </div>
         </div>
       </div>

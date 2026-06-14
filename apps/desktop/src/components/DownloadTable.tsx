@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft } from 'lucide-react';
+import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
 
@@ -15,6 +15,31 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
+  const columnMinimums = [200, 80, 170, 80, 70, 120];
+  const tableGridTemplate = columnWidths.map(width => `${width}px`).join(' ');
+
+  const startColumnResize = (index: number, event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[index];
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = Math.max(columnMinimums[index], startWidth + moveEvent.clientX - startX);
+      setColumnWidths(widths => widths.map((width, columnIndex) => columnIndex === index ? nextWidth : width));
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      document.body.classList.remove('is-resizing');
+    };
+
+    document.body.classList.add('is-resizing');
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
 
   useEffect(() => {
     const handleCloseMenu = () => setContextMenu(null);
@@ -161,42 +186,36 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       </div>
 
       <div className="downloads-table flex-1 flex flex-col">
-        <div className="download-table-header">
-          <div>File Name</div>
-          <div>Size</div>
-          <div>Status</div>
-          <div>Speed</div>
-          <div>ETA</div>
-          <div className="download-cell-right">Date Added</div>
-        </div>
-
-        <div className="download-table-body">
-          {filteredDownloads.length === 0 ? (
-            <div className="h-full overflow-auto">
-              <div className="download-row download-empty-row">
-                <div className="download-file-cell">
-                  <FileQuestion size={15} />
-                  <span className="download-file-name">
-                    No downloads yet · Use + to add a link
-                  </span>
+        {filteredDownloads.length === 0 ? (
+          <div className="downloads-empty-state">
+            <ArrowDownCircle aria-hidden="true" />
+            <div className="downloads-empty-title">No Downloads</div>
+            <div className="downloads-empty-description">
+              Use Add or press <span className="keyboard-symbol">⌘</span>V to paste one or more links.
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="download-table-scroll">
+            <div className="download-table-header" style={{ gridTemplateColumns: tableGridTemplate }}>
+              {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
+                <div key={label} className={index === 5 ? 'download-cell-right' : undefined}>
+                  <span>{label}</span>
+                  <div
+                    className="column-resize-handle"
+                    onPointerDown={(event) => startColumnResize(index, event)}
+                  />
                 </div>
-                <div>—</div>
-                <div>Idle</div>
-                <div>—</div>
-                <div>—</div>
-                <div className="download-cell-right">—</div>
-              </div>
-
-              {Array.from({ length: 12 }).map((_, index) => (
-                <div key={index} className="download-ghost-row" />
               ))}
             </div>
-          ) : (
+
+            <div className="download-table-body">
             <div className="h-full overflow-auto">
               {filteredDownloads.map(d => (
                 <div
                   key={d.id}
                   className="download-row group cursor-default relative"
+                  style={{ gridTemplateColumns: tableGridTemplate }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
@@ -213,25 +232,28 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   
                   <div>
                     <span className="tabular-nums">
-                      {d.status === 'downloading' || d.status === 'paused' 
-                        ? `${((d.fraction || 0) * parseInt((d.size || '').replace(/[^0-9.]/g, '') || '0')).toFixed(1)} GB / ${d.size || '-'}`
-                        : d.size || '-'}
+                      {d.size && d.size !== '-' ? d.size : 'Unknown'}
                     </span>
                   </div>
                   
-                  <div>
-                    <div className="flex flex-col justify-center gap-1.5">
-                      <div className="download-progress-status">
-                        <span className={`truncate text-[12px] ${d.status === 'completed' ? 'download-status-completed' : d.status === 'paused' ? 'download-status-paused' : d.status === 'failed' ? 'download-status-failed' : 'download-status-downloading'}`}>
-                          {d.status === 'downloading' || d.status === 'paused' ? `${((d.fraction || 0) * 100).toFixed(0)}%` : d.status.charAt(0).toUpperCase() + d.status.slice(1)}
-                        </span>
-                      </div>
-                      {(d.status === 'downloading' || d.status === 'paused') && (
+                  <div className="download-status-cell">
+                    {d.status === 'completed' ? (
+                      <span className="download-status download-status-completed">Completed</span>
+                    ) : (
+                      <>
                         <div className="download-progress-track">
-                          <div className={`download-progress-fill transition-all duration-300 ease-out ${d.status === 'paused' ? 'paused' : ''}`} style={{ width: `${(d.fraction || 0) * 100}%` }}></div>
+                          <div
+                            className={`download-progress-fill ${d.status === 'paused' ? 'paused' : ''}`}
+                            style={{ width: `${(d.fraction || 0) * 100}%` }}
+                          />
                         </div>
-                      )}
-                    </div>
+                        <span className={`download-status ${d.status === 'paused' ? 'download-status-paused' : d.status === 'failed' ? 'download-status-failed' : d.status === 'downloading' ? 'download-status-downloading' : ''}`}>
+                          {d.status === 'downloading'
+                            ? `${((d.fraction || 0) * 100).toFixed(0)}%`
+                            : d.status.charAt(0).toUpperCase() + d.status.slice(1)}
+                        </span>
+                      </>
+                    )}
                   </div>
                   
                   <div>
@@ -276,8 +298,10 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 <div key={`ghost-${index}`} className="download-ghost-row" />
               ))}
             </div>
-          )}
-        </div>
+            </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Floating Context Menu */}

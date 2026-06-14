@@ -7,6 +7,7 @@ use regex::Regex;
 use serde::Serialize;
 use ts_rs::TS;
 use uuid::Uuid;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -383,6 +384,74 @@ fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<String> {
         }
     }
     uris
+}
+
+const MAX_DEEP_LINK_PAYLOAD_LEN: usize = 65_536;
+const MAX_DEEP_LINK_URLS: usize = 200;
+
+fn parse_firelink_urls(deep_links: impl IntoIterator<Item = url::Url>) -> Vec<String> {
+    let mut captured = Vec::new();
+
+    for deep_link in deep_links {
+        if deep_link.scheme() != "firelink" || deep_link.host_str() != Some("add") {
+            continue;
+        }
+
+        let Some(raw_urls) = deep_link
+            .query_pairs()
+            .find_map(|(key, value)| (key == "url").then(|| value.into_owned()))
+        else {
+            continue;
+        };
+        if raw_urls.is_empty() || raw_urls.len() >= MAX_DEEP_LINK_PAYLOAD_LEN {
+            continue;
+        }
+
+        for raw_url in raw_urls.lines() {
+            let raw_url = raw_url.trim();
+            let Ok(url) = url::Url::parse(raw_url) else {
+                continue;
+            };
+            if !matches!(url.scheme(), "http" | "https" | "ftp" | "sftp") {
+                continue;
+            }
+            let url = url.to_string();
+            if !captured.iter().any(|existing| existing == &url) {
+                captured.push(url);
+                if captured.len() == MAX_DEEP_LINK_URLS {
+                    return captured;
+                }
+            }
+        }
+    }
+
+    captured
+}
+
+fn restore_main_window(app_handle: &tauri::AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn dispatch_deep_links(app_handle: tauri::AppHandle, deep_links: Vec<url::Url>) {
+    let urls = parse_firelink_urls(deep_links);
+    if urls.is_empty() {
+        return;
+    }
+
+    restore_main_window(&app_handle);
+    let coordinator = app_handle.state::<AppState>().download_coordinator.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = coordinator
+            .send(download::DownloadCmd::CaptureUrls(urls))
+            .await
+        {
+            eprintln!("Failed to dispatch deep link to download coordinator: {error}");
+        }
+    });
 }
 
 async fn rpc_call(port: u16, secret: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1017,7 +1086,6 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
 fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), String> {
     use tauri::tray::TrayIconBuilder;
     use tauri::menu::{Menu, MenuItem};
-    use tauri::Manager;
 
     if show {
         if app_handle.tray_by_id("main").is_none() {
@@ -1030,17 +1098,29 @@ fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), Stri
                 .icon(tray_icon)
                 .icon_as_template(true)
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
-                        std::process::exit(0);
+                        app.exit(0);
                     }
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                        restore_main_window(app);
                     }
                     _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        restore_main_window(tray.app_handle());
+                    }
                 })
                 .build(&app_handle)
                 .map_err(|e| e.to_string())?;
@@ -1078,11 +1158,17 @@ fn set_extension_frontend_ready(
     state
         .extension_frontend_ready
         .store(ready, Ordering::Release);
+    let coordinator = state.download_coordinator.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = coordinator
+            .send(download::DownloadCmd::FrontendReady(ready))
+            .await;
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::collect_download_uris;
+    use super::{collect_download_uris, parse_firelink_urls};
 
     #[test]
     fn collects_primary_url_and_unique_mirrors_in_order() {
@@ -1104,6 +1190,33 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn parses_valid_firelink_download_urls() {
+        let deep_link = url::Url::parse(
+            "firelink://add?url=https%3A%2F%2Fexample.com%2Fone.zip%0Aftp%3A%2F%2Fexample.com%2Ftwo.zip",
+        )
+        .unwrap();
+
+        assert_eq!(
+            parse_firelink_urls([deep_link]),
+            vec![
+                "https://example.com/one.zip",
+                "ftp://example.com/two.zip",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_deep_links_and_nested_schemes() {
+        let links = [
+            url::Url::parse("firelink://open?url=https%3A%2F%2Fexample.com").unwrap(),
+            url::Url::parse("firelink://add?url=file%3A%2F%2F%2Ftmp%2Fsecret").unwrap(),
+            url::Url::parse("other://add?url=https%3A%2F%2Fexample.com").unwrap(),
+        ];
+
+        assert!(parse_firelink_urls(links).is_empty());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1120,10 +1233,7 @@ pub fn run() {
     let aria2_secret = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            restore_main_window(app);
         }))
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard(std::sync::Mutex::new(None)))
@@ -1137,20 +1247,19 @@ pub fn run() {
                 media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
                 sleep_preventer: Arc::new(Mutex::new(None)),
             });
+            let deep_link_app = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                dispatch_deep_links(deep_link_app.clone(), event.urls());
+            });
+            match app.deep_link().get_current() {
+                Ok(Some(urls)) => dispatch_deep_links(app.handle().clone(), urls),
+                Ok(None) => {}
+                Err(error) => eprintln!("Failed to read startup deep link: {error}"),
+            }
             let db_conn = crate::db::init_db(app.handle()).expect("Failed to init db");
             app.manage(crate::db::DbState { conn: std::sync::Mutex::new(db_conn) });
 
             crate::scheduler::spawn_scheduler(app.handle().clone());
-
-            #[cfg(target_os = "macos")]
-            {
-                use tauri::Manager;
-                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                if let Some(window) = app.get_webview_window("main") {
-                    apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
-                        .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
-                }
-            }
 
             let resource_dir = app.path().resource_dir().unwrap();
             let aria2c_path = resource_dir.join("binaries").join(get_binary_name("aria2c"));
@@ -1364,6 +1473,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if window.app_handle().tray_by_id("main").is_some() {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             greet, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
             start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,

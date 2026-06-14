@@ -113,6 +113,7 @@ type EventMap = {
   'download-complete': string;
   'download-failed': string;
   'extension-add-download': ExtensionDownload;
+  'deep-link-add-download': string;
 };
 
 export function listenEvent<K extends keyof EventMap>(

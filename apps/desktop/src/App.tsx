@@ -8,27 +8,8 @@ import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
-
-
-
-const handleDeepLinks = (deepLinks: string[]) => {
-  for (const rawDeepLink of deepLinks) {
-    try {
-      const deepLink = new URL(rawDeepLink);
-      if (deepLink.protocol !== 'firelink:' || deepLink.hostname !== 'add') continue;
-      const urls = deepLink.searchParams.get('url') || '';
-      if (urls.length > 0 && urls.length < 65_536) {
-        useDownloadStore.getState().openAddModalWithUrls(urls);
-        return;
-      }
-    } catch (error) {
-      console.warn('Ignored invalid Firelink deep link:', error);
-    }
-  }
-};
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -103,19 +84,6 @@ function App() {
       console.error('Failed to configure browser extension pairing token:', error);
     });
   }, [extensionPairingToken]);
-
-  useEffect(() => {
-    const unlisten = onOpenUrl(handleDeepLinks);
-    getCurrent()
-      .then(urls => {
-        if (urls) handleDeepLinks(urls);
-      })
-      .catch(error => console.error('Failed to read startup deep link:', error));
-
-    return () => {
-      unlisten.then(dispose => dispose());
-    };
-  }, []);
 
   useEffect(() => {
     if (previousSpeedLimit.current === globalSpeedLimit) return;
@@ -248,7 +216,10 @@ function App() {
     const unlistenExtension = listen('extension-add-download', (event) => {
       useDownloadStore.getState().handleExtensionDownload(event.payload);
     });
-    unlistenExtension
+    const unlistenDeepLink = listen('deep-link-add-download', (event) => {
+      useDownloadStore.getState().openAddModalWithUrls(event.payload);
+    });
+    Promise.all([unlistenExtension, unlistenDeepLink])
       .then(() => invoke('set_extension_frontend_ready', { ready: true }))
       .catch(error => console.error('Failed to activate browser extension integration:', error));
 
@@ -258,6 +229,7 @@ function App() {
       unlistenComplete.then(f => f());
       unlistenFailed.then(f => f());
       unlistenExtension.then(f => f());
+      unlistenDeepLink.then(f => f());
     };
   }, []);
 

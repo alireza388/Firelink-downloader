@@ -5,7 +5,7 @@ use reqwest::{
     Client, StatusCode,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     str::FromStr,
     time::{Duration, Instant},
@@ -26,6 +26,8 @@ pub enum DownloadCmd {
     Start(DownloadPayload),
     Pause(Uuid),
     Cancel(Uuid),
+    CaptureUrls(Vec<String>),
+    FrontendReady(bool),
 }
 
 #[derive(Debug)]
@@ -129,6 +131,8 @@ async fn run_coordinator(
     let (worker_tx, mut worker_rx) = mpsc::channel(128);
     let mut active = HashMap::<Uuid, ActiveDownload>::new();
     let mut active_media = HashMap::<String, watch::Sender<bool>>::new();
+    let mut pending_captured_urls = Vec::<String>::new();
+    let mut frontend_ready = false;
     let mut next_generation = 0_u64;
 
     loop {
@@ -167,6 +171,24 @@ async fn run_coordinator(
                     DownloadCmd::Cancel(id) => {
                         if let Some(download) = active.remove(&id) {
                             let _ = download.control_tx.send(DownloadControl::Cancel).await;
+                        }
+                    }
+                    DownloadCmd::CaptureUrls(urls) => {
+                        append_unique_urls(&mut pending_captured_urls, urls);
+                        if frontend_ready && !pending_captured_urls.is_empty() {
+                            let payload = pending_captured_urls.join("\n");
+                            if app_handle.emit("deep-link-add-download", payload).is_ok() {
+                                pending_captured_urls.clear();
+                            }
+                        }
+                    }
+                    DownloadCmd::FrontendReady(ready) => {
+                        frontend_ready = ready;
+                        if ready && !pending_captured_urls.is_empty() {
+                            let payload = pending_captured_urls.join("\n");
+                            if app_handle.emit("deep-link-add-download", payload).is_ok() {
+                                pending_captured_urls.clear();
+                            }
                         }
                     }
                 }
@@ -223,6 +245,11 @@ async fn run_coordinator(
     for (_, cancel_tx) in active_media {
         let _ = cancel_tx.send(true);
     }
+}
+
+fn append_unique_urls(target: &mut Vec<String>, urls: Vec<String>) {
+    let mut seen = target.iter().cloned().collect::<HashSet<_>>();
+    target.extend(urls.into_iter().filter(|url| seen.insert(url.clone())));
 }
 
 async fn download_file(

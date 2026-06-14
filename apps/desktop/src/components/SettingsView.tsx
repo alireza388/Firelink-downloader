@@ -236,89 +236,69 @@ export default function SettingsView() {
 
           {/* Downloads Pane */}
           {activeTab === 'downloads' && (
-            <div className="settings-pane space-y-6 max-w-[760px]">
-              <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Download Options</h3>
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">Parallel downloads:</label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range" min="1" max="12"
-                    value={settings.maxConcurrentDownloads}
-                    onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
-                    className="flex-1 accent-accent"
-                  />
-                  <span className="w-8 text-center font-mono font-bold bg-item-hover px-2 py-1 rounded border border-border-modal text-text-secondary">
-                    {settings.maxConcurrentDownloads}
-                  </span>
+            <div className="settings-pane max-w-[760px]">
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Parallel downloads</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-text-muted text-[13px] w-6 text-right">{settings.maxConcurrentDownloads}</span>
+                    <input
+                      type="range" min="1" max="12"
+                      value={settings.maxConcurrentDownloads}
+                      onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
+                      className="accent-accent w-24"
+                    />
+                  </div>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">Default connections:</label>
-                <div className="flex items-center gap-4">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Default connections</span>
                   <input
                     type="number" min="1" max="16"
                     value={settings.perServerConnections}
                     onChange={(e) => settings.setPerServerConnections(Number(e.target.value))}
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-accent"
+                    className="app-control w-16 text-center"
                   />
-                  <span className="text-text-muted text-xs">For new downloads (1 to 16)</span>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">Global speed limit:</label>
-                <div className="flex items-center gap-4">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Global speed limit</span>
                   <input
                     type="text"
                     value={settings.globalSpeedLimit}
                     onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
-                    placeholder="Unlimited"
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-32 font-mono text-text-primary focus:outline-none focus:border-accent"
+                    placeholder="0"
+                    className="app-control w-24 text-center font-mono"
                   />
-                  <span className="text-text-muted text-xs">e.g. 500K, 1M, or 0 for unlimited</span>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">Automatic retries:</label>
-                <div className="flex items-center gap-4">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Automatic retries</span>
                   <input
                     type="number" min="0" max="10"
                     value={settings.maxAutomaticRetries}
                     onChange={(e) => settings.setMaxAutomaticRetries(Number(e.target.value))}
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-24 text-text-primary focus:outline-none focus:border-accent"
+                    className="app-control w-16 text-center"
                   />
-                  <span className="text-text-muted text-xs">If a connection fails (0 to 10)</span>
                 </div>
               </div>
 
-              <div className="border-t border-border-color/30 pt-4 space-y-3">
-                <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
+              <div className="mac-settings-group">
+                <label className="mac-settings-row cursor-default">
+                  <span className="text-[13px] text-text-primary">Show completion notifications</span>
                   <input
                     type="checkbox"
                     checked={settings.showNotifications}
                     onChange={(e) => settings.setShowNotifications(e.target.checked)}
-                    className="mt-0.5 rounded accent-accent"
+                    className="mac-switch"
                   />
-                  <div>
-                    <p className="font-semibold text-text-primary">Show notification when download completes</p>
-                    <p className="text-text-muted text-xs mt-0.5">Alerts you in the System Notification Center</p>
-                  </div>
                 </label>
-
-                <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary pl-6">
+                <label className="mac-settings-row cursor-default" style={{ opacity: settings.showNotifications ? 1 : 0.5 }}>
+                  <span className="text-[13px] text-text-primary">Play completion sound</span>
                   <input
                     type="checkbox"
-                    checked={settings.playCompletionSound && settings.showNotifications}
+                    checked={settings.playCompletionSound}
                     disabled={!settings.showNotifications}
                     onChange={(e) => settings.setPlayCompletionSound(e.target.checked)}
-                    className="mt-0.5 rounded accent-accent disabled:opacity-40"
+                    className="mac-switch"
                   />
-                  <div>
-                    <p className={`font-semibold ${settings.showNotifications ? 'text-text-primary' : 'text-text-muted'}`}>Play sound when download completes</p>
-                  </div>
                 </label>
               </div>
             </div>
@@ -326,89 +306,69 @@ export default function SettingsView() {
 
           {/* Look & Feel Pane */}
           {activeTab === 'lookandfeel' && (
-            <div className="settings-pane space-y-6 max-w-[760px]">
-              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2">App Theme</h3>
-
-              <div className="grid grid-cols-[180px_1fr] items-start gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium pt-1">Theme:</label>
-                <div className="space-y-2">
-                  {[
-                    { value: 'system', label: 'System Default' },
-                    { value: 'light', label: 'Light' },
-                    { value: 'dark', label: 'Dark' },
-                    { value: 'dracula', label: 'Dracula' },
-                    { value: 'nord', label: 'Nord' },
-                  ].map(({ value, label }) => (
-                    <label key={value} className="flex items-center gap-2 cursor-default select-none text-text-primary">
-                      <input
-                        type="radio"
-                        name="themeRadio"
-                        value={value}
-                        checked={settings.theme === value}
-                        onChange={() => settings.setTheme(value as typeof settings.theme)}
-                        className="accent-accent"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                  <p className="text-text-muted text-xs mt-2">Select a color palette for the app's user interface.</p>
+            <div className="settings-pane max-w-[760px]">
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">App Theme</span>
+                  <select
+                    value={settings.theme}
+                    onChange={(e) => settings.setTheme(e.target.value as any)}
+                    className="app-control w-40"
+                  >
+                    <option value="system">System Default</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                    <option value="dracula">Dracula</option>
+                    <option value="nord">Nord</option>
+                  </select>
                 </div>
               </div>
 
-              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2 pt-2">Display</h3>
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">Font Size:</label>
-                <select
-                  value={settings.appFontSize}
-                  onChange={(e) => settings.setAppFontSize(e.target.value as any)}
-                  className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent max-w-[200px]"
-                >
-                  <option value="small">Small</option>
-                  <option value="standard">Standard</option>
-                  <option value="large">Large</option>
-                </select>
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Font Size</span>
+                  <select
+                    value={settings.appFontSize}
+                    onChange={(e) => settings.setAppFontSize(e.target.value as any)}
+                    className="app-control w-40"
+                  >
+                    <option value="small">Small</option>
+                    <option value="standard">Standard</option>
+                    <option value="large">Large</option>
+                  </select>
+                </div>
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">List Row Density</span>
+                  <select
+                    value={settings.listRowDensity}
+                    onChange={(e) => settings.setListRowDensity(e.target.value as any)}
+                    className="app-control w-40"
+                  >
+                    <option value="compact">Compact</option>
+                    <option value="standard">Standard</option>
+                    <option value="relaxed">Relaxed</option>
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium">List Row Density:</label>
-                <select
-                  value={settings.listRowDensity}
-                  onChange={(e) => settings.setListRowDensity(e.target.value as any)}
-                  className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent max-w-[200px]"
-                >
-                  <option value="compact">Compact</option>
-                  <option value="standard">Standard</option>
-                  <option value="relaxed">Relaxed</option>
-                </select>
-              </div>
-
-              <h3 className="text-base font-semibold text-text-primary border-b border-border-color pb-2 pt-2">macOS Integration</h3>
-
-              <div className="space-y-4">
-                <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
+              <div className="mac-settings-group">
+                <label className="mac-settings-row cursor-default">
+                  <span className="text-[13px] text-text-primary">Show badge on Dock icon</span>
                   <input
                     type="checkbox"
                     checked={settings.showDockBadge}
                     onChange={(e) => settings.setShowDockBadge(e.target.checked)}
-                    className="mt-0.5 rounded accent-accent"
+                    className="mac-switch"
                   />
-                  <div>
-                    <p className="font-semibold text-text-primary">Show badge on Dock/Taskbar icon</p>
-                    <p className="text-text-muted text-xs mt-0.5">Displays the number of active downloads on the icon badge.</p>
-                  </div>
                 </label>
-                <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
+                <label className="mac-settings-row cursor-default">
+                  <span className="text-[13px] text-text-primary">Show menu bar icon</span>
                   <input
                     type="checkbox"
                     checked={settings.showMenuBarIcon}
                     onChange={(e) => settings.setShowMenuBarIcon(e.target.checked)}
-                    className="mt-0.5 rounded accent-accent"
+                    className="mac-switch"
                   />
-                  <div>
-                    <p className="font-semibold text-text-primary">Show menu bar icon</p>
-                    <p className="text-text-muted text-xs mt-0.5">Provides quick access to downloads and queues from the system menu bar.</p>
-                  </div>
                 </label>
               </div>
             </div>
@@ -416,77 +376,55 @@ export default function SettingsView() {
 
           {/* Network Pane */}
           {activeTab === 'network' && (
-            <div className="settings-pane space-y-6 max-w-[760px]">
-              <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Proxy & User Agent</h3>
-
-              <div className="grid grid-cols-[180px_1fr] items-start gap-4 text-[13px]">
-                <label className="text-text-secondary font-medium pt-1">Proxy Mode:</label>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 cursor-default select-none text-text-secondary">
-                    <input
-                      type="radio" name="proxyMode" value="none"
-                      checked={settings.proxyMode === 'none'}
-                      onChange={() => settings.setProxyMode('none')}
-                      className="accent-accent"
-                    />
-                    No proxy
-                  </label>
-                  <label className="flex items-center gap-2 cursor-default select-none text-text-secondary">
-                    <input
-                      type="radio" name="proxyMode" value="system"
-                      checked={settings.proxyMode === 'system'}
-                      onChange={() => settings.setProxyMode('system')}
-                      className="accent-accent"
-                    />
-                    Use system proxy
-                  </label>
-                  <label className="flex items-center gap-2 cursor-default select-none text-text-secondary">
-                    <input
-                      type="radio" name="proxyMode" value="custom"
-                      checked={settings.proxyMode === 'custom'}
-                      onChange={() => settings.setProxyMode('custom')}
-                      className="accent-accent"
-                    />
-                    Set proxy
-                  </label>
+            <div className="settings-pane max-w-[760px]">
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Proxy Mode</span>
+                  <select
+                    value={settings.proxyMode}
+                    onChange={(e) => settings.setProxyMode(e.target.value as any)}
+                    className="app-control w-40"
+                  >
+                    <option value="none">No proxy</option>
+                    <option value="system">Use system proxy</option>
+                    <option value="custom">Set custom proxy</option>
+                  </select>
                 </div>
+                {settings.proxyMode === 'custom' && (
+                  <>
+                    <div className="mac-settings-row">
+                      <span className="text-[13px] text-text-primary pl-4">Proxy Host</span>
+                      <input
+                        type="text"
+                        value={settings.proxyHost}
+                        onChange={(e) => settings.setProxyHost(e.target.value)}
+                        placeholder="127.0.0.1"
+                        className="app-control w-40 font-mono"
+                      />
+                    </div>
+                    <div className="mac-settings-row">
+                      <span className="text-[13px] text-text-primary pl-4">Proxy Port</span>
+                      <input
+                        type="number"
+                        value={settings.proxyPort}
+                        onChange={(e) => settings.setProxyPort(Number(e.target.value))}
+                        className="app-control w-24 text-center"
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
-              {settings.proxyMode === 'custom' && (
-                <div className="bg-item-hover/30 border border-border-modal rounded-lg p-4 pl-6 space-y-4 max-w-[420px] ml-[180px]">
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2 text-[13px]">
-                    <label className="text-text-secondary">Host:</label>
-                    <input
-                      type="text"
-                      value={settings.proxyHost}
-                      onChange={(e) => settings.setProxyHost(e.target.value)}
-                      placeholder="127.0.0.1"
-                      className="bg-bg-input border border-border-modal rounded-md px-3 py-1 text-text-primary font-mono text-xs focus:outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2 text-[13px]">
-                    <label className="text-text-secondary">Port:</label>
-                    <input
-                      type="number"
-                      value={settings.proxyPort}
-                      onChange={(e) => settings.setProxyPort(Number(e.target.value))}
-                      className="bg-bg-input border border-border-modal rounded-md px-3 py-1 text-text-primary font-mono text-xs w-[100px] focus:outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px] border-t border-border-color/30 pt-4">
-                <label className="text-text-secondary font-medium">User Agent:</label>
-                <div className="space-y-1">
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] text-text-primary">Custom User Agent</span>
                   <input
                     type="text"
                     value={settings.customUserAgent}
                     onChange={(e) => settings.setCustomUserAgent(e.target.value)}
                     placeholder="e.g. Mozilla/5.0..."
-                    className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full font-mono text-[11px] text-text-primary focus:outline-none focus:border-accent"
+                    className="app-control flex-1 ml-4 font-mono text-[11px]"
                   />
-                  <p className="text-text-muted text-xs">Spoofs browser User-Agent to bypass download restrictions. Leave blank for default.</p>
                 </div>
               </div>
             </div>
@@ -494,69 +432,63 @@ export default function SettingsView() {
 
           {/* Locations Pane */}
           {activeTab === 'locations' && (
-            <div className="settings-pane space-y-6 max-w-[760px]">
-              <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Download Directories</h3>
+            <div className="settings-pane max-w-[760px]">
+              <div className="mac-settings-group">
+                <label className="mac-settings-row cursor-default">
+                  <span className="text-[13px] text-text-primary">Ask where to save each file</span>
+                  <input
+                    type="checkbox"
+                    checked={settings.askWhereToSaveEachFile}
+                    onChange={(e) => settings.setAskWhereToSaveEachFile(e.target.checked)}
+                    className="mac-switch"
+                  />
+                </label>
+              </div>
 
-              <label className="flex items-start gap-3 cursor-default select-none text-[13px] text-text-secondary">
-                <input
-                  type="checkbox"
-                  checked={settings.askWhereToSaveEachFile}
-                  onChange={(e) => settings.setAskWhereToSaveEachFile(e.target.checked)}
-                  className="mt-0.5 rounded accent-accent"
-                />
-                <div>
-                  <p className="font-semibold text-text-primary">Ask where to save each file before downloading</p>
-                  <p className="text-text-muted text-xs mt-0.5">When enabled, you choose the download location each time you add links.</p>
-                </div>
-              </label>
-
-              <div className="space-y-4 border-t border-border-color/30 pt-4">
-                <h4 className="text-[13px] font-bold text-text-primary">Default Categories Paths</h4>
-
-                {/* Bulk Directory Selector */}
-                <div className="grid grid-cols-[150px_1fr] items-center gap-4 text-[13px] bg-item-hover/35 p-3 rounded-lg border border-border-modal/40">
-                  <label className="font-semibold text-text-primary">All Categories Base:</label>
+              <div className="mac-settings-group">
+                <div className="mac-settings-row bg-item-hover/20">
+                  <span className="text-[13px] font-semibold text-text-primary">All Categories Base</span>
                   <div className="flex gap-2">
                     <input
-                      type="text" readOnly placeholder="Choose base folder to sub-categorize..."
-                      className="flex-1 bg-bg-input border border-border-modal rounded-md px-3 py-1 text-xs text-text-muted"
+                      type="text" readOnly placeholder="Choose base folder..."
+                      className="app-control w-48 text-text-muted text-[11px]"
                     />
                     <button
                       onClick={handleBrowseBulk}
-                      className="bg-accent hover:bg-accent text-white px-3 py-1 rounded-md text-xs font-semibold shadow transition-colors"
+                      className="app-icon-button bg-accent/10 hover:bg-accent/20 text-accent font-semibold px-3"
                     >
-                      Choose Base
+                      Browse
                     </button>
                   </div>
                 </div>
 
                 {['Musics', 'Movies', 'Compressed', 'Documents', 'Pictures', 'Applications', 'Other'].map((category) => (
-                  <div key={category} className="grid grid-cols-[150px_1fr] items-center gap-4 text-[13px]">
-                    <label className="text-text-secondary capitalize">{category} folder:</label>
+                  <div key={category} className="mac-settings-row">
+                    <span className="text-[13px] text-text-primary pl-4">{category}</span>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={(settings.downloadDirectories || {})[category] || ''}
                         onChange={(e) => settings.setCategoryDirectory(category, e.target.value)}
-                        className="flex-1 bg-bg-input border border-border-modal rounded-md px-3 py-1 text-xs text-text-primary font-mono"
+                        className="app-control w-48 text-[11px]"
                       />
                       <button
                         onClick={() => handleBrowseCategory(category)}
-                        className="bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal px-2.5 py-1 rounded-md text-xs"
+                        className="app-icon-button hover:bg-item-hover text-text-secondary px-3"
                       >
-                        Choose
+                        Browse
                       </button>
                     </div>
                   </div>
                 ))}
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-border-color/30">
+                
+                <div className="mac-settings-row justify-end border-t-0">
                   <button
                     onClick={() => {
                       settings.resetCategoryDirectories();
                       showToast("Reset directories to default");
                     }}
-                    className="bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal px-4 py-1.5 rounded-md text-xs"
+                    className="app-control hover:bg-item-hover text-text-secondary px-4 py-1"
                   >
                     Reset Defaults
                   </button>

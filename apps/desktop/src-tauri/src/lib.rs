@@ -714,7 +714,7 @@ pub(crate) async fn start_media_download_internal(
     let spd_re = Regex::new(r"at\s+([^\s]+)").unwrap();
     let eta_re = Regex::new(r"ETA\s+([^\s]+)").unwrap();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let _keep_alive = config_path; // Keep the temp file alive
         let mut reader = BufReader::new(stdout).lines();
         let mut current_track: f64 = 0.0;
@@ -1207,6 +1207,16 @@ pub fn run() {
 
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+                if let Some(window) = app.get_webview_window("main") {
+                    apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None)
+                        .expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
+                }
+            }
+
             let resource_dir = app.path().resource_dir().unwrap();
             let aria2c_path = resource_dir.join("binaries").join("aria2c");
             
@@ -1233,7 +1243,7 @@ pub fn run() {
             let app_handle_clone = app.handle().clone();
             let aria2_port_clone = aria2_port;
             let aria2_secret_clone = aria2_secret.clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", aria2_port_clone);
                 

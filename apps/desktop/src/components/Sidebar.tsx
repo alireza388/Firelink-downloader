@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Inbox, Zap, CheckCircle2, CircleDashed,
   Film, Music, FileText, Box, Image as ImageIcon, Archive, FileQuestion,
-  List, CalendarClock, Gauge, Settings, Plus, Play, Pause, Edit2, Trash2
+  List, CalendarClock, Gauge, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft
 } from 'lucide-react';
 import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadStore';
 import { ActiveView, useSettingsStore } from '../store/useSettingsStore';
@@ -18,7 +18,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = (props) => {
   const { selectedFilter, onSelectFilter } = props;
   const { downloads, queues, addQueue, renameQueue, removeQueue, startQueue, pauseQueue } = useDownloadStore();
-  const { activeView, setActiveView } = useSettingsStore();
+  const { activeView, setActiveView, toggleSidebar } = useSettingsStore();
 
   const [isAddingQueue, setIsAddingQueue] = useState(false);
   const [newQueueName, setNewQueueName] = useState('');
@@ -64,19 +64,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
       <button
         type="button"
         data-active={isSelected}
-        className={`sidebar-nav-item group flex h-8 w-full items-center px-3.5 rounded-lg text-[12px] text-left cursor-default transition-colors duration-150 mb-0.5 ${
-          isSelected
-            ? 'bg-item-selected text-text-primary font-semibold'
-            : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
-        }`}
+        className="sidebar-nav-item group flex w-full items-center text-[13px] text-left cursor-default font-medium"
         onClick={() => onSelectFilter(filter)}
       >
-        <Icon className={`w-4 h-4 mr-2.5 transition-colors ${isSelected ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'}`} strokeWidth={isSelected ? 2.25 : 1.8} />
+        <Icon className="w-[18px] h-[18px] mr-3 shrink-0" strokeWidth={isSelected ? 2.5 : 2} />
         <span className="truncate">{label}</span>
         {getCount(filter) > 0 && (
-          <span className={`ml-auto min-w-5 px-1.5 py-0.5 rounded-full text-center text-[10px] leading-none font-semibold transition-colors ${
-            isSelected ? 'bg-accent/15 text-accent' : 'bg-item-hover text-text-muted'
-          }`}>
+          <span className="sidebar-count ml-auto min-w-5 px-1.5 py-0.5 rounded-full text-center text-[10px] leading-none font-bold">
             {getCount(filter)}
           </span>
         )}
@@ -134,18 +128,12 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         data-active={isSelected}
         onContextMenu={e => handleQueueContextMenu(e, queue.id)}
         onClick={() => onSelectFilter(filterId)}
-        className={`sidebar-nav-item group flex h-8 w-full items-center px-3.5 rounded-lg text-[12px] text-left cursor-default transition-colors duration-150 mb-0.5 ${
-          isSelected
-            ? 'bg-item-selected text-text-primary font-semibold'
-            : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
-        }`}
+        className="sidebar-nav-item group flex w-full items-center text-[13px] text-left cursor-default font-medium"
       >
-        <List className={`w-4 h-4 mr-2.5 shrink-0 transition-colors ${isSelected ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'}`} strokeWidth={isSelected ? 2.25 : 1.8} />
+        <List className="w-[18px] h-[18px] mr-3 shrink-0" strokeWidth={isSelected ? 2.5 : 2} />
         <span className="truncate">{queue.name}</span>
         {getCount(filterId) > 0 && (
-          <span className={`ml-auto min-w-5 px-1.5 py-0.5 rounded-full text-center text-[10px] leading-none font-semibold shrink-0 transition-colors ${
-            isSelected ? 'bg-accent/15 text-accent' : 'bg-item-hover text-text-muted'
-          }`}>
+          <span className="sidebar-count ml-auto min-w-5 px-1.5 py-0.5 rounded-full text-center text-[10px] leading-none font-bold shrink-0">
             {getCount(filterId)}
           </span>
         )}
@@ -160,30 +148,39 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         type="button"
         data-active={isSelected}
         onClick={() => setActiveView(view)}
-        className={`sidebar-nav-item group flex h-8 w-full items-center px-3.5 rounded-lg text-[12px] text-left cursor-default transition-colors duration-150 mb-0.5 ${
-          isSelected ? 'bg-item-selected text-text-primary font-semibold' : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
-        }`}
+        className="sidebar-nav-item group flex w-full items-center text-[13px] text-left cursor-default font-medium"
       >
-        <Icon className={`w-4 h-4 mr-2.5 transition-colors ${isSelected ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'}`} strokeWidth={isSelected ? 2.25 : 1.8} />
+        <Icon className="w-[18px] h-[18px] mr-3 shrink-0" strokeWidth={isSelected ? 2.5 : 2} />
         <span>{label}</span>
       </button>
     );
   };
 
   return (
-    <aside className="w-full h-full flex flex-col relative shrink-0">
-      <WindowDragRegion />
-      <div className="overflow-y-auto flex-1 px-3 pb-3">
-        <section className="mb-4">
-          <div className="text-[9px] font-bold tracking-[0.14em] text-text-muted uppercase px-3.5 mb-1.5">Library</div>
+    <aside className="sidebar-inner">
+      <div className="sidebar-top-region">
+        <WindowDragRegion />
+
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="sidebar-toggle-button"
+          title="Hide Sidebar"
+        >
+          <PanelLeft size={14} strokeWidth={1.9} />
+        </button>
+      </div>
+      <div className="sidebar-scroll">
+        <section className="sidebar-section">
+          <div className="sidebar-section-label">Library</div>
           <NavItem icon={Inbox} label="All" filter="all" />
           <NavItem icon={Zap} label="Active" filter="active" />
           <NavItem icon={CheckCircle2} label="Completed" filter="completed" />
           <NavItem icon={CircleDashed} label="Unfinished" filter="unfinished" />
         </section>
 
-        <section className="mb-4">
-          <div className="text-[9px] font-bold tracking-[0.14em] text-text-muted uppercase px-3.5 mb-1.5">Folders</div>
+        <section className="sidebar-section">
+          <div className="sidebar-section-label">Folders</div>
           <NavItem icon={Music} label="Musics" filter="Musics" />
           <NavItem icon={Film} label="Movies" filter="Movies" />
           <NavItem icon={Archive} label="Compressed" filter="Compressed" />
@@ -193,13 +190,13 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           <NavItem icon={FileQuestion} label="Other" filter="Other" />
         </section>
 
-        <section className="mb-4">
-          <div className="text-[9px] font-bold tracking-[0.14em] text-text-muted uppercase px-3.5 mb-1.5">Queues</div>
+        <section className="sidebar-section">
+          <div className="sidebar-section-label">Queues</div>
           {queues.map(queue => (
             <QueueItem key={queue.id} queue={queue} />
           ))}
           {isAddingQueue ? (
-            <div className="flex items-center px-2.5 py-1 rounded-lg bg-item-hover">
+            <div className="flex items-center px-3.5 py-1.5 rounded-lg bg-item-hover mb-1">
               <Plus className="w-4 h-4 mr-2 text-text-secondary shrink-0" strokeWidth={2} />
               <input
                 ref={addInputRef}
@@ -219,7 +216,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             <button
               type="button"
               onClick={() => { setIsAddingQueue(true); setNewQueueName(''); }}
-              className="flex w-full items-center px-3.5 py-1.5 rounded-lg text-[12px] text-text-muted hover:bg-item-hover hover:text-text-secondary cursor-default transition-colors"
+              className="flex w-full items-center px-3.5 py-1.5 rounded-lg text-[13px] text-text-muted hover:bg-item-hover hover:text-text-secondary cursor-default transition-colors mb-1"
             >
               <Plus className="w-4 h-4 mr-2 shrink-0" strokeWidth={2} />
               <span className="truncate">Add new queue</span>
@@ -227,25 +224,21 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           )}
         </section>
 
-        <section className="mt-auto pt-4 border-t border-border-color/30">
-          <div className="text-[9px] font-bold tracking-[0.14em] text-text-muted uppercase px-3.5 mb-1.5">Tools</div>
+        <section className="sidebar-section">
+          <div className="sidebar-section-label">Tools</div>
           <ToolItem icon={CalendarClock} label="Scheduler" view="scheduler" />
           <ToolItem icon={Gauge} label="Speed Limiter" view="speedLimiter" />
         </section>
       </div>
 
-      <div className="shrink-0 border-t border-border-color bg-sidebar-bg px-3 py-2">
+      <div className="sidebar-footer">
         <button
           type="button"
           data-active={activeView === 'settings'}
           onClick={() => setActiveView('settings')}
-          className={`sidebar-nav-item flex h-8 w-full items-center px-3.5 rounded-lg text-[12px] text-left cursor-default transition-colors ${
-            activeView === 'settings'
-              ? 'bg-item-selected text-text-primary font-semibold'
-              : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
-          }`}
+          className="sidebar-nav-item sidebar-settings-button group flex w-full items-center text-[13px] text-left cursor-default font-medium transition-colors"
         >
-          <Settings className={`w-4 h-4 mr-2 ${activeView === 'settings' ? 'text-accent' : 'text-text-muted'}`} strokeWidth={activeView === 'settings' ? 2.25 : 1.8} />
+          <Settings className={`w-[18px] h-[18px] mr-3 shrink-0 ${activeView === 'settings' ? 'text-white' : 'text-text-muted'}`} strokeWidth={activeView === 'settings' ? 2.5 : 2} />
           <span>Settings</span>
         </button>
       </div>

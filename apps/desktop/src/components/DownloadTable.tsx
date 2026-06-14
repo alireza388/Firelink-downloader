@@ -5,7 +5,6 @@ import { SidebarFilter } from './Sidebar';
 import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
-import { WindowDragRegion } from './WindowDragRegion';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -13,7 +12,7 @@ interface DownloadTableProps {
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { downloads, toggleAddModal, updateDownload, removeDownload, clearFinished, redownload } = useDownloadStore();
-  const { isSidebarVisible, toggleSidebar, listRowDensity } = useSettingsStore();
+  const { isSidebarVisible, toggleSidebar } = useSettingsStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
 
@@ -87,11 +86,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const contextItem = contextMenu ? downloads.find(d => d.id === contextMenu.id) : null;
-  const rowPadding = {
-    compact: 'py-2',
-    standard: 'py-2.5',
-    relaxed: 'py-3.5'
-  }[listRowDensity];
+
 
   const getCategoryIcon = (category: string) => {
     switch(category) {
@@ -107,174 +102,181 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-transparent h-full relative p-3 pb-0">
-      <div className="app-surface shrink-0 rounded-xl mb-3 z-10">
-        <WindowDragRegion className={!isSidebarVisible ? 'pl-20' : ''} />
-
-        {/* Download Toolbar */}
-        <div className={`flex px-3 pb-2.5 pt-0.5 items-center ${!isSidebarVisible ? 'pl-20' : ''}`}>
+    <div className="downloads-view flex-1 flex flex-col h-full min-w-0">
+      <div className={`main-titlebar ${!isSidebarVisible ? 'pl-[80px]' : ''}`} data-tauri-drag-region>
+        {!isSidebarVisible && (
           <button
             onClick={toggleSidebar}
-            className="app-icon-button mr-2"
-            title="Toggle Sidebar"
+            className="app-icon-button relative z-50 h-7 w-7 mr-2"
+            title="Show Sidebar"
           >
-            <PanelLeft size={17} strokeWidth={2} />
+            <PanelLeft size={16} strokeWidth={2} />
           </button>
-          <div className="mr-auto">
-            <h2 className="text-[14px] font-semibold text-text-primary tracking-tight cursor-default">{getFilterTitle()}</h2>
-            <p className="mt-0.5 text-[10px] text-text-muted tabular-nums">
-              {filteredDownloads.length} {filteredDownloads.length === 1 ? 'item' : 'items'}
-            </p>
-          </div>
+        )}
+        <div className="main-titlebar-title cursor-default" data-tauri-drag-region>Firelink</div>
 
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={() => toggleAddModal(true)}
-              className="app-icon-button text-accent"
-              title="Add Download"
-            >
-              <Plus size={17} strokeWidth={2.25} />
-            </button>
-            <div className="mx-1 h-4 w-px bg-border-color"></div>
-            <button
-              onClick={() => {
-                filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
-              }}
-              className="app-icon-button"
-              title="Resume All"
-            >
-              <Play size={15} fill="currentColor" className="opacity-80" />
-            </button>
-            <button
-              onClick={() => {
-                filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
-              }}
-              className="app-icon-button"
-              title="Pause All"
-            >
-              <Pause size={15} fill="currentColor" className="opacity-80" />
-            </button>
-            <div className="mx-1 h-4 w-px bg-border-color"></div>
-            <button
-              onClick={clearFinished}
-              className="app-icon-button hover:text-red-400"
-              title="Clear Finished"
-            >
-              <Trash2 size={15} strokeWidth={1.9} />
-            </button>
-          </div>
+        <div className="main-control-group">
+          <button className="main-control-button primary" onClick={() => toggleAddModal(true)} title="Add Download">
+            <Plus size={16} />
+          </button>
+
+          <button 
+            className="main-control-button" 
+            disabled={filteredDownloads.length === 0}
+            onClick={() => {
+              filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
+            }}
+            title="Resume All"
+          >
+            <Play size={15} fill="currentColor" />
+          </button>
+
+          <button 
+            className="main-control-button" 
+            disabled={filteredDownloads.length === 0}
+            onClick={() => {
+              filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
+            }}
+            title="Pause All"
+          >
+            <Pause size={15} fill="currentColor" />
+          </button>
+
+          <button 
+            className="main-control-button hover:!text-red-400" 
+            disabled={filteredDownloads.length === 0}
+            onClick={clearFinished}
+            title="Clear Finished"
+          >
+            <Trash2 size={15} />
+          </button>
         </div>
       </div>
 
-      {/* List */}
-      <div className="flex-1 overflow-auto bg-transparent pb-3 relative">
-        <div className="w-full text-left">
-          <div className="flex text-text-muted text-[9px] font-bold tracking-[0.12em] uppercase px-4 pb-2 pt-1 sticky top-0 z-0 bg-main-bg/85 backdrop-blur-md">
-            <div className="flex-1 min-w-[200px]">FILE</div>
-            <div className="w-32">SIZE</div>
-            <div className="w-32">STATUS</div>
-            <div className="w-28">SPEED</div>
-            <div className="w-28">ETA</div>
-            <div className="w-32 text-right pr-4">DATE ADDED</div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {filteredDownloads.length === 0 ? (
-              <div className="app-card mx-1 mt-2 py-14 text-center">
-                <div className="flex flex-col items-center justify-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border-color bg-bg-input text-text-muted">
-                    <Box size={23} strokeWidth={1.6} />
-                  </div>
-                  <div>
-                    <p className="text-[13px] font-semibold text-text-primary">No downloads here</p>
-                    <p className="mt-1 text-[11px] text-text-muted">Add a link to start a new transfer.</p>
-                  </div>
-                  <button onClick={() => toggleAddModal(true)} className="app-button app-button-primary mt-1 px-3 text-[11px]">
-                    <Plus size={14} /> Add Download
-                  </button>
+      <div className="downloads-content-header">
+        <div className="downloads-title">
+          {getFilterTitle()}
+          <span className="downloads-count">{filteredDownloads.length}</span>
+        </div>
+      </div>
+
+      <div className="downloads-table flex-1 flex flex-col">
+        <div className="download-table-header">
+          <div>File Name</div>
+          <div>Size</div>
+          <div>Status</div>
+          <div>Speed</div>
+          <div>ETA</div>
+          <div className="download-cell-right">Date Added</div>
+        </div>
+
+        <div className="download-table-body">
+          {filteredDownloads.length === 0 ? (
+            <div className="h-full overflow-auto">
+              <div className="download-row download-empty-row">
+                <div className="download-file-cell">
+                  <FileQuestion size={15} />
+                  <span className="download-file-name">
+                    No downloads yet · Use + to add a link
+                  </span>
                 </div>
+                <div>—</div>
+                <div>Idle</div>
+                <div>—</div>
+                <div>—</div>
+                <div className="download-cell-right">—</div>
               </div>
-            ) : (
-              filteredDownloads.map(d => (
+
+              {Array.from({ length: 12 }).map((_, index) => (
+                <div key={index} className="download-ghost-row" />
+              ))}
+            </div>
+          ) : (
+            <div className="h-full overflow-auto">
+              {filteredDownloads.map(d => (
                 <div
                   key={d.id}
-                  className={`group mx-1 flex items-center rounded-lg border border-border-color bg-bg-modal/30 px-4 ${rowPadding} cursor-default transition-colors duration-150 hover:border-border-modal hover:bg-item-hover/50`}
+                  className="download-row group cursor-default relative"
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    setContextMenu({
-                      x: e.clientX,
-                      y: e.clientY,
-                      id: d.id
-                    });
+                    setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
                   }}
                 >
-                  <div className="flex-1 min-w-[200px] text-[13px] text-text-primary pr-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-border-color bg-bg-input text-text-muted">
-                         {getCategoryIcon(d.category)}
-                      </div>
-                      <span className="font-medium truncate max-w-[280px]">{d.fileName}</span>
-                    </div>
-                  </div>
-                  <div className="w-32 pr-4">
-                    {d.status === 'downloading' || d.status === 'paused' ? (
-                      <div className="w-full">
-                        <div className="w-full bg-border-color/30 rounded-full h-1.5 mb-1.5 overflow-hidden">
-                          <div className={`h-1.5 rounded-full transition-all duration-300 ${d.status === 'paused' ? 'bg-orange-500' : 'bg-accent'}`} style={{ width: `${(d.fraction || 0) * 100}%` }}></div>
-                        </div>
-                        <div className="text-[11px] text-text-muted font-medium">
-                          {((d.fraction || 0) * 100).toFixed(1)}%
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-[12px] text-text-secondary font-medium">{d.size || '-'}</span>
-                    )}
-                  </div>
-                  <div className="w-32">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-widest uppercase shadow-sm ${
-                      d.status === 'completed' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
-                      d.status === 'downloading' ? 'bg-accent/10 text-accent border border-accent/20' :
-                      d.status === 'failed' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
-                      d.status === 'paused' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
-                      'bg-item-hover text-text-muted border border-border-color/30'
-                    }`}>
-                      {d.status}
+                  <div className="download-file-cell">
+                    <span className="shrink-0 text-text-muted">
+                      {getCategoryIcon(d.category)}
+                    </span>
+                    <span className="download-file-name">
+                      {d.fileName}
                     </span>
                   </div>
-                  <div className="w-28 text-[12px] text-text-secondary font-medium">{d.speed}</div>
-                  <div className="w-28 text-[12px] text-text-secondary font-medium">{d.eta}</div>
-                  <div className="w-32 relative text-right pr-4">
-                    <div className="flex items-center justify-end">
-                      <span className="text-[12px] text-text-secondary font-medium group-hover:opacity-0 transition-opacity duration-200">
-                        {d.dateAdded ? new Date(d.dateAdded).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
-                      </span>
-                      <div className="flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute right-4 top-1/2 -translate-y-1/2">
-                        {d.status === 'downloading' && (
-                          <button onClick={() => handlePause(d.id)} className="app-icon-button h-7 w-7 border border-border-color bg-bg-modal hover:text-orange-400" title="Pause">
-                            <Pause size={14} fill="currentColor" />
-                          </button>
-                        )}
-                        {d.status === 'paused' && (
-                          <button onClick={() => handleResume(d)} className="app-icon-button h-7 w-7 border border-border-color bg-bg-modal hover:text-green-400" title="Resume">
-                            <Play size={14} fill="currentColor" />
-                          </button>
-                        )}
-                        <button
-                          onClick={(e) => {
-                             e.stopPropagation();
-                             setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
-                          }}
-                          className="app-icon-button h-7 w-7 border border-border-color bg-bg-modal hover:text-accent"
-                          title="More Actions"
-                        >
-                          <MoreVertical size={14} />
-                        </button>
+                  
+                  <div>
+                    <span className="tabular-nums">
+                      {d.status === 'downloading' || d.status === 'paused' 
+                        ? `${((d.fraction || 0) * parseInt((d.size || '').replace(/[^0-9.]/g, '') || '0')).toFixed(1)} GB / ${d.size || '-'}`
+                        : d.size || '-'}
+                    </span>
+                  </div>
+                  
+                  <div>
+                    <div className="flex flex-col justify-center gap-1.5">
+                      <div className="download-progress-status">
+                        <span className={`truncate text-[12px] ${d.status === 'completed' ? 'download-status-completed' : d.status === 'paused' ? 'download-status-paused' : d.status === 'failed' ? 'download-status-failed' : 'download-status-downloading'}`}>
+                          {d.status === 'downloading' || d.status === 'paused' ? `${((d.fraction || 0) * 100).toFixed(0)}%` : d.status.charAt(0).toUpperCase() + d.status.slice(1)}
+                        </span>
                       </div>
+                      {(d.status === 'downloading' || d.status === 'paused') && (
+                        <div className="download-progress-track">
+                          <div className={`download-progress-fill transition-all duration-300 ease-out ${d.status === 'paused' ? 'paused' : ''}`} style={{ width: `${(d.fraction || 0) * 100}%` }}></div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <span className="tabular-nums">{d.status === 'downloading' ? d.speed : '-'}</span>
+                  </div>
+                  
+                  <div>
+                    <span className="tabular-nums">{d.status === 'downloading' ? d.eta : '-'}</span>
+                  </div>
+                  
+                  <div className="download-cell-right">
+                    <span className="truncate group-hover:hidden tabular-nums ml-auto">
+                      {d.dateAdded ? new Date(d.dateAdded).toLocaleDateString() : '-'}
+                    </span>
+                    
+                    <div className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto">
+                      {d.status === 'downloading' && (
+                        <button onClick={() => handlePause(d.id)} className="app-icon-button h-7 w-7" title="Pause">
+                          <Pause size={14} fill="currentColor" />
+                        </button>
+                      )}
+                      {d.status === 'paused' && (
+                        <button onClick={() => handleResume(d)} className="app-icon-button h-7 w-7" title="Resume">
+                          <Play size={14} fill="currentColor" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                           e.stopPropagation();
+                           setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
+                        }}
+                        className="app-icon-button h-7 w-7"
+                        title="Options"
+                      >
+                        <MoreVertical size={14} />
+                      </button>
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+              {Array.from({ length: Math.max(0, 10 - filteredDownloads.length) }).map((_, index) => (
+                <div key={`ghost-${index}`} className="download-ghost-row" />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

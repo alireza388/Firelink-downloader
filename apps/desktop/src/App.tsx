@@ -13,12 +13,7 @@ import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
 
-const localDateKey = (date: Date) => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
+
 
 const handleDeepLinks = (deepLinks: string[]) => {
   for (const rawDeepLink of deepLinks) {
@@ -239,21 +234,24 @@ function App() {
   }, []);
 
   return (
-    <div className="app-shell flex h-screen w-screen text-text-primary overflow-hidden">
-      
-      {/* Left Side Panel - Curved Second Layer on Top */}
+    <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
       <div
-        className={`app-sidebar flex flex-col overflow-hidden relative z-20 shrink-0 transition-all duration-300 ease-in-out ${
-          isSidebarVisible ? 'w-[244px] opacity-100' : 'w-0 opacity-0'
+        className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-in-out ${
+          isSidebarVisible ? 'w-[244px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
         }`}
       >
-        <div className="w-[244px] h-full flex flex-col shrink-0">
-          <Sidebar selectedFilter={filter} onSelectFilter={(f) => { setFilter(f); useSettingsStore.getState().setActiveView('downloads'); }} />
+        <div className="app-sidebar-panel h-full w-[244px]">
+          <Sidebar
+            selectedFilter={filter}
+            onSelectFilter={(f) => {
+              setFilter(f);
+              useSettingsStore.getState().setActiveView('downloads');
+            }}
+          />
         </div>
       </div>
-      
-      {/* Main Content - Base Layer */}
-      <div className="app-workspace flex-1 flex flex-col h-full relative z-0">
+
+      <div className="app-workspace relative z-0 flex-1 flex flex-col h-full overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden relative">
           {activeView === 'downloads' && <DownloadTable filter={filter} />}
           {activeView === 'settings' && <SettingsView />}
@@ -264,7 +262,7 @@ function App() {
         {/* Status Bar */}
         <div className="app-statusbar h-8 px-5 flex items-center justify-between text-[10px] text-text-muted font-medium shrink-0 border-t border-border-color">
           <span className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--status-success))]"></span>
             Ready
           </span>
           <div className="flex gap-3 tabular-nums">

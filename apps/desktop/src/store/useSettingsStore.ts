@@ -24,7 +24,7 @@ const tauriStorage: StateStorage = {
       }
     }
   },
-  removeItem: async (name: string): Promise<void> => {
+  removeItem: async (_name: string): Promise<void> => {
     // no-op for now
   },
 };

@@ -487,40 +487,55 @@
   }
 
   .settings-toolbar {
-    background: hsl(var(--sidebar-bg));
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid hsl(var(--border-color));
   }
 
   .settings-tab-strip {
-    background: hsl(var(--bg-input));
-    border: 1px solid hsl(var(--border-color));
-    border-radius: 8px;
-    padding: 2px;
+    padding: 16px 32px;
   }
 
   .settings-tab-button {
-    border-radius: 6px;
+    min-height: 64px;
+    border-radius: 8px;
     transition: none;
   }
 
   .settings-tab-button[data-active="true"] {
-    background: hsl(var(--surface-raised));
-    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.1);
-    color: var(--color-text-primary);
+    background: hsl(var(--accent-color));
+    box-shadow: none;
+    color: white;
   }
 
   .settings-pane {
-    padding: 24px;
+    padding: 0;
     background: transparent;
+  }
+
+  .settings-content-shell {
+    padding: 32px;
+  }
+
+  .settings-title {
+    margin: 0 0 24px;
+    font-size: 28px;
+    line-height: 1.15;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+  }
+
+  .settings-section-title {
+    margin: 0 0 7px 12px;
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 600;
+    color: hsl(var(--text-secondary));
   }
 
   .mac-settings-group {
     background: hsl(var(--bg-modal));
-    border-radius: 10px;
+    border-radius: 9px;
     border: 1px solid hsl(var(--border-color));
-    box-shadow: 0 1px 2px hsl(var(--shadow-color));
+    box-shadow: none;
     overflow: hidden;
     margin-bottom: 24px;
   }
@@ -529,12 +544,56 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    min-height: 44px;
+    padding: 9px 14px;
     border-bottom: 1px solid hsl(var(--border-color));
   }
   
   .mac-settings-row:last-child {
     border-bottom: none;
+  }
+
+  .settings-row-label {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+    color: hsl(var(--text-primary));
+  }
+
+  .settings-row-label small {
+    font-size: 11px;
+    line-height: 1.25;
+    font-weight: 400;
+    color: hsl(var(--text-muted));
+  }
+
+  .settings-radio-group {
+    display: flex;
+    min-width: 180px;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 13px;
+  }
+
+  .settings-radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .settings-radio-group input {
+    accent-color: hsl(var(--accent-color));
+  }
+
+  .settings-group-footer {
+    margin: 0;
+    padding: 9px 14px;
+    border-top: 1px solid hsl(var(--border-color));
+    font-size: 11px;
+    line-height: 1.35;
+    color: hsl(var(--text-muted));
   }
 
   /* macOS Switch */
@@ -904,14 +963,18 @@
 }
 
 .settings-tab-label {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 @media (max-width: 900px) {
   .settings-tab-label {
-    font-size: 11px;
+    font-size: 9px;
     letter-spacing: -0.01em;
+  }
+
+  .settings-tab-strip {
+    padding-inline: 20px;
   }
 }
 

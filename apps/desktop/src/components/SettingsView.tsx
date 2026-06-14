@@ -196,13 +196,13 @@ export default function SettingsView() {
         type="button"
         data-active={active}
         onClick={() => settings.setActiveSettingsTab(type)}
-        className={`settings-tab-button flex min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-1 py-2 text-center cursor-default transition-colors ${
+        className={`settings-tab-button flex min-w-0 flex-1 flex-col items-center justify-center px-1 text-center cursor-default ${
           active
-            ? 'text-text-primary'
-            : 'text-text-secondary hover:bg-item-hover hover:text-text-primary'
+            ? 'text-white'
+            : 'text-text-primary hover:bg-item-hover'
         }`}
       >
-        <Icon size={15} strokeWidth={active ? 2.2 : 1.8} className={active ? 'text-accent' : ''} />
+        <Icon size={16} strokeWidth={2} />
         <span className="settings-tab-label mt-1 w-full whitespace-nowrap font-medium">{label}</span>
       </button>
     );
@@ -221,7 +221,7 @@ export default function SettingsView() {
 
         {/* SwiftUI SettingsPaneContainer-style horizontal tab strip */}
         <div className="settings-toolbar">
-          <div className="settings-tab-strip mx-6 mb-3 flex items-stretch gap-1 rounded-xl p-1">
+          <div className="settings-tab-strip flex items-stretch gap-1">
             {settingsTabs.map(tab => (
               <TabButton key={tab.type} {...tab} />
             ))}
@@ -230,28 +230,19 @@ export default function SettingsView() {
 
         {/* Content Area */}
         <div className="settings-scroll flex-1 overflow-y-auto">
-          <div className="w-full p-7">
-            <h1 className="mb-6 text-[22px] font-semibold tracking-tight text-text-primary">{activeTabLabel}</h1>
-            <div className="settings-content max-w-[760px]">
+          <div className="settings-content-shell w-full">
+            <h1 className="settings-title text-text-primary">{activeTabLabel}</h1>
+            <div className="settings-content max-w-[720px]">
 
           {/* Downloads Pane */}
           {activeTab === 'downloads' && (
-            <div className="settings-pane max-w-[760px]">
+            <div className="settings-pane max-w-[720px]">
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Parallel downloads</span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-text-muted text-[13px] w-6 text-right">{settings.maxConcurrentDownloads}</span>
-                    <input
-                      type="range" min="1" max="12"
-                      value={settings.maxConcurrentDownloads}
-                      onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
-                      className="accent-accent w-24"
-                    />
+                  <div className="settings-row-label">
+                    <span>Default connections:</span>
+                    <small>For new downloads</small>
                   </div>
-                </div>
-                <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Default connections</span>
                   <input
                     type="number" min="1" max="16"
                     value={settings.perServerConnections}
@@ -260,17 +251,38 @@ export default function SettingsView() {
                   />
                 </div>
                 <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Global speed limit</span>
+                  <div className="settings-row-label">
+                    <span>Parallel downloads:</span>
+                    <small>Max simultaneous active files</small>
+                  </div>
+                  <input
+                    type="number" min="1" max="12"
+                    value={settings.maxConcurrentDownloads}
+                    onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
+                    className="app-control w-16 text-center"
+                  />
+                </div>
+                <div className="mac-settings-row">
+                  <div className="settings-row-label">
+                    <span>Global speed limit:</span>
+                    <small>0 = unlimited speed</small>
+                  </div>
+                  <div className="flex items-center gap-2">
                   <input
                     type="text"
                     value={settings.globalSpeedLimit}
                     onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
                     placeholder="0"
-                    className="app-control w-24 text-center font-mono"
+                    className="app-control w-20 text-right font-mono px-2"
                   />
+                    <span className="text-[12px] text-text-muted">KiB/s</span>
+                  </div>
                 </div>
                 <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Automatic retries</span>
+                  <div className="settings-row-label">
+                    <span>Automatic retries:</span>
+                    <small>If a connection fails</small>
+                  </div>
                   <input
                     type="number" min="0" max="10"
                     value={settings.maxAutomaticRetries}
@@ -282,7 +294,10 @@ export default function SettingsView() {
 
               <div className="mac-settings-group">
                 <label className="mac-settings-row cursor-default">
-                  <span className="text-[13px] text-text-primary">Show completion notifications</span>
+                  <div className="settings-row-label">
+                    <span>Show notification when download completes</span>
+                    <small>Alerts you in Notification Center</small>
+                  </div>
                   <input
                     type="checkbox"
                     checked={settings.showNotifications}
@@ -291,7 +306,7 @@ export default function SettingsView() {
                   />
                 </label>
                 <label className="mac-settings-row cursor-default" style={{ opacity: settings.showNotifications ? 1 : 0.5 }}>
-                  <span className="text-[13px] text-text-primary">Play completion sound</span>
+                  <span className="text-[13px] text-text-primary">Play sound when download completes</span>
                   <input
                     type="checkbox"
                     checked={settings.playCompletionSound}
@@ -306,24 +321,35 @@ export default function SettingsView() {
 
           {/* Look & Feel Pane */}
           {activeTab === 'lookandfeel' && (
-            <div className="settings-pane max-w-[760px]">
+            <div className="settings-pane max-w-[720px]">
+              <h2 className="settings-section-title">App Theme</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">App Theme</span>
-                  <select
-                    value={settings.theme}
-                    onChange={(e) => settings.setTheme(e.target.value as any)}
-                    className="app-control w-40"
-                  >
-                    <option value="system">System Default</option>
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                    <option value="dracula">Dracula</option>
-                    <option value="nord">Nord</option>
-                  </select>
+                <div className="mac-settings-row items-start">
+                  <span className="text-[13px] text-text-primary pt-0.5">Theme</span>
+                  <div className="settings-radio-group">
+                    {[
+                      ['system', 'System Default'],
+                      ['light', 'Light'],
+                      ['dark', 'Dark'],
+                      ['dracula', 'Dracula'],
+                      ['nord', 'Nord'],
+                    ].map(([value, label]) => (
+                      <label key={value}>
+                        <input
+                          type="radio"
+                          name="app-theme"
+                          checked={settings.theme === value}
+                          onChange={() => settings.setTheme(value as typeof settings.theme)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
+                <p className="settings-group-footer">Select a color palette for the app's user interface.</p>
               </div>
 
+              <h2 className="settings-section-title">Display</h2>
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
                   <span className="text-[13px] text-text-primary">Font Size</span>
@@ -351,9 +377,13 @@ export default function SettingsView() {
                 </div>
               </div>
 
+              <h2 className="settings-section-title">macOS Integration</h2>
               <div className="mac-settings-group">
                 <label className="mac-settings-row cursor-default">
-                  <span className="text-[13px] text-text-primary">Show badge on Dock icon</span>
+                  <div className="settings-row-label">
+                    <span>Show badge on Dock icon</span>
+                    <small>Displays the number of active downloads on the Firelink Dock icon.</small>
+                  </div>
                   <input
                     type="checkbox"
                     checked={settings.showDockBadge}
@@ -362,7 +392,10 @@ export default function SettingsView() {
                   />
                 </label>
                 <label className="mac-settings-row cursor-default">
-                  <span className="text-[13px] text-text-primary">Show menu bar icon</span>
+                  <div className="settings-row-label">
+                    <span>Show menu bar icon</span>
+                    <small>Provides quick access to downloads and queues from the macOS menu bar.</small>
+                  </div>
                   <input
                     type="checkbox"
                     checked={settings.showMenuBarIcon}
@@ -376,19 +409,28 @@ export default function SettingsView() {
 
           {/* Network Pane */}
           {activeTab === 'network' && (
-            <div className="settings-pane max-w-[760px]">
+            <div className="settings-pane max-w-[720px]">
+              <h2 className="settings-section-title">Proxy</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Proxy Mode</span>
-                  <select
-                    value={settings.proxyMode}
-                    onChange={(e) => settings.setProxyMode(e.target.value as any)}
-                    className="app-control w-40"
-                  >
-                    <option value="none">No proxy</option>
-                    <option value="system">Use system proxy</option>
-                    <option value="custom">Set custom proxy</option>
-                  </select>
+                <div className="mac-settings-row items-start">
+                  <span className="text-[13px] text-text-primary pt-0.5">Mode</span>
+                  <div className="settings-radio-group">
+                    {[
+                      ['none', 'No Proxy'],
+                      ['system', 'Use System Proxy'],
+                      ['custom', 'Custom Proxy'],
+                    ].map(([value, label]) => (
+                      <label key={value}>
+                        <input
+                          type="radio"
+                          name="proxy-mode"
+                          checked={settings.proxyMode === value}
+                          onChange={() => settings.setProxyMode(value as typeof settings.proxyMode)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
                 {settings.proxyMode === 'custom' && (
                   <>
@@ -413,8 +455,16 @@ export default function SettingsView() {
                     </div>
                   </>
                 )}
+                <p className="settings-group-footer">
+                  {settings.proxyMode === 'none' && 'Downloads ignore configured proxies.'}
+                  {settings.proxyMode === 'system' && 'Downloads use the matching macOS system proxy when one is configured.'}
+                  {settings.proxyMode === 'custom' && (settings.proxyHost
+                    ? `Downloads use http://${settings.proxyHost}:${settings.proxyPort}.`
+                    : 'Enter a proxy host and port to enable the custom proxy.')}
+                </p>
               </div>
 
+              <h2 className="settings-section-title">Identity</h2>
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
                   <span className="text-[13px] text-text-primary">Custom User Agent</span>
@@ -426,6 +476,7 @@ export default function SettingsView() {
                     className="app-control flex-1 ml-4 font-mono text-[11px]"
                   />
                 </div>
+                <p className="settings-group-footer">Spoofs the browser User-Agent to bypass download restrictions. Leave blank for default.</p>
               </div>
             </div>
           )}

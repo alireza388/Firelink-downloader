@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react';
-import { SettingsTab, useSettingsStore } from '../store/useSettingsStore';
+import {
+  type AppFontSize,
+  type ListRowDensity,
+  SettingsTab,
+  useSettingsStore
+} from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
   Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
 import { WindowDragRegion } from './WindowDragRegion';
 import appIcon from '../assets/app-icon.png';
 
@@ -20,19 +25,6 @@ const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[
   { type: 'integrations', label: 'Integrations', icon: Puzzle },
   { type: 'about', label: 'About', icon: Info },
 ];
-
-interface AvailableReleaseUpdate {
-  version: string;
-  tag_name: string;
-  title: string;
-  release_notes: string;
-  release_url: string;
-  published_at: string | null;
-}
-
-type ReleaseCheckOutcome =
-  | { type: 'UpdateAvailable'; update: AvailableReleaseUpdate }
-  | { type: 'UpToDate'; latest_version: string; local_version: string };
 
 export default function SettingsView() {
   const settings = useSettingsStore();
@@ -70,19 +62,19 @@ export default function SettingsView() {
   // Fetch engine versions when Engine tab is opened
   useEffect(() => {
     if (settings.activeView === 'settings' && activeTab === 'engine') {
-      invoke<string>('test_aria2c')
+      invoke('test_aria2c')
         .then(v => setAria2Version(v))
         .catch(e => setAria2Version('Error: ' + e));
 
-      invoke<string>('test_ytdlp')
+      invoke('test_ytdlp')
         .then(v => setYtdlpVersion(v))
         .catch(e => setYtdlpVersion('Error: ' + e));
 
-      invoke<string>('test_ffmpeg')
+      invoke('test_ffmpeg')
         .then(v => setFfmpegVersion(v))
         .catch(e => setFfmpegVersion('Error: ' + e));
 
-      invoke<string>('test_deno')
+      invoke('test_deno')
         .then(v => setDenoVersion(v))
         .catch(e => setDenoVersion('Error: ' + e));
     }
@@ -99,7 +91,7 @@ export default function SettingsView() {
     showToast('Checking for updates...');
 
     try {
-      const result = await invoke<ReleaseCheckOutcome>('check_for_updates');
+      const result = await invoke('check_for_updates');
 
       if (result.type === 'UpToDate') {
         showToast(`Firelink ${result.latest_version} is up to date`);
@@ -363,7 +355,7 @@ export default function SettingsView() {
                   <span className="text-[13px] text-text-primary">Font Size</span>
                   <select
                     value={settings.appFontSize}
-                    onChange={(e) => settings.setAppFontSize(e.target.value as any)}
+                    onChange={(e) => settings.setAppFontSize(e.target.value as AppFontSize)}
                     className="app-control w-40"
                   >
                     <option value="small">Small</option>
@@ -375,7 +367,7 @@ export default function SettingsView() {
                   <span className="text-[13px] text-text-primary">List Row Density</span>
                   <select
                     value={settings.listRowDensity}
-                    onChange={(e) => settings.setListRowDensity(e.target.value as any)}
+                    onChange={(e) => settings.setListRowDensity(e.target.value as ListRowDensity)}
                     className="app-control w-40"
                   >
                     <option value="compact">Compact</option>
@@ -722,7 +714,9 @@ export default function SettingsView() {
                     <label className="text-text-secondary font-semibold">Browser Cookies Source:</label>
                     <select
                       value={settings.mediaCookieSource}
-                      onChange={(e) => settings.setMediaCookieSource(e.target.value as any)}
+                      onChange={(e) => settings.setMediaCookieSource(
+                        e.target.value as typeof settings.mediaCookieSource
+                      )}
                       className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent"
                     >
                       <option value="none">None</option>

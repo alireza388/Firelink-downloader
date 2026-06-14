@@ -124,13 +124,13 @@ export const PropertiesModal = () => {
       fileName,
       destination: saveLocation,
       connections: Number(connections),
-      speedLimit: speedLimitEnabled && speedLimitValue ? `${speedLimitValue}K` : null,
-      username: loginMode === 'custom' ? username.trim() : null,
-      password: loginMode === 'custom' ? password.trim() : null,
-      headers: headers.trim() || null,
-      checksum: checksumEnabled && checksumValue.trim() ? `${checksumAlgorithm}=${checksumValue.trim()}` : null,
-      cookies: cookies.trim() || null,
-      mirrors: mirrors.trim() || null,
+      speedLimit: speedLimitEnabled && speedLimitValue ? `${speedLimitValue}K` : undefined,
+      username: loginMode === 'custom' ? username.trim() : undefined,
+      password: loginMode === 'custom' ? password.trim() : undefined,
+      headers: headers.trim() || undefined,
+      checksum: checksumEnabled && checksumValue.trim() ? `${checksumAlgorithm}=${checksumValue.trim()}` : undefined,
+      cookies: cookies.trim() || undefined,
+      mirrors: mirrors.trim() || undefined,
     };
     
     updateDownload(item.id, updates);

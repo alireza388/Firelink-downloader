@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useDownloadStore, MAIN_QUEUE_ID, getSiteLogin } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music } from 'lucide-react';
+import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, type LucideIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
 import { categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
 
@@ -19,6 +19,15 @@ interface RawMediaFormat {
   filesize_approx?: number;
 }
 
+interface MediaFormat {
+  name: string;
+  selector: string;
+  ext: string;
+  detail: string;
+  type: string;
+  bytes: number;
+}
+
 interface ParsedDownloadItem {
   url: string;
   file: string;
@@ -26,7 +35,7 @@ interface ParsedDownloadItem {
   sizeBytes?: number;
   status?: string;
   isMedia?: boolean;
-  formats?: { name: string; selector: string; ext: string; detail: string; type: string; bytes: number }[];
+  formats?: MediaFormat[];
   selectedFormat?: number;
 }
 
@@ -134,10 +143,14 @@ const formatBytes = (bytes: number) => {
 
 const parseMediaFormats = (jsonStr: string) => {
   try {
-    const data = JSON.parse(jsonStr);
-    let title = data.title || 'Media';
+    const parsed: unknown = JSON.parse(jsonStr);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const data = parsed as { title?: unknown; formats?: unknown };
+    let title = typeof data.title === 'string' ? data.title : 'Media';
     title = title.replace(/[\/\\?%*:|"<>]/g, '-');
-    const rawFormats: RawMediaFormat[] = data.formats || [];
+    const rawFormats = Array.isArray(data.formats)
+      ? data.formats.filter((format): format is RawMediaFormat => Boolean(format) && typeof format === 'object')
+      : [];
 
     const options = [];
 
@@ -297,7 +310,7 @@ export const AddDownloadsModal = () => {
 
   useEffect(() => {
     if (!saveLocation) return;
-    invoke<string>('get_free_space', { path: saveLocation })
+    invoke('get_free_space', { path: saveLocation })
       .then(space => setFreeSpace(space))
       .catch(() => setFreeSpace('Unknown'));
   }, [saveLocation, isAddModalOpen]);
@@ -338,13 +351,13 @@ export const AddDownloadsModal = () => {
             let keychainPassword = null;
             if (login) {
               try {
-                keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+                keychainPassword = await invoke('get_keychain_password', { id: login.id });
               } catch (e) {
                 console.warn("Could not fetch keychain password:", e);
               }
             }
 
-            const jsonStr = await invoke<string>('fetch_media_metadata', { 
+            const jsonStr = await invoke('fetch_media_metadata', {
               url, 
               cookieBrowser: browserArg,
               username: login?.username || null,
@@ -371,13 +384,14 @@ export const AddDownloadsModal = () => {
             let keychainPassword = null;
             if (login) {
               try {
-                keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+                keychainPassword = await invoke('get_keychain_password', { id: login.id });
               } catch (e) {
                 console.warn("Could not fetch keychain password:", e);
               }
             }
-            const meta = await invoke<{filename: string, size: string, size_bytes: number}>('fetch_metadata', { 
+            const meta = await invoke('fetch_metadata', {
               url,
+              userAgent: settingsStore.customUserAgent || null,
               username: login?.username || null,
               password: keychainPassword
             });
@@ -467,7 +481,7 @@ export const AddDownloadsModal = () => {
          let fileExistsOnDisk = false;
          try {
              const cleanLocation = finalLocation.endsWith('/') ? finalLocation.slice(0, -1) : finalLocation;
-             fileExistsOnDisk = await invoke<boolean>('check_file_exists', { path: `${cleanLocation}/${finalFile}` });
+             fileExistsOnDisk = await invoke('check_file_exists', { path: `${cleanLocation}/${finalFile}` });
          } catch (e) {}
 
          if (fileExistsInStore || fileExistsOnDisk) {
@@ -487,7 +501,7 @@ export const AddDownloadsModal = () => {
   };
 
   const executeAddDownloads = async (startImmediately: boolean, finalLocation: string, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
-      let itemsToAdd = [...parsedItems];
+      let itemsToAdd: Array<ParsedDownloadItem | null> = [...parsedItems];
 
       if (resolutions) {
          for (const res of resolutions) {
@@ -496,7 +510,7 @@ export const AddDownloadsModal = () => {
              if (!item) continue;
 
              if (res.resolution === 'skip') {
-                 itemsToAdd[idx] = null as any; // mark for skip
+                 itemsToAdd[idx] = null;
              } else if (res.resolution === 'rename') {
                  let finalFile = item.file;
                  if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
@@ -519,7 +533,7 @@ export const AddDownloadsModal = () => {
                          return dest === finalLocation && d.fileName === newName && d.status !== 'failed';
                      });
                      let diskHas = false;
-                     try { diskHas = await invoke<boolean>('check_file_exists', { path: `${cleanLocation}/${newName}` }); } catch(e) {}
+                     try { diskHas = await invoke('check_file_exists', { path: `${cleanLocation}/${newName}` }); } catch(e) {}
                      exists = storeHas || diskHas;
                      count++;
                  }
@@ -550,9 +564,9 @@ export const AddDownloadsModal = () => {
          }
       }
 
-      itemsToAdd = itemsToAdd.filter(Boolean);
+      const resolvedItems = itemsToAdd.filter((item): item is ParsedDownloadItem => item !== null);
 
-      for (const item of itemsToAdd) {
+      for (const item of resolvedItems) {
         try {
           const id = crypto.randomUUID();
           let finalFile = item.file;
@@ -596,7 +610,12 @@ export const AddDownloadsModal = () => {
       toggleAddModal(false);
   };
 
-  const SummaryBox = ({ title, value, icon: Icon, color }: any) => (
+  const SummaryBox = ({ title, value, icon: Icon, color }: {
+    title: string;
+    value: string | number;
+    icon: LucideIcon;
+    color: string;
+  }) => (
     <div className="flex flex-col bg-bg-input/50 border border-border-modal/40 rounded-lg p-2.5 shadow-sm">
       <div className="flex items-center gap-1.5 text-text-muted mb-1">
         <Icon size={12} className={color} />
@@ -737,7 +756,7 @@ export const AddDownloadsModal = () => {
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[10px] uppercase font-bold tracking-wider text-text-muted">Available Streams</label>
                         <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1">
-                          {parsedItems[selectedItemIndex].formats!.map((f: any, idx: number) => {
+                          {parsedItems[selectedItemIndex].formats!.map((f, idx) => {
                           const isSelected = parsedItems[selectedItemIndex].selectedFormat === idx;
                           const Icon = f.type === 'Audio' ? Music : Film;
                           return (

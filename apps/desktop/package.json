@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "bindings": "cd src-tauri && cargo test export_bindings --lib",
+    "build": "npm run bindings && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

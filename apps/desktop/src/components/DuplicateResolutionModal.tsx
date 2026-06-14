@@ -1,24 +1,25 @@
 import { useState } from 'react';
 
 export type DuplicateReason = { type: 'url', msg: string } | { type: 'file', msg: string };
+type DuplicateResolution = 'rename' | 'replace' | 'skip';
 
 export interface DuplicateConflict {
   id: string; // id of the pending item
   fileName: string;
   reason: DuplicateReason;
-  resolution: 'rename' | 'replace' | 'skip';
+  resolution: DuplicateResolution;
 }
 
 interface Props {
   conflicts: DuplicateConflict[];
-  onConfirm: (resolutions: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => void;
+  onConfirm: (resolutions: { id: string, resolution: DuplicateResolution }[]) => void;
   onCancel: () => void;
 }
 
 export const DuplicateResolutionModal = ({ conflicts: initialConflicts, onConfirm, onCancel }: Props) => {
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>(initialConflicts);
 
-  const updateResolution = (id: string, resolution: 'rename' | 'replace' | 'skip') => {
+  const updateResolution = (id: string, resolution: DuplicateResolution) => {
     setConflicts(conflicts.map(c => c.id === id ? { ...c, resolution } : c));
   };
 
@@ -39,7 +40,7 @@ export const DuplicateResolutionModal = ({ conflicts: initialConflicts, onConfir
               </div>
               <select 
                 value={conflict.resolution}
-                onChange={(e) => updateResolution(conflict.id, e.target.value as any)}
+                onChange={(e) => updateResolution(conflict.id, e.target.value as DuplicateResolution)}
                 className="app-control w-24 shrink-0 px-2 py-1 text-xs"
               >
                 <option value="rename">Rename</option>

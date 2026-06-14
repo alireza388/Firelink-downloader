@@ -1,12 +1,23 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
+import type { ActiveView } from '../bindings/ActiveView';
+import type { AppFontSize } from '../bindings/AppFontSize';
+import type { ListRowDensity } from '../bindings/ListRowDensity';
+import type { MediaCookieSource } from '../bindings/MediaCookieSource';
+import type { PostQueueAction } from '../bindings/PostQueueAction';
+import type { PersistedSettings } from '../bindings/PersistedSettings';
+import type { ProxyMode } from '../bindings/ProxyMode';
+import type { SchedulerSettings } from '../bindings/SchedulerSettings';
+import type { SettingsTab } from '../bindings/SettingsTab';
+import type { SiteLogin } from '../bindings/SiteLogin';
+import type { Theme } from '../bindings/Theme';
 
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (name === 'firelink-settings') {
       try {
-        const data = await invoke<string | null>('db_load_settings');
+        const data = await invoke('db_load_settings');
         return data;
       } catch (e) {
         console.error("Failed to load settings from DB", e);
@@ -29,30 +40,21 @@ const tauriStorage: StateStorage = {
   },
 };
 
-export interface SiteLogin {
-  id: string;
-  urlPattern: string;
-  username: string;
-}
-
-export type AppFontSize = 'small' | 'standard' | 'large';
-export type ListRowDensity = 'compact' | 'standard' | 'relaxed';
-export type SettingsTab = 'downloads' | 'lookandfeel' | 'network' | 'locations' | 'sitelogins' | 'power' | 'engine' | 'integrations' | 'about';
-export type ActiveView = 'downloads' | 'settings' | 'scheduler' | 'speedLimiter';
-export type PostQueueAction = 'none' | 'sleep' | 'restart' | 'shutdown';
-
-export interface SchedulerSettings {
-  enabled: boolean;
-  startTime: string;
-  stopTimeEnabled: boolean;
-  stopTime: string;
-  everyday: boolean;
-  selectedDays: number[];
-  postQueueAction: PostQueueAction;
-}
+export type {
+  ActiveView,
+  AppFontSize,
+  ListRowDensity,
+  MediaCookieSource,
+  PostQueueAction,
+  ProxyMode,
+  SchedulerSettings,
+  SettingsTab,
+  SiteLogin,
+  Theme
+};
 
 export interface SettingsState {
-  theme: 'dark' | 'light' | 'system' | 'dracula' | 'nord';
+  theme: Theme;
   defaultDownloadPath: string;
   maxConcurrentDownloads: number;
   globalSpeedLimit: string;
@@ -74,19 +76,19 @@ export interface SettingsState {
   listRowDensity: ListRowDensity;
   showDockBadge: boolean;
   showMenuBarIcon: boolean;
-  proxyMode: 'none' | 'system' | 'custom';
+  proxyMode: ProxyMode;
   proxyHost: string;
   proxyPort: number;
   customUserAgent: string;
   askWhereToSaveEachFile: boolean;
   preventsSleepWhileDownloading: boolean;
-  mediaCookieSource: 'none' | 'safari' | 'chrome' | 'firefox' | 'edge' | 'brave';
+  mediaCookieSource: MediaCookieSource;
   downloadDirectories: Record<string, string>;
   siteLogins: SiteLogin[];
   extensionPairingToken: string;
   autoCheckUpdates: boolean;
 
-  setTheme: (theme: 'dark' | 'light' | 'system' | 'dracula' | 'nord') => void;
+  setTheme: (theme: Theme) => void;
   setDefaultDownloadPath: (path: string) => void;
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
@@ -107,13 +109,13 @@ export interface SettingsState {
   setListRowDensity: (density: ListRowDensity) => void;
   setShowDockBadge: (show: boolean) => void;
   setShowMenuBarIcon: (show: boolean) => void;
-  setProxyMode: (mode: 'none' | 'system' | 'custom') => void;
+  setProxyMode: (mode: ProxyMode) => void;
   setProxyHost: (host: string) => void;
   setProxyPort: (port: number) => void;
   setCustomUserAgent: (userAgent: string) => void;
   setAskWhereToSaveEachFile: (ask: boolean) => void;
   setPreventsSleepWhileDownloading: (prevent: boolean) => void;
-  setMediaCookieSource: (source: 'none' | 'safari' | 'chrome' | 'firefox' | 'edge' | 'brave') => void;
+  setMediaCookieSource: (source: MediaCookieSource) => void;
   setCategoryDirectory: (category: string, path: string) => void;
   resetCategoryDirectories: () => void;
   addSiteLogin: (login: SiteLogin) => void;
@@ -158,7 +160,10 @@ const normalizeDownloadDirectories = (directories: unknown): Record<string, stri
 
 const generateSecureToken = () => {
   try {
-    const cryptoObj = typeof window !== 'undefined' ? (window.crypto || (window as any).msCrypto) : null;
+    const cryptoObj = typeof window !== 'undefined'
+      ? (window as Window & { msCrypto?: Crypto }).crypto
+        || (window as Window & { msCrypto?: Crypto }).msCrypto
+      : null;
     if (cryptoObj && cryptoObj.getRandomValues) {
       const arr = new Uint8Array(24);
       cryptoObj.getRandomValues(arr);
@@ -280,7 +285,7 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'firelink-settings',
       storage: createJSONStorage(() => tauriStorage),
-      partialize: (state) => ({
+      partialize: (state): PersistedSettings => ({
         theme: state.theme,
         defaultDownloadPath: state.defaultDownloadPath,
         maxConcurrentDownloads: state.maxConcurrentDownloads,
@@ -312,16 +317,21 @@ export const useSettingsStore = create<SettingsState>()(
         extensionPairingToken: state.extensionPairingToken,
         autoCheckUpdates: state.autoCheckUpdates
       }),
-      merge: (persistedState: any, currentState) => ({
+      merge: (persistedState: unknown, currentState) => {
+        const persisted = persistedState && typeof persistedState === 'object'
+          ? persistedState as Partial<SettingsState>
+          : {};
+        return ({
         ...currentState,
-        ...persistedState,
-        appFontSize: persistedState?.appFontSize === 'extra-large' ? 'large' : (persistedState?.appFontSize || currentState.appFontSize),
-        listRowDensity: persistedState?.listRowDensity === 'spacious' ? 'relaxed' : (persistedState?.listRowDensity || currentState.listRowDensity),
-        downloadDirectories: normalizeDownloadDirectories(persistedState?.downloadDirectories),
-        siteLogins: (persistedState && typeof persistedState === 'object' && Array.isArray(persistedState.siteLogins))
-          ? persistedState.siteLogins
+        ...persisted,
+        appFontSize: persisted.appFontSize || currentState.appFontSize,
+        listRowDensity: persisted.listRowDensity || currentState.listRowDensity,
+        downloadDirectories: normalizeDownloadDirectories(persisted.downloadDirectories),
+        siteLogins: Array.isArray(persisted.siteLogins)
+          ? persisted.siteLogins
           : currentState.siteLogins
-      })
+        });
+      }
     }
   )
 );

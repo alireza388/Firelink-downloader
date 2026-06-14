@@ -5,11 +5,15 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use regex::Regex;
 use serde::Serialize;
+use ts_rs::TS;
+use uuid::Uuid;
 
-#[derive(Serialize)]
-struct MetadataResponse {
+#[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct MetadataResponse {
     filename: String,
     size: String,
+    #[ts(type = "number")]
     size_bytes: u64,
 }
 
@@ -336,18 +340,23 @@ fn resign_aria2_debug_bundle(aria2c_path: &std::path::Path) -> Result<(), String
     Ok(())
 }
 
+mod download;
+#[allow(dead_code)]
+mod ipc;
 mod parity;
 pub mod error;
 pub use error::AppError;
 
+// Retained only for compatibility with the optional aria2 diagnostic monitor.
+// Active downloads are owned by DownloadCoordinator.
 pub enum TaskHandle {
     Aria2(String),
-    Pid(u32),
-    Queued,
+    #[doc(hidden)]
+    Inactive,
 }
 
 pub struct AppState {
-    pub tasks: Arc<Mutex<HashMap<String, TaskHandle>>>,
+    pub download_coordinator: download::DownloadCoordinator,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
     pub aria2_port: u16,
@@ -356,8 +365,9 @@ pub struct AppState {
     pub sleep_preventer: Arc<Mutex<Option<keepawake::KeepAwake>>>,
 }
 
-#[derive(Clone, Serialize)]
-struct DownloadProgressEvent {
+#[derive(Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct DownloadProgressEvent {
     id: String,
     fraction: f64,
     speed: String,
@@ -443,9 +453,7 @@ async fn start_download(
     proxy: Option<String>,
 ) -> Result<(), AppError> {
     println!("start_download called for id: {}", id);
-    let state_aria2_port = state.aria2_port;
-    let state_aria2_secret = state.aria2_secret.clone();
-    let tasks_map = state.tasks.clone();
+    let download_id = Uuid::parse_str(&id).map_err(|error| AppError::Internal(error.to_string()))?;
 
     let mut resolved_dest = std::path::PathBuf::from(&destination);
     if destination.starts_with("~/") {
@@ -457,80 +465,25 @@ async fn start_download(
             resolved_dest = home;
         }
     }
-    
-    if !resolved_dest.exists() {
-        let _ = tokio::fs::create_dir_all(&resolved_dest).await;
-    }
-
-    let gid: String = id.replace("-", "").chars().take(16).collect();
-    // ensure exactly 16 chars
-    let gid = format!("{:0<16}", gid);
-    
-    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Aria2(gid.clone()));
-
-    let mut options = serde_json::Map::new();
-    options.insert("gid".to_string(), serde_json::json!(gid));
-    options.insert("dir".to_string(), serde_json::json!(resolved_dest.to_string_lossy().to_string()));
-    options.insert("out".to_string(), serde_json::json!(filename));
-    
-    if let Some(conn) = connections {
-        options.insert("split".to_string(), serde_json::json!(conn.to_string()));
-        options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
-    }
-    if let Some(limit) = speed_limit {
-        if !limit.is_empty() {
-            options.insert("max-download-limit".to_string(), serde_json::json!(limit));
-        }
-    }
-    
-    if let Some(user) = username {
-        if !user.is_empty() {
-            options.insert("http-user".to_string(), serde_json::json!(user));
-            options.insert("ftp-user".to_string(), serde_json::json!(user));
-            if let Some(pass) = password {
-                options.insert("http-passwd".to_string(), serde_json::json!(pass));
-                options.insert("ftp-passwd".to_string(), serde_json::json!(pass));
-            }
-        }
-    }
-    
-    let mut hdrs = Vec::new();
-    if let Some(hdr) = headers {
-        for header in hdr.lines().map(str::trim).filter(|h| !h.is_empty()) {
-            hdrs.push(header.to_string());
-        }
-    }
-    if let Some(cks) = cookies {
-        if !cks.is_empty() {
-            hdrs.push(format!("Cookie: {}", cks));
-        }
-    }
-    if !hdrs.is_empty() {
-        options.insert("header".to_string(), serde_json::json!(hdrs));
-    }
-    
-    if let Some(p) = proxy {
-        if !p.is_empty() {
-            options.insert("all-proxy".to_string(), serde_json::json!(p));
-        }
-    }
-    if let Some(ua) = user_agent {
-        if !ua.is_empty() {
-            options.insert("user-agent".to_string(), serde_json::json!(ua));
-        }
-    }
-    if let Some(chk) = checksum {
-        if !chk.is_empty() {
-            options.insert("checksum".to_string(), serde_json::json!(chk));
-        }
-    }
-    if let Some(tries) = max_tries {
-        options.insert("max-tries".to_string(), serde_json::json!(tries.to_string()));
-    }
-
-    let uris = collect_download_uris(&url, mirrors.as_deref());
-    
-    let _ = rpc_call(state_aria2_port, &state_aria2_secret, "aria2.addUri", serde_json::json!([uris, options])).await?;
+    let _ = connections;
+    let _ = checksum;
+    state
+        .download_coordinator
+        .send(download::DownloadCmd::Start(download::DownloadPayload {
+            id: download_id,
+            urls: collect_download_uris(&url, mirrors.as_deref()),
+            output_path: resolved_dest.join(filename),
+            speed_limit,
+            username,
+            password,
+            headers,
+            cookies,
+            user_agent,
+            max_tries: max_tries.unwrap_or(1).max(1) as u32,
+            proxy,
+        }))
+        .await
+        .map_err(AppError::Internal)?;
 
     Ok(())
 }
@@ -553,30 +506,21 @@ async fn start_media_download(
     user_agent: Option<String>,
     max_tries: Option<i32>,
 ) -> Result<(), String> {
-    let tasks_map = state.tasks.clone();
     let media_semaphore = state.media_semaphore.clone();
-
-    // Mark task as queued
-    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Queued);
-
-    let id_clone = id.clone();
+    let coordinator = state.download_coordinator.clone();
+    let mut cancel_rx = coordinator.register_media(id.clone()).await?;
     tauri::async_runtime::spawn(async move {
-        // Wait in queue via semaphore
-        let permit = media_semaphore.acquire().await;
-        
-        // Check if user cancelled the task while it was waiting in queue
-        {
-            let map = tasks_map.lock().unwrap();
-            if !map.contains_key(&id_clone) {
+        let permit = tokio::select! {
+            permit = media_semaphore.acquire() => permit,
+            _ = cancel_rx.changed() => {
+                coordinator.finish_media(id).await;
                 return;
             }
-        }
+        };
 
         let _ = start_media_download_internal(
             app_handle,
-            tasks_map,
-            id_clone,
-            url,
+            &id, url,
             destination,
             filename,
             format_selector,
@@ -588,9 +532,11 @@ async fn start_media_download(
             proxy,
             user_agent,
             max_tries,
+            &mut cancel_rx,
         ).await;
-        
-        drop(permit); // Release semaphore permit
+
+        drop(permit);
+        coordinator.finish_media(id).await;
     });
 
     Ok(())
@@ -598,8 +544,7 @@ async fn start_media_download(
 
 pub(crate) async fn start_media_download_internal(
     app_handle: tauri::AppHandle,
-    tasks_map: Arc<Mutex<HashMap<String, TaskHandle>>>,
-    id: String,
+    id: &str,
     url: String,
     destination: String,
     filename: String,
@@ -612,6 +557,7 @@ pub(crate) async fn start_media_download_internal(
     proxy: Option<String>,
     user_agent: Option<String>,
     max_tries: Option<i32>,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -733,159 +679,108 @@ pub(crate) async fn start_media_download_internal(
     cmd.stderr(Stdio::piped()); // Also pipe stderr for better error reporting
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
-    let pid = child.id().unwrap_or(0);
-    
-    // Update task handle from Queued to Pid
-    tasks_map.lock().unwrap().insert(id.clone(), TaskHandle::Pid(pid));
-
     let stdout = child.stdout.take().unwrap();
-    let app_handle_clone = app_handle.clone();
-    let id_clone = id.clone();
 
     // yt-dlp parsing regex
     let pct_re = Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap();
     let spd_re = Regex::new(r"at\s+([^\s]+)").unwrap();
     let eta_re = Regex::new(r"ETA\s+([^\s]+)").unwrap();
 
-    tauri::async_runtime::spawn(async move {
-        let _keep_alive = config_path; // Keep the temp file alive
-        let mut reader = BufReader::new(stdout).lines();
-        let mut current_track: f64 = 0.0;
-        let mut last_fraction: f64 = 0.0;
+    let _keep_alive = config_path;
+    let mut reader = BufReader::new(stdout).lines();
+    let mut current_track: f64 = 0.0;
+    let mut last_fraction: f64 = 0.0;
+    let mut last_progress_at = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_millis(150))
+        .unwrap_or_else(std::time::Instant::now);
 
-        loop {
-            tokio::select! {
-                line_result = reader.next_line() => {
-                    match line_result {
-                        Ok(Some(line)) => {
-                            if line.contains("[download]") && line.contains("%") {
-                                let fraction = pct_re.captures(&line)
-                                    .and_then(|cap| cap.get(1))
-                                    .and_then(|m| m.as_str().parse::<f64>().ok())
-                                    .unwrap_or(0.0) / 100.0;
+    loop {
+        tokio::select! {
+            _ = cancel_rx.changed() => {
+                let _ = child.kill().await;
+                return Ok(());
+            }
+            line_result = reader.next_line() => {
+                match line_result {
+                    Ok(Some(line)) => {
+                        if line.contains("[download]") && line.contains("%") {
+                            let fraction = pct_re.captures(&line)
+                                .and_then(|cap| cap.get(1))
+                                .and_then(|m| m.as_str().parse::<f64>().ok())
+                                .unwrap_or(0.0) / 100.0;
 
-                                if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
-                                    current_track += 1.0;
-                                }
-                                last_fraction = fraction;
+                            if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
+                                current_track += 1.0;
+                            }
+                            last_fraction = fraction;
 
-                                let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
+                            let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
 
-                                let speed = spd_re.captures(&line)
-                                    .and_then(|cap| cap.get(1))
-                                    .map(|m| m.as_str().to_string())
-                                    .unwrap_or_else(|| "-".to_string());
+                            let speed = spd_re.captures(&line)
+                                .and_then(|cap| cap.get(1))
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_else(|| "-".to_string());
 
-                                let eta = eta_re.captures(&line)
-                                    .and_then(|cap| cap.get(1))
-                                    .map(|m| m.as_str().to_string())
-                                    .unwrap_or_else(|| "-".to_string());
+                            let eta = eta_re.captures(&line)
+                                .and_then(|cap| cap.get(1))
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_else(|| "-".to_string());
 
-                                let _ = app_handle_clone.emit("download-progress", DownloadProgressEvent {
-                                    id: id_clone.clone(),
+                            let now = std::time::Instant::now();
+                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(150) {
+                                let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                    id: id.to_string(),
                                     fraction: overall_fraction,
                                     speed,
                                     eta,
                                 });
+                                last_progress_at = now;
                             }
                         }
-                        _ => break,
                     }
-                }
-                status = child.wait() => {
-                    println!("child exit status: {:?}", status);
-                    if let Ok(exit_status) = status {
-                        if exit_status.success() {
-                            let _ = app_handle_clone.emit("download-complete", id_clone.clone());
-                        } else {
-                            // If it exited with error, emit failed
-                            let _ = app_handle_clone.emit("download-failed", id_clone.clone());
-                        }
-                    }
-                    break;
+                    _ => break,
                 }
             }
+            status = child.wait() => {
+                println!("child exit status: {:?}", status);
+                if let Ok(exit_status) = status {
+                    if exit_status.success() {
+                        let _ = app_handle.emit("download-complete", id.to_string());
+                    } else {
+                        let _ = app_handle.emit("download-failed", id.to_string());
+                    }
+                }
+                break;
+            }
         }
-    });
-    
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
     println!("pause_download called for id: {}", id);
-    let handle_opt = state.tasks.lock().unwrap().remove(&id);
-    if let Some(handle) = handle_opt {
-        match handle {
-            TaskHandle::Aria2(gid) => {
-                let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([gid])).await;
-            }
-            TaskHandle::Queued => {
-                // If it was just queued, it's already removed from tasks map.
-                // The waiting Tokio task will wake up, see it's missing, and abort silently.
-                println!("Queued download {} aborted before starting", id);
-            }
-            TaskHandle::Pid(pid) => {
-                if pid > 0 {
-                    use sysinfo::{System, Pid};
-                    let mut sys = System::new_all();
-                    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-                    
-                    let parent_pid = Pid::from_u32(pid);
-                    let mut to_kill = vec![parent_pid];
-                    let mut idx = 0;
-                    
-                    while idx < to_kill.len() {
-                        let current = to_kill[idx];
-                        for (proc_pid, proc) in sys.processes() {
-                            if let Some(p) = proc.parent() {
-                                if p == current {
-                                    to_kill.push(*proc_pid);
-                                }
-                            }
-                        }
-                        idx += 1;
-                    }
-                    
-                    for p in to_kill.into_iter().rev() {
-                        if let Some(proc) = sys.process(p) {
-                            #[cfg(unix)]
-                            {
-                                if proc.kill_with(sysinfo::Signal::Term).is_none() {
-                                    proc.kill(); // Fallback to SIGKILL
-                                }
-                            }
-                            #[cfg(windows)]
-                            proc.kill();
-                            
-                            println!("Sent termination signal to pid: {}", p.as_u32());
-                        }
-                    }
-                }
-            }
-        }
+    if let Ok(download_id) = Uuid::parse_str(&id) {
+        state
+            .download_coordinator
+            .send(download::DownloadCmd::Pause(download_id))
+            .await?;
     }
-    Ok(())
+    state.download_coordinator.pause_media(id).await
 }
 
 #[tauri::command]
 async fn remove_download(state: tauri::State<'_, AppState>, id: String, filepath: Option<String>) -> Result<(), String> {
     println!("remove_download called for id: {}", id);
-    
-    // Check if it's aria2 first, so we can call remove instead of pause
-    let mut is_aria2 = false;
-    let mut gid_to_remove = String::new();
-    if let Some(TaskHandle::Aria2(gid)) = state.tasks.lock().unwrap().get(&id) {
-        is_aria2 = true;
-        gid_to_remove = gid.clone();
+
+    if let Ok(download_id) = Uuid::parse_str(&id) {
+        state
+            .download_coordinator
+            .send(download::DownloadCmd::Cancel(download_id))
+            .await?;
     }
-    
-    if is_aria2 {
-        state.tasks.lock().unwrap().remove(&id);
-        let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.remove", serde_json::json!([gid_to_remove])).await;
-    } else {
-        let _ = pause_download(state, id).await;
-    }
+    state.download_coordinator.pause_media(id).await?;
     
     if let Some(path) = filepath {
         if !path.is_empty() {
@@ -938,12 +833,18 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
 }
 
 #[tauri::command]
-fn perform_system_action(action: String) -> Result<(), String> {
-    match action.as_str() {
-        "shutdown" => system_shutdown::shutdown().map_err(|e| e.to_string()),
-        "restart" => system_shutdown::reboot().map_err(|e| e.to_string()),
-        "sleep" => system_shutdown::sleep().map_err(|e| e.to_string()),
-        _ => Err("Invalid action".to_string())
+fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), String> {
+    match action {
+        crate::ipc::PostQueueAction::Shutdown => {
+            system_shutdown::shutdown().map_err(|e| e.to_string())
+        }
+        crate::ipc::PostQueueAction::Restart => {
+            system_shutdown::reboot().map_err(|e| e.to_string())
+        }
+        crate::ipc::PostQueueAction::Sleep => {
+            system_shutdown::sleep().map_err(|e| e.to_string())
+        }
+        crate::ipc::PostQueueAction::None => Err("Invalid action".to_string()),
     }
 }
 
@@ -1225,17 +1126,17 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
-        .manage(AppState {
-            tasks: Arc::new(Mutex::new(HashMap::new())),
-            extension_pairing_token,
-            extension_frontend_ready,
-            aria2_port,
-            aria2_secret: aria2_secret.clone(),
-            media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
-            sleep_preventer: Arc::new(Mutex::new(None)),
-        })
         .manage(Aria2DaemonGuard(std::sync::Mutex::new(None)))
         .setup(move |app| {
+            app.manage(AppState {
+                download_coordinator: download::DownloadCoordinator::spawn(app.handle().clone()),
+                extension_pairing_token,
+                extension_frontend_ready,
+                aria2_port,
+                aria2_secret: aria2_secret.clone(),
+                media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
+                sleep_preventer: Arc::new(Mutex::new(None)),
+            });
             let db_conn = crate::db::init_db(app.handle()).expect("Failed to init db");
             app.manage(crate::db::DbState { conn: std::sync::Mutex::new(db_conn) });
 
@@ -1346,15 +1247,13 @@ pub fn run() {
                             match msg {
                                 Some(Ok(Message::Text(text))) => {
                                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                                        let state = app_handle_clone.state::<AppState>();
-                                        let tasks = state.tasks.clone();
+                                        let tasks = HashMap::<String, TaskHandle>::new();
                                         
                                         // Process progress
                                         if json.get("id").and_then(|i| i.as_str()) == Some("progress") {
                                             let mut gid_to_id = HashMap::new();
                                             {
-                                                let map = tasks.lock().unwrap();
-                                                for (id, handle) in map.iter() {
+                                                for (id, handle) in tasks.iter() {
                                                     if let TaskHandle::Aria2(gid) = handle {
                                                         gid_to_id.insert(gid.clone(), id.clone());
                                                     }
@@ -1411,8 +1310,7 @@ pub fn run() {
                                                         if let Some(gid) = event_info.get("gid").and_then(|g| g.as_str()) {
                                                             let mut target_id = None;
                                                             {
-                                                                let map = tasks.lock().unwrap();
-                                                                for (id, handle) in map.iter() {
+                                                                for (id, handle) in tasks.iter() {
                                                                     if let TaskHandle::Aria2(task_gid) = handle {
                                                                         if task_gid == gid {
                                                                             target_id = Some(id.clone());
@@ -1428,7 +1326,6 @@ pub fn run() {
                                                                 } else {
                                                                     let _ = app_handle_clone.emit("download-failed", id.clone());
                                                                 }
-                                                                tasks.lock().unwrap().remove(&id);
                                                             }
                                                         }
                                                     }
@@ -1504,9 +1401,10 @@ fn db_get_all_downloads(state: tauri::State<crate::db::DbState>) -> Result<Vec<S
 }
 
 #[tauri::command]
-fn db_save_download(state: tauri::State<crate::db::DbState>, id: String, status: String, queue_id: String, data: String) -> Result<(), String> {
+fn db_save_download(state: tauri::State<crate::db::DbState>, id: String, status: crate::ipc::DownloadStatus, queue_id: String, data: String) -> Result<(), String> {
     let conn = state.conn.lock().unwrap();
-    crate::db::insert_download(&conn, &id, &status, &queue_id, &data).map_err(|e| e.to_string())
+    crate::db::insert_download(&conn, &id, status.as_str(), &queue_id, &data)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

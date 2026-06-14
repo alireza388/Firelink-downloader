@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
 import {
   CheckCircle2, Clock3, List, Moon, LockKeyhole,
   Pause, Play, Power, RotateCcw, Save

@@ -1,11 +1,14 @@
 import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
+import type { DownloadItem } from '../bindings/DownloadItem';
+import type { DownloadStatus } from '../bindings/DownloadStatus';
+import type { ExtensionDownload } from '../bindings/ExtensionDownload';
+import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
 import {
   categoryForFileName,
   fileNameFromUrl,
-  isMediaUrl,
-  type DownloadCategory
+  isMediaUrl
 } from '../utils/downloads';
 
 export type { DownloadCategory } from '../utils/downloads';
@@ -50,48 +53,11 @@ const syncSystemIntegrations = () => {
 
 // Legacy manual speed limit math removed
 
-export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'failed' | 'queued';
+export type { DownloadStatus };
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
-export interface Queue {
-  id: string;
-  name: string;
-  isMain: boolean;
-}
-
-export interface DownloadItem {
-  id: string;
-  url: string;
-  fileName: string;
-  status: DownloadStatus;
-  fraction?: number;
-  speed?: string;
-  eta?: string;
-  size?: string;
-  category: DownloadCategory;
-  dateAdded: string;
-  // Advanced Settings
-  connections?: number | null;
-  speedLimit?: string | null;
-  username?: string | null;
-  password?: string | null;
-  headers?: string | null;
-  checksum?: string | null;
-  cookies?: string | null;
-  mirrors?: string | null;
-  destination?: string;
-  isMedia?: boolean;
-  mediaFormatSelector?: string;
-  queueId: string;
-  _dispatched?: boolean;
-}
-
-export interface ExtensionDownloadRequest {
-  urls: string[];
-  referer?: string | null;
-  silent?: boolean;
-  filename?: string | null;
-}
+export type { DownloadItem, Queue };
+export type ExtensionDownloadRequest = ExtensionDownload;
 
 interface DownloadState {
   downloads: DownloadItem[];
@@ -349,10 +315,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   initDB: async () => {
     try {
-      const queuesStr = await invoke<string[]>('db_get_all_queues');
+      const queuesStr = await invoke('db_get_all_queues');
       const queues = queuesStr.map(q => JSON.parse(q));
       
-      const downloadsStr = await invoke<string[]>('db_get_all_downloads');
+      const downloadsStr = await invoke('db_get_all_downloads');
       const downloads = downloadsStr.map(d => JSON.parse(d));
       
       set(state => ({
@@ -365,16 +331,37 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       active.forEach(item => {
         if (item.isMedia) {
           invoke('start_media_download', {
-            id: item.id, url: item.url, destination: item.destination,
-            filename: item.fileName, format_selector: item.mediaFormatSelector,
-            proxy: null
+            id: item.id,
+            url: item.url,
+            destination: item.destination || '~/Downloads',
+            filename: item.fileName,
+            formatSelector: item.mediaFormatSelector || null,
+            cookieSource: null,
+            speedLimit: item.speedLimit || null,
+            username: item.username || null,
+            password: item.password || null,
+            headers: item.headers || null,
+            proxy: null,
+            userAgent: null,
+            maxTries: null
           }).catch(console.error);
         } else {
           invoke('start_download', {
-            id: item.id, url: item.url, destination: item.destination, filename: item.fileName,
-            connections: item.connections, speed_limit: item.speedLimit, username: item.username,
-            password: item.password, headers: item.headers, checksum: item.checksum, cookies: item.cookies,
-            mirrors: item.mirrors, user_agent: null, max_tries: null, proxy: null
+            id: item.id,
+            url: item.url,
+            destination: item.destination || '~/Downloads',
+            filename: item.fileName,
+            connections: item.connections ?? null,
+            speedLimit: item.speedLimit || null,
+            username: item.username || null,
+            password: item.password || null,
+            headers: item.headers || null,
+            checksum: item.checksum || null,
+            cookies: item.cookies || null,
+            mirrors: item.mirrors || null,
+            userAgent: null,
+            maxTries: null,
+            proxy: null
           }).catch(console.error);
         }
       });
@@ -399,7 +386,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         let keychainPassword = null;
         if (login) {
           try {
-            keychainPassword = await invoke<string>('get_keychain_password', { id: login.id });
+            keychainPassword = await invoke('get_keychain_password', { id: login.id });
           } catch (e) {
             console.warn("Could not fetch keychain password for login:", e);
           }

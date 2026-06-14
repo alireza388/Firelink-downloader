@@ -1,11 +1,5 @@
-export type DownloadCategory =
-  | 'Musics'
-  | 'Movies'
-  | 'Compressed'
-  | 'Documents'
-  | 'Pictures'
-  | 'Applications'
-  | 'Other';
+import type { DownloadCategory } from '../bindings/DownloadCategory';
+export type { DownloadCategory } from '../bindings/DownloadCategory';
 
 const MEDIA_DOMAINS = [
   'youtube.com',

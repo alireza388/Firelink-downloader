@@ -3,7 +3,7 @@ import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
 import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
 import { homeDir } from '@tauri-apps/api/path';
 
 interface DownloadTableProps {

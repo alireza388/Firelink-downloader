@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 use tower_http::cors::{Any, CorsLayer};
+use ts_rs::TS;
 
 pub const EXTENSION_SERVER_PORT: u16 = 23522;
 const MAX_URL_COUNT: usize = 200;
@@ -45,8 +46,9 @@ struct ExtensionRequest {
     filename: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
-struct ExtensionDownload {
+#[derive(Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct ExtensionDownload {
     urls: Vec<String>,
     referer: Option<String>,
     silent: bool,

@@ -4,11 +4,10 @@ import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
 import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
@@ -211,7 +210,7 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unlistenProgress = listen('download-progress', (event: any) => {
+    const unlistenProgress = listen('download-progress', (event) => {
       const { id, fraction, speed, eta } = event.payload;
       const state = useDownloadStore.getState();
       const current = state.downloads.find(d => d.id === id);
@@ -222,7 +221,7 @@ function App() {
       }
     });
 
-    const unlistenComplete = listen('download-complete', (event: any) => {
+    const unlistenComplete = listen('download-complete', (event) => {
       updateDownload(event.payload, { status: 'completed', fraction: 1.0, speed: '-', eta: '-' });
       
       const settings = useSettingsStore.getState();
@@ -238,7 +237,7 @@ function App() {
       }
     });
 
-    const unlistenFailed = listen('download-failed', (event: any) => {
+    const unlistenFailed = listen('download-failed', (event) => {
       // If it's already paused, don't mark as failed (since we aborted it)
       const current = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
       if (current && current.status !== 'paused') {
@@ -246,7 +245,7 @@ function App() {
       }
     });
 
-    const unlistenExtension = listen('extension-add-download', (event: any) => {
+    const unlistenExtension = listen('extension-add-download', (event) => {
       useDownloadStore.getState().handleExtensionDownload(event.payload);
     });
     unlistenExtension

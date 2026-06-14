@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use crate::ipc::DownloadCategory;
 
 #[tauri::command]
 pub async fn get_system_proxy() -> Result<Option<String>, String> {
@@ -17,7 +20,7 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn get_file_category(filename: String) -> String {
+pub fn get_file_category(filename: String) -> DownloadCategory {
     let ext = std::path::Path::new(&filename)
         .extension()
         .and_then(|s| s.to_str())
@@ -31,21 +34,22 @@ pub fn get_file_category(filename: String) -> String {
     let document_exts = ["azw", "azw3", "csv", "djvu", "doc", "docm", "docx", "dot", "dotx", "epub", "fb2", "htm", "html", "ics", "key", "log", "md", "mobi", "pdf", "numbers", "odp", "ods", "odt", "pages", "pot", "potx", "pps", "ppsx", "ppt", "pptm", "pptx", "rtf", "tex", "txt", "vcf", "xls", "xlsm", "xlsx", "xml", "xps", "yaml", "yml"];
 
     if music_exts.contains(&ext.as_str()) {
-        "musics".to_string()
+        DownloadCategory::Musics
     } else if movie_exts.contains(&ext.as_str()) {
-        "movies".to_string()
+        DownloadCategory::Movies
     } else if compressed_exts.contains(&ext.as_str()) {
-        "compressed".to_string()
+        DownloadCategory::Compressed
     } else if picture_exts.contains(&ext.as_str()) {
-        "pictures".to_string()
+        DownloadCategory::Pictures
     } else if document_exts.contains(&ext.as_str()) {
-        "documents".to_string()
+        DownloadCategory::Documents
     } else {
-        "other".to_string()
+        DownloadCategory::Other
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
 pub struct AvailableReleaseUpdate {
     pub version: String,
     pub tag_name: String,
@@ -55,8 +59,9 @@ pub struct AvailableReleaseUpdate {
     pub published_at: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(tag = "type")]
+#[ts(export, export_to = "../../src/bindings/")]
 pub enum ReleaseCheckOutcome {
     UpdateAvailable { update: AvailableReleaseUpdate },
     UpToDate { latest_version: String, local_version: String },

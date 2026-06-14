@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Inbox, Zap, CheckCircle2, CircleDashed,
   Film, Music, FileText, Box, Image as ImageIcon, Archive, FileQuestion,
-  List, CalendarClock, Gauge, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft
+  List, CalendarClock, Gauge, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft,
+  type LucideIcon
 } from 'lucide-react';
 import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadStore';
 import { ActiveView, useSettingsStore } from '../store/useSettingsStore';
@@ -57,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     }
   };
 
-  const NavItem = ({ icon: Icon, label, filter }: { icon: any, label: string, filter: SidebarFilter }) => {
+  const NavItem = ({ icon: Icon, label, filter }: { icon: LucideIcon, label: string, filter: SidebarFilter }) => {
     const isSelected = activeView === 'downloads' && selectedFilter === filter;
 
     return (
@@ -141,7 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     );
   };
 
-  const ToolItem = ({ icon: Icon, label, view }: { icon: any; label: string; view: ActiveView }) => {
+  const ToolItem = ({ icon: Icon, label, view }: { icon: LucideIcon; label: string; view: ActiveView }) => {
     const isSelected = activeView === view;
     return (
       <button

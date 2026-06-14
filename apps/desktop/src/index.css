@@ -9,6 +9,7 @@
   --item-hover: 0 0% 0% / 0.05;
   --item-selected: 211 100% 50%;
   --accent-color: 211 100% 50%;
+  --stripe-bg: 0 0% 0% / 0.04;
 
   --text-primary: 0 0% 10%;
   --text-secondary: 0 0% 40%;
@@ -36,6 +37,7 @@
   --item-hover: 0 0% 0% / 0.05;
   --item-selected: 211 100% 50%;
   --accent-color: 211 100% 50%;
+  --stripe-bg: 0 0% 0% / 0.04;
   --text-primary: 0 0% 10%;
   --text-secondary: 0 0% 40%;
   --text-muted: 0 0% 55%;
@@ -55,7 +57,7 @@
 
 .theme-dark {
   color-scheme: dark;
-  --main-bg: 0 0% 10%;
+  --main-bg: 0 0% 11%;
   --sidebar-bg: 0 0% 13%;
   --sidebar-glass: 0 0% 13%;
   --surface-raised: 0 0% 12%;
@@ -65,6 +67,7 @@
   --item-hover: 0 0% 100% / 0.07;
   --item-selected: 211 100% 56%;
   --accent-color: 211 100% 56%;
+  --stripe-bg: 0 0% 100% / 0.04;
   --text-primary: 0 0% 91%;
   --text-secondary: 0 0% 75%;
   --text-muted: 0 0% 50%;
@@ -95,6 +98,7 @@
   --item-hover: 326 100% 74% / 0.10;
   --item-selected: 326 100% 74%;
   --accent-color: 326 100% 74%;
+  --stripe-bg: 0 0% 100% / 0.04;
   --text-primary: 60 30% 96%;
   --text-secondary: 228 14% 74%;
   --text-muted: 229 12% 58%;
@@ -125,6 +129,7 @@
   --item-hover: 193 43% 67% / 0.12;
   --item-selected: 193 43% 67%;
   --accent-color: 193 43% 67%;
+  --stripe-bg: 0 0% 100% / 0.04;
   --text-primary: 218 27% 92%;
   --text-secondary: 219 28% 80%;
   --text-muted: 218 17% 63%;
@@ -376,7 +381,7 @@
 
   .app-sidebar-shell {
     padding: 9px 0 9px 9px;
-    background: hsl(var(--sidebar-shell-bg));
+    background: transparent;
   }
 
   .sidebar-resize-handle {
@@ -960,17 +965,18 @@
   }
 
   .download-row {
-    height: 31px;
+    height: 32px;
     display: grid;
     align-items: center;
     padding: 0 16px;
-    border-bottom: 1px solid hsl(var(--border-color));
+    margin: 2px 12px;
+    border-radius: 6px;
     color: hsl(var(--text-primary));
     font-size: 12px;
   }
 
   .download-row:nth-child(even) {
-    background: hsl(var(--item-hover));
+    background: hsl(var(--stripe-bg));
   }
 
   .download-row:hover {
@@ -1014,12 +1020,14 @@
   }
 
   .download-ghost-row {
-    height: 31px;
-    border-bottom: 1px solid hsl(var(--border-color));
+    height: 32px;
+    margin: 2px 12px;
+    border-radius: 6px;
+    flex-shrink: 0;
   }
 
-  .download-ghost-row:nth-child(even) {
-    background: hsl(var(--item-hover));
+  .download-ghost-row.striped {
+    background: hsl(var(--stripe-bg));
   }
 
   .download-status-cell {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle } from 'lucide-react';
+import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
 
@@ -13,6 +13,8 @@ interface DownloadTableProps {
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { downloads, toggleAddModal, updateDownload, removeDownload, clearFinished, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
+
+  const isMac = navigator.userAgent.includes('Mac');
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
@@ -190,8 +192,18 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           <div className="downloads-empty-state">
             <ArrowDownCircle aria-hidden="true" />
             <div className="downloads-empty-title">No Downloads</div>
-            <div className="downloads-empty-description">
-              Use Add or press <span className="keyboard-symbol">⌘</span>V to paste one or more links.
+            <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
+              Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
+              <span className="flex items-center mx-1.5">
+                <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                  {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
+                </span>
+                <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
+                <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                  <span className="text-[11px] font-bold text-text-primary">V</span>
+                </span>
+              </span>
+              to add downloads
             </div>
           </div>
         ) : (
@@ -210,7 +222,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </div>
 
             <div className="download-table-body">
-            <div className="h-full overflow-auto">
+            <div className="h-full overflow-auto flex flex-col">
               {filteredDownloads.map(d => (
                 <div
                   key={d.id}
@@ -294,9 +306,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   </div>
                 </div>
               ))}
-              {Array.from({ length: Math.max(0, 10 - filteredDownloads.length) }).map((_, index) => (
-                <div key={`ghost-${index}`} className="download-ghost-row" />
-              ))}
+              <div className="flex-1 overflow-hidden flex flex-col pointer-events-none">
+                {Array.from({ length: 50 }).map((_, index) => {
+                  const isEven = (filteredDownloads.length + index) % 2 === 1;
+                  return (
+                    <div 
+                      key={`ghost-${index}`} 
+                      className={`download-ghost-row ${isEven ? 'striped' : ''}`} 
+                    />
+                  );
+                })}
+              </div>
             </div>
             </div>
             </div>

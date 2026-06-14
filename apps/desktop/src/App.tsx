@@ -265,10 +265,13 @@ function App() {
   return (
     <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
       <div
-        className={`app-sidebar-shell relative z-20 shrink-0 ${
-          isSidebarVisible ? 'opacity-100' : 'w-0 opacity-0 pointer-events-none'
+        className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
+          isSidebarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
-        style={isSidebarVisible ? { width: sidebarWidth } : undefined}
+        style={{ 
+          width: sidebarWidth,
+          marginLeft: isSidebarVisible ? 0 : -sidebarWidth
+        }}
       >
         <div className="app-sidebar-panel h-full w-full">
           <Sidebar

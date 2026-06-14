@@ -247,7 +247,7 @@ export default function SettingsView() {
                     type="number" min="1" max="16"
                     value={settings.perServerConnections}
                     onChange={(e) => settings.setPerServerConnections(Number(e.target.value))}
-                    className="app-control w-16 text-center"
+                    className="app-control w-24 text-center"
                   />
                 </div>
                 <div className="mac-settings-row">
@@ -259,7 +259,7 @@ export default function SettingsView() {
                     type="number" min="1" max="12"
                     value={settings.maxConcurrentDownloads}
                     onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
-                    className="app-control w-16 text-center"
+                    className="app-control w-24 text-center"
                   />
                 </div>
                 <div className="mac-settings-row">
@@ -267,15 +267,15 @@ export default function SettingsView() {
                     <span>Global speed limit:</span>
                     <small>0 = unlimited speed</small>
                   </div>
-                  <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={settings.globalSpeedLimit}
-                    onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
-                    placeholder="0"
-                    className="app-control w-20 text-right font-mono px-2"
-                  />
-                    <span className="text-[12px] text-text-muted">KiB/s</span>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={settings.globalSpeedLimit}
+                      onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
+                      placeholder="0"
+                      className="app-control w-24 text-center font-mono pr-9"
+                    />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-muted pointer-events-none">KiB/s</span>
                   </div>
                 </div>
                 <div className="mac-settings-row">
@@ -287,7 +287,7 @@ export default function SettingsView() {
                     type="number" min="0" max="10"
                     value={settings.maxAutomaticRetries}
                     onChange={(e) => settings.setMaxAutomaticRetries(Number(e.target.value))}
-                    className="app-control w-16 text-center"
+                    className="app-control w-24 text-center"
                   />
                 </div>
               </div>
@@ -476,13 +476,23 @@ export default function SettingsView() {
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
                   <span className="text-[13px] text-text-primary">Custom User Agent</span>
-                  <input
-                    type="text"
-                    value={settings.customUserAgent}
-                    onChange={(e) => settings.setCustomUserAgent(e.target.value)}
-                    placeholder="e.g. Mozilla/5.0..."
-                    className="app-control flex-1 ml-4 font-mono text-[11px]"
-                  />
+                  <div className="flex-1 ml-4 relative">
+                    <input
+                      type="text"
+                      list="user-agents"
+                      value={settings.customUserAgent}
+                      onChange={(e) => settings.setCustomUserAgent(e.target.value)}
+                      placeholder="e.g. Mozilla/5.0..."
+                      className="app-control w-full font-mono text-[11px]"
+                    />
+                    <datalist id="user-agents">
+                      <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (Windows)</option>
+                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (macOS)</option>
+                      <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0">Firefox (Windows)</option>
+                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0">Firefox (macOS)</option>
+                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15">Safari (macOS)</option>
+                    </datalist>
+                  </div>
                 </div>
                 <p className="settings-group-footer">Spoofs the browser User-Agent to bypass download restrictions. Leave blank for default.</p>
               </div>

@@ -324,23 +324,31 @@ export default function SettingsView() {
             <div className="settings-pane max-w-[720px]">
               <h2 className="settings-section-title">App Theme</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row items-start">
+                <div className="mac-settings-row settings-choice-row">
                   <span className="text-[13px] text-text-primary pt-0.5">Theme</span>
-                  <div className="settings-radio-group">
+                  <div className="theme-option-grid" role="radiogroup" aria-label="App theme">
                     {[
-                      ['system', 'System Default'],
-                      ['light', 'Light'],
-                      ['dark', 'Dark'],
-                      ['dracula', 'Dracula'],
-                      ['nord', 'Nord'],
-                    ].map(([value, label]) => (
-                      <label key={value}>
+                      { value: 'system', label: 'System', colors: ['#f4f4f5', '#252525'] },
+                      { value: 'light', label: 'Light', colors: ['#ffffff', '#e9e9ec'] },
+                      { value: 'dark', label: 'Dark', colors: ['#1a1a1a', '#292929'] },
+                      { value: 'dracula', label: 'Dracula', colors: ['#282a36', '#ff79c6'] },
+                      { value: 'nord', label: 'Nord', colors: ['#2e3440', '#88c0d0'] },
+                    ].map(({ value, label, colors }) => (
+                      <label
+                        key={value}
+                        className="theme-option"
+                        data-active={settings.theme === value}
+                      >
                         <input
                           type="radio"
                           name="app-theme"
                           checked={settings.theme === value}
                           onChange={() => settings.setTheme(value as typeof settings.theme)}
                         />
+                        <span className="theme-option-preview" aria-hidden="true">
+                          <span style={{ background: colors[0] }} />
+                          <span style={{ background: colors[1] }} />
+                        </span>
                         <span>{label}</span>
                       </label>
                     ))}
@@ -412,7 +420,7 @@ export default function SettingsView() {
             <div className="settings-pane max-w-[720px]">
               <h2 className="settings-section-title">Proxy</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row items-start">
+                <div className="mac-settings-row settings-choice-row">
                   <span className="text-[13px] text-text-primary pt-0.5">Mode</span>
                   <div className="settings-radio-group">
                     {[

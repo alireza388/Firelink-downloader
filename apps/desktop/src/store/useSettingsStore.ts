@@ -230,7 +230,10 @@ export const useSettingsStore = create<SettingsState>()(
         set({ maxConcurrentDownloads: max });
         invoke('set_concurrent_limit', { limit: max }).catch(console.error);
       },
-      setGlobalSpeedLimit: (limit) => set({ globalSpeedLimit: limit }),
+      setGlobalSpeedLimit: (limit) => {
+        set({ globalSpeedLimit: limit });
+        invoke('set_global_speed_limit', { limit: limit === '' || limit === '0' ? null : limit }).catch(console.error);
+      },
       setActiveView: (view) => set({ activeView: view }),
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
       setScheduler: (scheduler) => set({ scheduler }),
@@ -246,14 +249,20 @@ export const useSettingsStore = create<SettingsState>()(
       setPlayCompletionSound: (playCompletionSound) => set({ playCompletionSound }),
       setAppFontSize: (appFontSize) => set({ appFontSize }),
       setListRowDensity: (listRowDensity) => set({ listRowDensity }),
-      setShowDockBadge: (showDockBadge) => set({ showDockBadge }),
+      setShowDockBadge: (showDockBadge) => {
+        set({ showDockBadge });
+        if (!showDockBadge) invoke('update_dock_badge', { count: 0 }).catch(console.error);
+      },
       setShowMenuBarIcon: (showMenuBarIcon) => set({ showMenuBarIcon }),
       setProxyMode: (proxyMode) => set({ proxyMode }),
       setProxyHost: (proxyHost) => set({ proxyHost }),
       setProxyPort: (proxyPort) => set({ proxyPort }),
       setCustomUserAgent: (customUserAgent) => set({ customUserAgent }),
       setAskWhereToSaveEachFile: (askWhereToSaveEachFile) => set({ askWhereToSaveEachFile }),
-      setPreventsSleepWhileDownloading: (preventsSleepWhileDownloading) => set({ preventsSleepWhileDownloading }),
+      setPreventsSleepWhileDownloading: (preventsSleepWhileDownloading) => {
+        set({ preventsSleepWhileDownloading });
+        if (!preventsSleepWhileDownloading) invoke('set_prevent_sleep', { prevent: false }).catch(console.error);
+      },
       setMediaCookieSource: (mediaCookieSource) => set({ mediaCookieSource }),
       setCategoryDirectory: (category, path) => set((state) => ({
         downloadDirectories: { ...state.downloadDirectories, [category]: path }

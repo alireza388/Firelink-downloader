@@ -13,6 +13,15 @@ struct MetadataResponse {
     size_bytes: u64,
 }
 
+fn get_binary_name(base: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{}.exe", base)
+    } else {
+        base.to_string()
+    }
+}
+
+
 #[tauri::command]
 async fn fetch_metadata(url: String, user_agent: Option<String>, username: Option<String>, password: Option<String>) -> Result<MetadataResponse, String> {
     let mut builder = reqwest::Client::builder();
@@ -115,7 +124,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<String, String> {
     println!("fetch_media_metadata called for: {}", url);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
+    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
 
     let mut cmd = AsyncCommand::new(&ytdlp_path);
     cmd.arg("-J")
@@ -179,7 +188,7 @@ fn greet(name: &str) -> String {
 async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ytdlp called!");
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
+    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
     println!("Resolved yt-dlp path: {:?}", ytdlp_path);
 
     let output = AsyncCommand::new(&ytdlp_path)
@@ -207,7 +216,7 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
 async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ffmpeg called!");
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ffmpeg_path = resource_dir.join("binaries").join("ffmpeg");
+    let ffmpeg_path = resource_dir.join("binaries").join(get_binary_name("ffmpeg"));
     println!("Resolved ffmpeg path: {:?}", ffmpeg_path);
 
     let output = AsyncCommand::new(&ffmpeg_path)
@@ -238,7 +247,7 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
 async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_deno called!");
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let deno_path = resource_dir.join("binaries").join("deno");
+    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
     println!("Resolved deno path: {:?}", deno_path);
 
     let output = AsyncCommand::new(&deno_path)
@@ -606,8 +615,8 @@ pub(crate) async fn start_media_download_internal(
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join("yt-dlp");
-    let ffmpeg_path = resource_dir.join("binaries").join("ffmpeg");
+    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
+    let ffmpeg_path = resource_dir.join("binaries").join(get_binary_name("ffmpeg"));
 
     let mut resolved_dest = std::path::PathBuf::from(&destination);
     if destination.starts_with("~/") {
@@ -1243,7 +1252,7 @@ pub fn run() {
             }
 
             let resource_dir = app.path().resource_dir().unwrap();
-            let aria2c_path = resource_dir.join("binaries").join("aria2c");
+            let aria2c_path = resource_dir.join("binaries").join(get_binary_name("aria2c"));
 
             #[cfg(all(target_os = "macos", debug_assertions))]
             if let Err(error) = resign_aria2_debug_bundle(&aria2c_path) {

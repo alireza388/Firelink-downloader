@@ -341,7 +341,7 @@ fn resign_aria2_debug_bundle(aria2c_path: &std::path::Path) -> Result<(), String
     Ok(())
 }
 
-mod download;
+pub mod download;
 #[allow(dead_code)]
 mod ipc;
 mod parity;

@@ -1,5 +1,5 @@
-use futures_util::StreamExt;
 use crate::DownloadProgressEvent;
+use futures_util::StreamExt;
 use reqwest::{
     header::{self, HeaderMap, HeaderName, HeaderValue},
     Client, StatusCode,
@@ -30,6 +30,21 @@ pub enum DownloadCmd {
     FrontendReady(bool),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum DownloadEvent {
+    Progress {
+        id: Uuid,
+        fraction: f64,
+        completed: u64,
+        total: Option<u64>,
+    },
+    Completed(Uuid),
+    Failed {
+        id: Uuid,
+        error: String,
+    },
+}
+
 #[derive(Debug)]
 pub struct DownloadPayload {
     pub id: Uuid,
@@ -53,9 +68,21 @@ pub struct DownloadCoordinator {
 
 impl DownloadCoordinator {
     pub fn spawn(app_handle: AppHandle) -> Self {
+        Self::spawn_with_events(CoordinatorEventSink::Tauri(app_handle))
+    }
+
+    pub fn spawn_headless() -> (Self, mpsc::UnboundedReceiver<DownloadEvent>) {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        (
+            Self::spawn_with_events(CoordinatorEventSink::Headless(event_tx)),
+            event_rx,
+        )
+    }
+
+    fn spawn_with_events(events: CoordinatorEventSink) -> Self {
         let (tx, rx) = mpsc::channel(128);
         let (media_tx, media_rx) = mpsc::channel(32);
-        tauri::async_runtime::spawn(run_coordinator(app_handle, rx, media_rx));
+        tauri::async_runtime::spawn(run_coordinator(events, rx, media_rx));
         Self { tx, media_tx }
     }
 
@@ -84,6 +111,90 @@ impl DownloadCoordinator {
 
     pub async fn finish_media(&self, id: String) {
         let _ = self.media_tx.send(MediaCmd::Finished(id)).await;
+    }
+}
+
+#[derive(Clone)]
+enum CoordinatorEventSink {
+    Tauri(AppHandle),
+    Headless(mpsc::UnboundedSender<DownloadEvent>),
+}
+
+impl CoordinatorEventSink {
+    fn emit_progress(
+        &self,
+        id: Uuid,
+        completed: u64,
+        total: Option<u64>,
+        interval_bytes: u64,
+        interval: Duration,
+    ) {
+        let speed_bytes = if interval.is_zero() {
+            0.0
+        } else {
+            interval_bytes as f64 / interval.as_secs_f64()
+        };
+        let fraction = total
+            .filter(|total| *total > 0)
+            .map(|total| completed as f64 / total as f64)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+
+        match self {
+            Self::Tauri(app_handle) => {
+                let eta = total
+                    .filter(|total| speed_bytes > 0.0 && *total > completed)
+                    .map(|total| format_duration((total - completed) as f64 / speed_bytes))
+                    .unwrap_or_else(|| "-".to_string());
+                let _ = app_handle.emit(
+                    "download-progress",
+                    DownloadProgressEvent {
+                        id: id.to_string(),
+                        fraction,
+                        speed: format_speed(speed_bytes),
+                        eta,
+                    },
+                );
+            }
+            Self::Headless(event_tx) => {
+                let _ = event_tx.send(DownloadEvent::Progress {
+                    id,
+                    fraction,
+                    completed,
+                    total,
+                });
+            }
+        }
+    }
+
+    fn emit_completed(&self, id: Uuid) {
+        match self {
+            Self::Tauri(app_handle) => {
+                let _ = app_handle.emit("download-complete", id.to_string());
+            }
+            Self::Headless(event_tx) => {
+                let _ = event_tx.send(DownloadEvent::Completed(id));
+            }
+        }
+    }
+
+    fn emit_failed(&self, id: Uuid, error: String) {
+        match self {
+            Self::Tauri(app_handle) => {
+                eprintln!("download {id} failed: {error}");
+                let _ = app_handle.emit("download-failed", id.to_string());
+            }
+            Self::Headless(event_tx) => {
+                let _ = event_tx.send(DownloadEvent::Failed { id, error });
+            }
+        }
+    }
+
+    fn emit_captured_urls(&self, payload: String) -> bool {
+        match self {
+            Self::Tauri(app_handle) => app_handle.emit("deep-link-add-download", payload).is_ok(),
+            Self::Headless(_) => true,
+        }
     }
 }
 
@@ -124,7 +235,7 @@ enum DownloadOutcome {
 }
 
 async fn run_coordinator(
-    app_handle: AppHandle,
+    events: CoordinatorEventSink,
     mut command_rx: mpsc::Receiver<DownloadCmd>,
     mut media_rx: mpsc::Receiver<MediaCmd>,
 ) {
@@ -154,10 +265,10 @@ async fn run_coordinator(
                         let (control_tx, control_rx) = mpsc::channel(1);
                         active.insert(id, ActiveDownload { generation, control_tx });
 
-                        let app_handle = app_handle.clone();
+                        let events = events.clone();
                         let worker_tx = worker_tx.clone();
                         tauri::async_runtime::spawn(async move {
-                            let outcome = download_file(app_handle, payload, control_rx).await;
+                            let outcome = download_file(events, payload, control_rx).await;
                             let _ = worker_tx
                                 .send(WorkerEvent::Finished { id, generation, outcome })
                                 .await;
@@ -177,7 +288,7 @@ async fn run_coordinator(
                         append_unique_urls(&mut pending_captured_urls, urls);
                         if frontend_ready && !pending_captured_urls.is_empty() {
                             let payload = pending_captured_urls.join("\n");
-                            if app_handle.emit("deep-link-add-download", payload).is_ok() {
+                            if events.emit_captured_urls(payload) {
                                 pending_captured_urls.clear();
                             }
                         }
@@ -186,7 +297,7 @@ async fn run_coordinator(
                         frontend_ready = ready;
                         if ready && !pending_captured_urls.is_empty() {
                             let payload = pending_captured_urls.join("\n");
-                            if app_handle.emit("deep-link-add-download", payload).is_ok() {
+                            if events.emit_captured_urls(payload) {
                                 pending_captured_urls.clear();
                             }
                         }
@@ -207,11 +318,10 @@ async fn run_coordinator(
 
                 match (is_current, outcome) {
                     (true, DownloadOutcome::Completed) => {
-                        let _ = app_handle.emit("download-complete", id.to_string());
+                        events.emit_completed(id);
                     }
                     (true, DownloadOutcome::Failed(error)) => {
-                        eprintln!("download {id} failed: {error}");
-                        let _ = app_handle.emit("download-failed", id.to_string());
+                        events.emit_failed(id, error);
                     }
                     _ => {}
                 }
@@ -253,7 +363,7 @@ fn append_unique_urls(target: &mut Vec<String>, urls: Vec<String>) {
 }
 
 async fn download_file(
-    app_handle: AppHandle,
+    events: CoordinatorEventSink,
     payload: DownloadPayload,
     mut control_rx: mpsc::Receiver<DownloadControl>,
 ) -> DownloadOutcome {
@@ -272,7 +382,7 @@ async fn download_file(
 
     for url in &payload.urls {
         for _ in 0..attempts_per_url {
-            match download_attempt(&app_handle, &client, &payload, url, &mut control_rx).await {
+            match download_attempt(&events, &client, &payload, url, &mut control_rx).await {
                 Ok(()) => return DownloadOutcome::Completed,
                 Err(AttemptError::Controlled(DownloadControl::Pause)) => {
                     return DownloadOutcome::Paused;
@@ -298,7 +408,7 @@ enum AttemptError {
 }
 
 async fn download_attempt(
-    app_handle: &AppHandle,
+    events: &CoordinatorEventSink,
     client: &Client,
     payload: &DownloadPayload,
     url: &str,
@@ -392,8 +502,7 @@ async fn download_attempt(
                         let now = Instant::now();
                         let interval = now.duration_since(last_emitted_at);
                         if interval >= PROGRESS_INTERVAL {
-                            emit_progress(
-                                app_handle,
+                            events.emit_progress(
                                 payload.id,
                                 completed,
                                 total_len,
@@ -418,8 +527,7 @@ async fn download_attempt(
         .flush()
         .await
         .map_err(|error| AttemptError::Failed(error.to_string()))?;
-    emit_progress(
-        app_handle,
+    events.emit_progress(
         payload.id,
         completed,
         total_len,
@@ -466,40 +574,6 @@ fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
     }
 
     builder.build().map_err(|error| error.to_string())
-}
-
-fn emit_progress(
-    app_handle: &AppHandle,
-    id: Uuid,
-    completed: u64,
-    total: Option<u64>,
-    interval_bytes: u64,
-    interval: Duration,
-) {
-    let speed_bytes = if interval.is_zero() {
-        0.0
-    } else {
-        interval_bytes as f64 / interval.as_secs_f64()
-    };
-    let fraction = total
-        .filter(|total| *total > 0)
-        .map(|total| completed as f64 / total as f64)
-        .unwrap_or(0.0)
-        .clamp(0.0, 1.0);
-    let eta = total
-        .filter(|total| speed_bytes > 0.0 && *total > completed)
-        .map(|total| format_duration((total - completed) as f64 / speed_bytes))
-        .unwrap_or_else(|| "-".to_string());
-
-    let _ = app_handle.emit(
-        "download-progress",
-        DownloadProgressEvent {
-            id: id.to_string(),
-            fraction,
-            speed: format_speed(speed_bytes),
-            eta,
-        },
-    );
 }
 
 fn format_speed(bytes_per_second: f64) -> String {

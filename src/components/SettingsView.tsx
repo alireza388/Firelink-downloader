@@ -245,6 +245,11 @@ export default function SettingsView() {
                     type="number" min="1" max="16"
                     value={settings.perServerConnections}
                     onChange={(e) => settings.setPerServerConnections(Number(e.target.value))}
+                    onBlur={(e) => {
+                      const val = Number(e.target.value);
+                      if (val < 1) settings.setPerServerConnections(1);
+                      if (val > 16) settings.setPerServerConnections(16);
+                    }}
                     className="app-control w-24 text-center"
                   />
                 </div>
@@ -257,6 +262,11 @@ export default function SettingsView() {
                     type="number" min="1" max="12"
                     value={settings.maxConcurrentDownloads}
                     onChange={(e) => settings.setMaxConcurrentDownloads(Number(e.target.value))}
+                    onBlur={(e) => {
+                      const val = Number(e.target.value);
+                      if (val < 1) settings.setMaxConcurrentDownloads(1);
+                      if (val > 12) settings.setMaxConcurrentDownloads(12);
+                    }}
                     className="app-control w-24 text-center"
                   />
                 </div>
@@ -285,6 +295,11 @@ export default function SettingsView() {
                     type="number" min="0" max="10"
                     value={settings.maxAutomaticRetries}
                     onChange={(e) => settings.setMaxAutomaticRetries(Number(e.target.value))}
+                    onBlur={(e) => {
+                      const val = Number(e.target.value);
+                      if (val < 0) settings.setMaxAutomaticRetries(0);
+                      if (val > 10) settings.setMaxAutomaticRetries(10);
+                    }}
                     className="app-control w-24 text-center"
                   />
                 </div>
@@ -453,9 +468,14 @@ export default function SettingsView() {
                     <div className="mac-settings-row">
                       <span className="text-[13px] text-text-primary pl-4">Proxy Port</span>
                       <input
-                        type="number"
+                        type="number" min="1" max="65535"
                         value={settings.proxyPort}
                         onChange={(e) => settings.setProxyPort(Number(e.target.value))}
+                        onBlur={(e) => {
+                          const val = Number(e.target.value);
+                          if (val < 1) settings.setProxyPort(1);
+                          if (val > 65535) settings.setProxyPort(65535);
+                        }}
                         className="app-control w-24 text-center"
                       />
                     </div>

@@ -11,8 +11,10 @@ const MEDIA_DOMAINS = [
   'instagram.com',
   'tiktok.com',
   'reddit.com',
+  'v.redd.it',
   'soundcloud.com',
-  'facebook.com'
+  'facebook.com',
+  'fb.watch'
 ];
 
 export const categoryForFileName = (fileName: string): DownloadCategory => {

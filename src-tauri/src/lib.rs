@@ -283,18 +283,54 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+fn is_safe_path(path: &std::path::Path) -> bool {
+    !path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 #[tauri::command]
 async fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
     println!("open_file called for path: {}", path);
     use tauri_plugin_opener::OpenerExt;
-    app.opener().open_path(&path, None::<String>).map_err(|e| format!("Failed to open file: {}", e))
+    
+    let mut resolved_dest = std::path::PathBuf::from(&path);
+    if path.starts_with("~/") {
+        if let Ok(home) = app.path().home_dir() {
+            resolved_dest = home.join(&path[2..]);
+        }
+    } else if path == "~" {
+        if let Ok(home) = app.path().home_dir() {
+            resolved_dest = home;
+        }
+    }
+    
+    if !is_safe_path(&resolved_dest) {
+        return Err("Path traversal blocked".to_string());
+    }
+
+    app.opener().open_path(resolved_dest.to_string_lossy().as_ref(), None::<String>).map_err(|e| format!("Failed to open file: {}", e))
 }
 
 #[tauri::command]
 async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     println!("show_in_folder called for path: {}", path);
     use tauri_plugin_opener::OpenerExt;
-    app.opener().reveal_item_in_dir(&path).map_err(|e| format!("Failed to reveal in folder: {}", e))
+    
+    let mut resolved_dest = std::path::PathBuf::from(&path);
+    if path.starts_with("~/") {
+        if let Ok(home) = app.path().home_dir() {
+            resolved_dest = home.join(&path[2..]);
+        }
+    } else if path == "~" {
+        if let Ok(home) = app.path().home_dir() {
+            resolved_dest = home;
+        }
+    }
+    
+    if !is_safe_path(&resolved_dest) {
+        return Err("Path traversal blocked".to_string());
+    }
+
+    app.opener().reveal_item_in_dir(resolved_dest.to_string_lossy().as_ref()).map_err(|e| format!("Failed to reveal in folder: {}", e))
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -538,8 +574,54 @@ async fn start_download(
             resolved_dest = home;
         }
     }
-    let _ = connections;
-    let _ = checksum;
+    
+    if !is_safe_path(&resolved_dest) {
+        return Err(AppError::Internal("Path traversal blocked".to_string()));
+    }
+
+    if connections.unwrap_or(1) > 1 || checksum.is_some() {
+        println!("Routing multi-part/checksum download to aria2: {}", id);
+        let mut options = serde_json::Map::new();
+        options.insert("dir".to_string(), serde_json::json!(resolved_dest.to_string_lossy().to_string()));
+        options.insert("out".to_string(), serde_json::json!(filename));
+        if let Some(conn) = connections {
+            options.insert("split".to_string(), serde_json::json!(conn.to_string()));
+            options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
+        }
+        if let Some(speed) = speed_limit {
+            options.insert("max-download-limit".to_string(), serde_json::json!(speed));
+        }
+        if let Some(user) = username {
+            options.insert("http-user".to_string(), serde_json::json!(user));
+        }
+        if let Some(pass) = password {
+            options.insert("http-passwd".to_string(), serde_json::json!(pass));
+        }
+        if let Some(chk) = checksum {
+            options.insert("checksum".to_string(), serde_json::json!(chk));
+        }
+        if let Some(ua) = user_agent {
+            options.insert("user-agent".to_string(), serde_json::json!(ua));
+        }
+        if let Some(prox) = proxy {
+            options.insert("all-proxy".to_string(), serde_json::json!(prox));
+        }
+        if let Some(cook) = cookies {
+            options.insert("header".to_string(), serde_json::json!(format!("Cookie: {}", cook)));
+        }
+        
+        let params = serde_json::json!([
+            [url],
+            options
+        ]);
+        
+        rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params)
+            .await
+            .map(|_| ())
+            .map_err(|e| AppError::Internal(e))?;
+            
+        return Ok(());
+    }
     state
         .download_coordinator
         .send(download::DownloadCmd::Start(download::DownloadPayload {
@@ -927,25 +1009,29 @@ fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), Stri
 
 #[tauri::command]
 async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -> Result<(), String> {
-    let _ = rpc_call(
+    rpc_call(
         state.aria2_port,
         &state.aria2_secret,
         "aria2.changeGlobalOption",
         serde_json::json!([{"max-concurrent-downloads": limit.to_string()}])
-    ).await;
-    Ok(())
+    ).await.map(|_| ()).map_err(|e| {
+        eprintln!("Failed to set concurrent limit: {}", e);
+        e
+    })
 }
 
 #[tauri::command]
 async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option<String>) -> Result<(), String> {
     let limit_str = limit.unwrap_or_else(|| "0".to_string());
-    let _ = rpc_call(
+    rpc_call(
         state.aria2_port,
         &state.aria2_secret,
         "aria2.changeGlobalOption",
         serde_json::json!([{"max-overall-download-limit": limit_str}])
-    ).await;
-    Ok(())
+    ).await.map(|_| ()).map_err(|e| {
+        eprintln!("Failed to set global speed limit: {}", e);
+        e
+    })
 }
 
 #[tauri::command]
@@ -957,16 +1043,18 @@ fn request_automation_permission() -> Result<(), String> {
         use objc::{msg_send, sel, sel_impl, class};
 
         unsafe {
-            let script_str = NSString::alloc(nil).init_str("tell application \"Finder\" to get name");
-            let ns_apple_script: id = msg_send![class!(NSAppleScript), alloc];
-            let ns_apple_script: id = msg_send![ns_apple_script, initWithSource: script_str];
-            let mut error_dict: id = nil;
-            let result: id = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
-            if result == nil {
-                return Err("Automation permission was not granted".to_string());
-            }
+            objc::rc::autoreleasepool(|| {
+                let script_str = NSString::alloc(nil).init_str("tell application \"Finder\" to get name");
+                let ns_apple_script: id = msg_send![class!(NSAppleScript), alloc];
+                let ns_apple_script: id = msg_send![ns_apple_script, initWithSource: script_str];
+                let mut error_dict: id = nil;
+                let result: id = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
+                if result == nil {
+                    return Err("Automation permission was not granted".to_string());
+                }
+                Ok(())
+            })
         }
-        return Ok(());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1067,6 +1155,9 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
             resolved_dest = home;
         }
     }
+    if !is_safe_path(&resolved_dest) {
+        return false;
+    }
     resolved_dest.exists()
 }
 
@@ -1082,6 +1173,9 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
         if let Ok(home) = app_handle.path().home_dir() {
             resolved_dest = home;
         }
+    }
+    if !is_safe_path(&resolved_dest) {
+        return Err("Path traversal blocked".to_string());
     }
     if resolved_dest.exists() {
         std::fs::remove_file(resolved_dest).map_err(|e| e.to_string())

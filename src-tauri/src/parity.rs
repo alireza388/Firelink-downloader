@@ -8,9 +8,8 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
     match sysproxy::Sysproxy::get_system_proxy() {
         Ok(proxy) => {
             if proxy.enable {
-                // Determine protocol, usually sysproxy returns the host and port
-                // We'll default to http:// unless the user has configured something specific
-                Ok(Some(format!("http://{}:{}", proxy.host, proxy.port)))
+                let protocol = if proxy.host.contains("://") { "" } else { "http://" };
+                Ok(Some(format!("{}{}:{}", protocol, proxy.host, proxy.port)))
             } else {
                 Ok(None)
             }

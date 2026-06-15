@@ -317,6 +317,7 @@ export const AddDownloadsModal = () => {
 
   // Metadata parser
   useEffect(() => {
+    let active = true;
     const lines = urls.split('\n').map(u => u.trim()).filter(u => u.length > 0);
 
     // Immediately display items in loading state
@@ -340,6 +341,7 @@ export const AddDownloadsModal = () => {
       let firstReadyIndex: number | null = null;
 
       for (let i = 0; i < lines.length; i++) {
+        if (!active) break;
         const url = lines[i];
         try {
           new URL(url);
@@ -408,15 +410,18 @@ export const AddDownloadsModal = () => {
           console.error("Meta fetch failed", e);
           updatedItems[i] = { ...updatedItems[i], size: 'Unknown', sizeBytes: 0, status: 'Error' };
         }
-        setParsedItems([...updatedItems]);
+        if (active) setParsedItems([...updatedItems]);
       }
 
-      if (firstReadyIndex !== null) {
+      if (active && firstReadyIndex !== null) {
         setSelectedItemIndex(firstReadyIndex);
       }
     }, 400);
 
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [urls, pendingAddFilename]);
 
   if (!isAddModalOpen) return null;

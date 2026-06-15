@@ -9,6 +9,7 @@ import { useSettingsStore } from './useSettingsStore';
 export type { DownloadCategory } from '../utils/downloads';
 
 const getProxyArgs = (settings: ReturnType<typeof useSettingsStore.getState>) => {
+  if (settings.proxyMode === 'system') return 'system';
   if (settings.proxyMode === 'custom' && settings.proxyHost) {
     return `http://${settings.proxyHost}:${settings.proxyPort}`;
   }
@@ -25,7 +26,8 @@ export const getSiteLogin = (url: string, settings: ReturnType<typeof useSetting
         const suffix = pattern.substring(2);
         if (host === suffix || host.endsWith('.' + suffix)) return login;
       } else if (pattern.includes('*')) {
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+        const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp('^' + escaped.replace(/\*/g, '.*') + '$');
         if (regex.test(host)) return login;
       } else if (host === pattern) {
         return login;
@@ -191,9 +193,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   redownload: (id) => {
     let updatedItem: DownloadItem | null = null;
+    let wasDownloading = false;
     set((state) => ({
       downloads: state.downloads.map(d => {
         if (d.id === id) {
+          if (d.status === 'downloading') {
+            wasDownloading = true;
+          }
           const updated: DownloadItem = { ...d, status: 'queued', _dispatched: false, fraction: 0, speed: '-', eta: '-' };
           updatedItem = updated;
           return updated;
@@ -201,6 +207,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         return d;
       })
     }));
+    if (wasDownloading) {
+      invoke('pause_download', { id }).catch(console.error);
+    }
     if (updatedItem) {
       const toSave = { ...(updatedItem as DownloadItem) };
       delete toSave.fraction; delete toSave.speed; delete toSave.eta;

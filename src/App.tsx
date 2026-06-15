@@ -97,7 +97,7 @@ function App() {
       if (match) {
         const amount = Number(match[1]);
         if (Number.isFinite(amount) && amount > 0) {
-           const multipliers: Record<string, number> = { '': 1, k: 1024, m: 1048576, g: 1073741824 };
+           const multipliers: Record<string, number> = { '': 1, k: 1024, m: 1048576, g: 1073741824, t: 1099511627776 };
            const bytes = Math.round(amount * multipliers[match[2].toLowerCase()]);
            formattedLimit = `${bytes}`;
         }

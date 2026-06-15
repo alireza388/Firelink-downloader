@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::{Manager, Emitter};
 use tokio::process::Command as AsyncCommand;
@@ -287,7 +289,6 @@ async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), Strin
     app.opener().reveal_item_in_dir(&path).map_err(|e| format!("Failed to reveal in folder: {}", e))
 }
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 

@@ -531,7 +531,7 @@ export const AddDownloadsModal = () => {
                  let newName = finalFile;
                  let exists = true;
                  
-                 while (exists) {
+                 while (exists && count < 1000) {
                      newName = `${base} (${count})${ext}`;
                      const storeHas = useDownloadStore.getState().downloads.some(d => {
                          const dest = d.destination || useSettingsStore.getState().defaultDownloadPath || '~/Downloads';

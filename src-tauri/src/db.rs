@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result, params};
 use tokio::sync::Mutex;
-use std::path::PathBuf;
+
 use tauri::Manager;
 
 pub struct DbState {
@@ -8,7 +8,7 @@ pub struct DbState {
 }
 
 pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection> {
-    let app_dir = app_handle.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let app_dir = app_handle.path().app_data_dir().expect("Cannot get app data dir");
     if !app_dir.exists() {
         let _ = std::fs::create_dir_all(&app_dir);
     }

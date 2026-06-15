@@ -837,9 +837,13 @@ pub(crate) async fn start_media_download_internal(
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
     // yt-dlp parsing regex
-    let pct_re = Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap();
-    let spd_re = Regex::new(r"at\s+([^\s]+)").unwrap();
-    let eta_re = Regex::new(r"ETA\s+([^\s]+)").unwrap();
+    static PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static SPD_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static ETA_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+
+    let pct_re = PCT_RE.get_or_init(|| Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap());
+    let spd_re = SPD_RE.get_or_init(|| Regex::new(r"at\s+([^\s]+)").unwrap());
+    let eta_re = ETA_RE.get_or_init(|| Regex::new(r"ETA\s+([^\s]+)").unwrap());
 
     let _keep_alive = config_path;
     let mut reader = BufReader::new(stdout).lines();
@@ -1195,7 +1199,8 @@ fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), Stri
             let show_i = MenuItem::with_id(&app_handle, "show", "Show Firelink", true, None::<&str>).map_err(|e| e.to_string())?;
             let menu = Menu::with_items(&app_handle, &[&show_i, &quit_i]).map_err(|e| e.to_string())?;
 
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")).unwrap();
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png"))
+                .map_err(|e| e.to_string())?;
             let _tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .icon_as_template(true)

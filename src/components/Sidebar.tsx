@@ -247,7 +247,10 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
       {contextMenu && (
         <div
           className="fixed z-50 w-48 py-1 rounded-xl shadow-lg border border-border-modal bg-bg-context-menu backdrop-blur-xl animate-fade-in text-[13px] text-text-primary overflow-hidden"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
+          style={{ 
+            top: Math.min(contextMenu.y, window.innerHeight - 200), 
+            left: Math.min(contextMenu.x, window.innerWidth - 200) 
+          }}
           onClick={e => e.stopPropagation()}
         >
           <button

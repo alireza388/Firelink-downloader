@@ -57,7 +57,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     } else if (dir === '~') {
       resolvedDir = await homeDir();
     }
-    return resolvedDir + '/' + file;
+    const separator = resolvedDir.endsWith('/') ? '' : '/';
+    return resolvedDir + separator + file;
   };
 
   const filteredDownloads = downloads.filter((d: DownloadItem) => {

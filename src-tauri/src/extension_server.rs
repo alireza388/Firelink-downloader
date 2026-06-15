@@ -81,16 +81,11 @@ pub async fn start_server(
         .layer(cors)
         .with_state(state);
 
-    let mut listener = None;
-    for port in EXTENSION_SERVER_PORT..=(EXTENSION_SERVER_PORT + 10) {
-        if let Ok(l) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-            listener = Some((l, port));
-            break;
-        }
-    }
-
-    let (listener, bound_port) = listener.ok_or_else(|| "Failed to bind extension server to any port".to_string())?;
-    println!("Browser extension server bound to 127.0.0.1:{}", bound_port);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", EXTENSION_SERVER_PORT))
+        .await
+        .map_err(|e| format!("Failed to bind extension server to port {}: {}", EXTENSION_SERVER_PORT, e))?;
+        
+    println!("Browser extension server bound to 127.0.0.1:{}", EXTENSION_SERVER_PORT);
 
     axum::serve(listener, app)
         .await

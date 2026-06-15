@@ -6,7 +6,7 @@ use std::time::Duration;
 
 pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
 

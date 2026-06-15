@@ -1175,7 +1175,6 @@ fn open_automation_settings(app_handle: tauri::AppHandle) -> Result<(), String> 
 #[tauri::command]
 fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, String> {
     use sysinfo::Disks;
-    use tauri::Manager;
     let disks = Disks::new_with_refreshed_list();
 
     let resolved_dest = resolve_path(&path, &app_handle);
@@ -1232,7 +1231,6 @@ fn delete_keychain_password(id: String) -> Result<(), String> {
 
 #[tauri::command]
 fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
-    use tauri::Manager;
     let resolved_dest = resolve_path(&path, &app_handle);
     if !is_safe_path(&resolved_dest, &app_handle) {
         return false;
@@ -1242,7 +1240,6 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
 
 #[tauri::command]
 fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    use tauri::Manager;
     let resolved_dest = resolve_path(&path, &app_handle);
     if !is_safe_path(&resolved_dest, &app_handle) {
         return Err("Path traversal blocked".to_string());

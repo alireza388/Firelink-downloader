@@ -613,7 +613,8 @@ export const AddDownloadsModal = () => {
             destination: finalLocation,
             isMedia: item.isMedia,
             mediaFormatSelector: formatSelector,
-            queueId: selectedQueueId
+            queueId: selectedQueueId,
+            size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
           });
         } catch (e) {
           console.error("Invalid URL or failed to add:", e);

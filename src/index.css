@@ -1026,7 +1026,8 @@
     flex-shrink: 0;
   }
 
-  .download-ghost-row.striped {
+  .download-ghost-row.striped,
+  .download-row.striped {
     background: hsl(var(--stripe-bg));
   }
 

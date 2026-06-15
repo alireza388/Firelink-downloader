@@ -209,10 +209,10 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
             <div className="download-table-body">
             <div className="h-full overflow-auto flex flex-col">
-              {filteredDownloads.map(d => (
+              {filteredDownloads.map((d, index) => (
                 <div
                   key={d.id}
-                  className="download-row group cursor-default relative"
+                  className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''}`}
                   style={{ gridTemplateColumns: tableGridTemplate }}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -292,6 +292,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   </div>
                 </div>
               ))}
+              {Array.from({ length: Math.max(0, 50 - filteredDownloads.length) }).map((_, i) => {
+                const globalIndex = filteredDownloads.length + i;
+                return (
+                  <div
+                    key={`ghost-${i}`}
+                    className={`download-ghost-row ${globalIndex % 2 !== 0 ? 'striped' : ''}`}
+                  />
+                );
+              })}
               <div className="flex-1 bg-transparent pointer-events-none"></div>
             </div>
             </div>

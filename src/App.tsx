@@ -156,6 +156,25 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+      const text = e.clipboardData?.getData('text/plain');
+      if (text && text.trim().length > 0) {
+        useDownloadStore.getState().openAddModalWithUrls(text.trim());
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
+
+  useEffect(() => {
     const root = window.document.documentElement;
     
     const applyTheme = () => {

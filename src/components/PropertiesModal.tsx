@@ -10,7 +10,6 @@ export const PropertiesModal = () => {
   const { 
     selectedPropertiesDownloadId, 
     setSelectedPropertiesDownloadId, 
-    downloads, 
     updateDownload 
   } = useDownloadStore();
 
@@ -43,7 +42,7 @@ export const PropertiesModal = () => {
 
   useEffect(() => {
     if (selectedPropertiesDownloadId) {
-      const activeItem = downloads.find(d => d.id === selectedPropertiesDownloadId);
+      const activeItem = useDownloadStore.getState().downloads.find(d => d.id === selectedPropertiesDownloadId);
       if (activeItem) {
         setItem(activeItem);
         setUrl(activeItem.url);
@@ -89,7 +88,7 @@ export const PropertiesModal = () => {
     } else {
       setItem(null);
     }
-  }, [selectedPropertiesDownloadId, downloads, defaultDownloadPath]);
+  }, [selectedPropertiesDownloadId, defaultDownloadPath]);
 
   if (!selectedPropertiesDownloadId || !item) return null;
 

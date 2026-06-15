@@ -233,11 +233,9 @@ export const useSettingsStore = create<SettingsState>()(
       setDefaultDownloadPath: (path) => set({ defaultDownloadPath: path }),
       setMaxConcurrentDownloads: (max) => {
         set({ maxConcurrentDownloads: max });
-        invoke('set_concurrent_limit', { limit: max }).catch(console.error);
       },
       setGlobalSpeedLimit: (limit) => {
         set({ globalSpeedLimit: limit });
-        invoke('set_global_speed_limit', { limit: limit === '' || limit === '0' ? null : limit }).catch(console.error);
       },
       setActiveView: (view) => set({ activeView: view }),
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),

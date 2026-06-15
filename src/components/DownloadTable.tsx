@@ -98,9 +98,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const handleResume = (item: DownloadItem) => {
-    useDownloadStore.setState((state) => ({
-      downloads: state.downloads.map(d => d.id === item.id ? { ...d, status: 'queued', speed: '-', eta: '-' } : d)
-    }));
+    updateDownload(item.id, { status: 'queued', _dispatched: false, speed: '-', eta: '-' });
     useDownloadStore.getState().processQueue();
   };
 

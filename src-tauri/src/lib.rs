@@ -42,8 +42,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
         builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
     }
 
-    let client = builder.build().map_err(|e| e.to_string())?;
-
+    let mut resolved_addr = None;
     if let Ok(parsed) = reqwest::Url::parse(&url) {
         if let Some(host) = parsed.host_str() {
             let port = parsed.port_or_known_default().unwrap_or(80);
@@ -57,12 +56,21 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
                         std::net::IpAddr::V4(ipv4) if ipv4.is_private() || ipv4.is_link_local() => {
                             return Err("SSRF blocked: Private/local IP not allowed".to_string());
                         }
-                        _ => {}
+                        _ => {
+                            resolved_addr = Some((host.to_string(), addr));
+                            break;
+                        }
                     }
                 }
             }
         }
     }
+
+    if let Some((host, addr)) = resolved_addr {
+        builder = builder.resolve(&host, addr);
+    }
+
+    let client = builder.build().map_err(|e| e.to_string())?;
 
     let mut head_req = client.head(&url);
     if let Some(ref user) = username {
@@ -744,7 +752,7 @@ pub(crate) async fn start_media_download_internal(
     cmd.stderr(Stdio::piped()); // Also pipe stderr for better error reporting
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
-    let stdout = child.stdout.take().unwrap();
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
     // yt-dlp parsing regex
     let pct_re = Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap();
@@ -807,17 +815,16 @@ pub(crate) async fn start_media_download_internal(
                     _ => break,
                 }
             }
-            status = child.wait() => {
-                println!("child exit status: {:?}", status);
-                if let Ok(exit_status) = status {
-                    if exit_status.success() {
-                        let _ = app_handle.emit("download-complete", id.to_string());
-                    } else {
-                        let _ = app_handle.emit("download-failed", id.to_string());
-                    }
-                }
-                break;
-            }
+        }
+    }
+
+    let status = child.wait().await;
+    println!("child exit status: {:?}", status);
+    if let Ok(exit_status) = status {
+        if exit_status.success() {
+            let _ = app_handle.emit("download-complete", id.to_string());
+        } else {
+            let _ = app_handle.emit("download-failed", id.to_string());
         }
     }
 
@@ -886,7 +893,7 @@ fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
 
 #[tauri::command]
 fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
-    let mut current_preventer = state.sleep_preventer.lock().unwrap();
+    let mut current_preventer = state.sleep_preventer.lock().unwrap_or_else(|e| e.into_inner());
     if prevent {
         if current_preventer.is_none() {
             if let Ok(keepawake) = keepawake::Builder::default().display(true).reason("Downloading files").create() {
@@ -1231,7 +1238,7 @@ pub fn run() {
         .and_then(|listener| listener.local_addr())
         .map(|addr| addr.port())
         .unwrap_or(6800);
-    let aria2_secret = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let aria2_secret = uuid::Uuid::new_v4().to_string();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             restore_main_window(app);
@@ -1280,7 +1287,7 @@ pub fn run() {
                 .arg("--summary-interval=1")
                 .arg("--console-log-level=warn")
                 .arg("--download-result=hide")
-                .arg("--check-certificate=false")
+                .arg("--check-certificate=true")
                 .spawn();
 
             match aria2_process {

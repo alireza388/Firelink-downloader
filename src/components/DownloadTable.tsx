@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, Trash2, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
+import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
 import { invokeCommand as invoke } from '../ipc';
 import { homeDir } from '@tauri-apps/api/path';
 

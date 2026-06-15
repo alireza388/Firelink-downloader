@@ -5,11 +5,6 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
-import {
-  categoryForFileName,
-  fileNameFromUrl,
-  isMediaUrl
-} from '../utils/downloads';
 
 export type { DownloadCategory } from '../utils/downloads';
 

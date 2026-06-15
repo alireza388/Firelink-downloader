@@ -4,6 +4,7 @@ import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
 import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
+import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
@@ -182,15 +183,19 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unlistenProgress = listen('download-progress', (event) => {
-      const { id, fraction, speed, eta } = event.payload;
+    const unlistenProgress = listen('download-progress', (event: any) => {
+      const { id, fraction, speed, eta, size } = event.payload;
       const state = useDownloadStore.getState();
       const current = state.downloads.find(d => d.id === id);
+      
+      const updates: any = { fraction, speed, eta };
+      if (size) updates.size = size;
+      
       if (current && current.status === 'queued') {
-        updateDownload(id, { status: 'downloading', fraction, speed, eta });
-      } else {
-        updateDownload(id, { fraction, speed, eta });
+        updates.status = 'downloading';
       }
+      
+      updateDownload(id, updates);
     });
 
     const unlistenComplete = listen('download-complete', (event) => {
@@ -285,6 +290,7 @@ function App() {
       
       <AddDownloadsModal />
       <PropertiesModal />
+      <DeleteConfirmationModal />
     </div>
   );
 }

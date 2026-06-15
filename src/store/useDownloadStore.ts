@@ -59,6 +59,11 @@ export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 export type { DownloadItem, Queue };
 export type ExtensionDownloadRequest = ExtensionDownload;
 
+export type DeleteModalState = {
+  isOpen: boolean;
+  downloadId?: string;
+};
+
 interface DownloadState {
   downloads: DownloadItem[];
   queues: Queue[];
@@ -70,11 +75,13 @@ interface DownloadState {
   toggleAddModal: (isOpen: boolean) => void;
   openAddModalWithUrls: (urls: string, referer?: string | null, filename?: string | null) => void;
   handleExtensionDownload: (request: ExtensionDownloadRequest) => void;
+  deleteModalState: DeleteModalState;
+  openDeleteModal: (downloadId?: string) => void;
+  closeDeleteModal: () => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
   addDownload: (item: DownloadItem) => void;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
-  removeDownload: (id: string) => Promise<void>;
-  clearFinished: () => void;
+  removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
   redownload: (id: string) => void;
   processQueue: () => Promise<void>;
   startQueue: (queueId: string) => Promise<number>;
@@ -93,6 +100,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddReferer: '',
   pendingAddFilename: '',
   selectedPropertiesDownloadId: null,
+  deleteModalState: { isOpen: false },
+  openDeleteModal: (downloadId) => set({ deleteModalState: { isOpen: true, downloadId } }),
+  closeDeleteModal: () => set({ deleteModalState: { isOpen: false } }),
   toggleAddModal: (isOpen) => set({
     isAddModalOpen: isOpen,
     pendingAddUrls: '',
@@ -113,44 +123,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
 
-    const settings = useSettingsStore.getState();
-    if (!request.silent || settings.askWhereToSaveEachFile) {
-      get().openAddModalWithUrls(
-        urls.join('\n'),
-        request.referer,
-        urls.length === 1 ? request.filename : null
-      );
-      return;
-    }
-
-    const referer = request.referer?.trim();
-    const headers = referer ? `Referer: ${referer}` : undefined;
-    const dateAdded = new Date().toISOString();
-    const downloads = urls.map((url, index): DownloadItem => {
-      const fileName = index === 0 && urls.length === 1 && request.filename?.trim()
-        ? request.filename.trim()
-        : fileNameFromUrl(url);
-      return {
-        id: crypto.randomUUID(),
-        url,
-        fileName,
-        status: 'queued',
-        category: categoryForFileName(fileName),
-        dateAdded,
-        connections: settings.perServerConnections,
-        headers,
-        isMedia: isMediaUrl(url),
-        queueId: MAIN_QUEUE_ID
-      };
-    });
-
-    set(state => ({ downloads: [...state.downloads, ...downloads] }));
-    downloads.forEach(item => {
-      const toSave = { ...item };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: item.id, status: item.status, queueId: item.queueId, data: JSON.stringify(toSave) }).catch(console.error);
-    });
-    void get().processQueue();
+    get().openAddModalWithUrls(
+      urls.join('\n'),
+      request.referer,
+      urls.length === 1 ? request.filename : null
+    );
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
   addDownload: (item) => {
@@ -191,13 +168,19 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       syncSystemIntegrations();
     }
   },
-  removeDownload: async (id) => {
+  removeDownload: async (id, deleteFile = false) => {
     const item = get().downloads.find(d => d.id === id);
     if (item && item.status === 'downloading') {
       try {
         await invoke('remove_download', { id, filepath: item.destination || null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
+      }
+    } else if (item && deleteFile) {
+      try {
+        await invoke('remove_download', { id, filepath: item.destination || null });
+      } catch (e) {
+        console.error("Failed to delete file from disk:", e);
       }
     }
     set((state) => ({
@@ -206,16 +189,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     invoke('db_delete_download', { id }).catch(console.error);
     get().processQueue();
     syncSystemIntegrations();
-  },
-  clearFinished: () => {
-    const downloads = get().downloads;
-    const toRemove = downloads.filter(d => ['completed', 'failed'].includes(d.status));
-    set((state) => ({
-      downloads: state.downloads.filter(d => !['completed', 'failed'].includes(d.status))
-    }));
-    toRemove.forEach(d => {
-      invoke('db_delete_download', { id: d.id }).catch(console.error);
-    });
   },
   redownload: (id) => {
     let updatedItem: DownloadItem | null = null;

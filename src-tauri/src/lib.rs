@@ -367,6 +367,7 @@ pub struct DownloadProgressEvent {
     fraction: f64,
     speed: String,
     eta: String,
+    size: Option<String>,
 }
 
 fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<String> {
@@ -790,12 +791,13 @@ pub(crate) async fn start_media_download_internal(
                                 .unwrap_or_else(|| "-".to_string());
 
                             let now = std::time::Instant::now();
-                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(150) {
+                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(1000) {
                                 let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                     id: id.to_string(),
                                     fraction: overall_fraction,
                                     speed,
                                     eta,
+                                    size: None,
                                 });
                                 last_progress_at = now;
                             }

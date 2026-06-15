@@ -164,8 +164,17 @@ async fn download_handler(
     };
 
     if let Some(window) = state.app_handle.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        let is_visible = window.is_visible().unwrap_or(true);
+        if !is_visible {
+            let _ = window.show();
+            let _ = window.set_focus();
+            // Sleep briefly to let the webview wake up from macOS App Nap
+            // otherwise the IPC event emitted immediately after is dropped.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
     }
 
     if state.app_handle.emit("extension-add-download", download).is_err() {

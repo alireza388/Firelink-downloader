@@ -18,7 +18,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(1000);
 const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 
 #[derive(Debug)]
@@ -153,6 +153,7 @@ impl CoordinatorEventSink {
                         fraction,
                         speed: format_speed(speed_bytes),
                         eta,
+                        size: total.map(|t| format_size(t as f64)),
                     },
                 );
             }
@@ -583,6 +584,18 @@ fn format_speed(bytes_per_second: f64) -> String {
         format!("{:.1} KB/s", bytes_per_second / 1024.0)
     } else {
         format!("{bytes_per_second:.0} B/s")
+    }
+}
+
+fn format_size(bytes: f64) -> String {
+    if bytes >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.2} GB", bytes / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes >= 1024.0 * 1024.0 {
+        format!("{:.1} MB", bytes / (1024.0 * 1024.0))
+    } else if bytes >= 1024.0 {
+        format!("{:.1} KB", bytes / 1024.0)
+    } else {
+        format!("{bytes:.0} B")
     }
 }
 

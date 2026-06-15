@@ -11,7 +11,7 @@ interface DownloadTableProps {
 }
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, toggleAddModal, updateDownload, removeDownload, clearFinished, redownload } = useDownloadStore();
+  const { downloads, toggleAddModal, updateDownload, openDeleteModal, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
 
   const isMac = navigator.userAgent.includes('Mac');
@@ -104,12 +104,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     useDownloadStore.getState().processQueue();
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await removeDownload(id);
-    } catch (e) {
-      console.error("Failed to delete download:", e);
-    }
+  const handleDelete = (id: string) => {
+    openDeleteModal(id);
   };
 
   const contextItem = contextMenu ? downloads.find(d => d.id === contextMenu.id) : null;
@@ -167,15 +163,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             title="Pause All"
           >
             <Pause size={15} fill="currentColor" />
-          </button>
-
-          <button 
-            className="main-control-button hover:!text-red-400" 
-            disabled={filteredDownloads.length === 0}
-            onClick={clearFinished}
-            title="Clear Finished"
-          >
-            <Trash2 size={15} />
           </button>
         </div>
       </div>
@@ -428,7 +415,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             }}
             className="w-full text-left px-3 py-2 text-red-400 hover:bg-red-500/10 transition-colors"
           >
-            Remove from List
+            Remove
           </button>
 
           <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>

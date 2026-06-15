@@ -676,6 +676,8 @@ async fn start_download(
         }
         if let Some(prox) = proxy {
             options.insert("all-proxy".to_string(), serde_json::json!(prox));
+        } else {
+            options.insert("all-proxy".to_string(), serde_json::json!(""));
         }
         if let Some(cook) = cookies {
             options.insert("header".to_string(), serde_json::json!(format!("Cookie: {}", cook)));
@@ -1628,24 +1630,18 @@ async fn poll_aria2(app_handle: tauri::AppHandle, port: u16, secret: String, id:
                     break;
                 } else if status == "error" {
                     let err = status_info.get("errorMessage").and_then(|s| s.as_str()).unwrap_or("aria2 error").to_string();
-                    let _ = app_handle.emit("download-failed", serde_json::json!({
-                        "id": id,
-                        "error": err
-                    }));
+                    eprintln!("download {} failed: {}", id, err);
+                    let _ = app_handle.emit("download-failed", id.clone());
                     break;
                 } else if status == "removed" {
-                    let _ = app_handle.emit("download-failed", serde_json::json!({
-                        "id": id,
-                        "error": "Removed from aria2"
-                    }));
+                    eprintln!("download {} failed: Removed from aria2", id);
+                    let _ = app_handle.emit("download-failed", id.clone());
                     break;
                 }
             }
             Err(e) => {
-                let _ = app_handle.emit("download-failed", serde_json::json!({
-                    "id": id,
-                    "error": format!("RPC error: {}", e)
-                }));
+                eprintln!("download {} failed: RPC error: {}", id, e);
+                let _ = app_handle.emit("download-failed", id.clone());
                 break;
             }
         }

@@ -8,8 +8,15 @@ import { useSettingsStore } from './useSettingsStore';
 
 export type { DownloadCategory } from '../utils/downloads';
 
-const getProxyArgs = (settings: ReturnType<typeof useSettingsStore.getState>) => {
-  if (settings.proxyMode === 'system') return 'system';
+const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.getState>) => {
+  if (settings.proxyMode === 'system') {
+    try {
+      return await invoke('get_system_proxy');
+    } catch (e) {
+      console.warn("Failed to get system proxy:", e);
+      return null;
+    }
+  }
   if (settings.proxyMode === 'custom' && settings.proxyHost) {
     return `http://${settings.proxyHost}:${settings.proxyPort}`;
   }
@@ -420,7 +427,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               username: item.username || (login ? login.username : null),
               password: item.password || keychainPassword,
               headers: item.headers || null,
-              proxy: getProxyArgs(settings),
+              proxy: await getProxyArgs(settings),
               userAgent: settings.customUserAgent || null,
               maxTries: settings.maxAutomaticRetries
             });
@@ -440,7 +447,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               mirrors: item.mirrors || null,
               userAgent: settings.customUserAgent || null,
               maxTries: settings.maxAutomaticRetries,
-              proxy: getProxyArgs(settings)
+              proxy: await getProxyArgs(settings)
             });
           }
         } catch (e) {

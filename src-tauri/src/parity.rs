@@ -26,11 +26,12 @@ pub fn get_file_category(filename: String) -> DownloadCategory {
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
 
-    let music_exts = ["aac", "aif", "aiff", "alac", "amr", "ape", "au", "caf", "flac", "m4a", "m4b", "mid", "midi", "mp3", "oga", "ogg", "opus", "ra", "wav", "weba", "wma"];
-    let movie_exts = ["3g2", "3gp", "avi", "divx", "f4v", "flv", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ogm", "ogv", "rm", "rmvb", "ts", "vob", "webm", "wmv"];
-    let compressed_exts = ["7z", "ace", "alz", "apk", "appx", "ar", "arc", "arj", "bz", "bz2", "cab", "cpio", "deb", "dmg", "gz", "gzip", "iso", "jar", "lha", "lzh", "lz", "lz4", "lzip", "lzma", "pak", "pkg", "rar", "rpm", "sit", "sitx", "tar", "tbz", "tbz2", "tgz", "tlz", "txz", "war", "whl", "xar", "xz", "z", "zip", "zipx", "zst"];
-    let picture_exts = ["ai", "apng", "avif", "bmp", "cr2", "cr3", "dng", "emf", "eps", "gif", "heic", "heif", "ico", "indd", "jfif", "jpeg", "jpg", "jxl", "nef", "orf", "pbm", "pgm", "png", "pnm", "ppm", "psd", "raw", "rw2", "svg", "tga", "tif", "tiff", "webp", "wmf"];
-    let document_exts = ["azw", "azw3", "csv", "djvu", "doc", "docm", "docx", "dot", "dotx", "epub", "fb2", "htm", "html", "ics", "key", "log", "md", "mobi", "pdf", "numbers", "odp", "ods", "odt", "pages", "pot", "potx", "pps", "ppsx", "ppt", "pptm", "pptx", "rtf", "tex", "txt", "vcf", "xls", "xlsm", "xlsx", "xml", "xps", "yaml", "yml"];
+    let music_exts = ["mp3", "wav", "aac", "flac", "ogg", "m4a", "wma", "alac", "ape", "mid", "midi"];
+    let movie_exts = ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpeg", "mpg", "3gp", "ts", "vob"];
+    let compressed_exts = ["zip", "rar", "7z", "tar", "gz", "xz", "bz2", "lz", "lzma", "zst", "iso", "cab", "tgz", "tbz", "z", "sit", "sitx"];
+    let picture_exts = ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "svg", "ico", "heic", "raw", "psd", "ai"];
+    let document_exts = ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "rtf", "csv", "md", "epub", "mobi", "azw3"];
+    let app_exts = ["exe", "msi", "bat", "cmd", "app", "dmg", "pkg", "apk", "appx", "deb", "rpm", "appimage", "run", "sh", "bin", "jar"];
 
     if music_exts.contains(&ext.as_str()) {
         DownloadCategory::Musics
@@ -42,6 +43,8 @@ pub fn get_file_category(filename: String) -> DownloadCategory {
         DownloadCategory::Pictures
     } else if document_exts.contains(&ext.as_str()) {
         DownloadCategory::Documents
+    } else if app_exts.contains(&ext.as_str()) {
+        DownloadCategory::Applications
     } else {
         DownloadCategory::Other
     }
@@ -135,6 +138,25 @@ fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let b_ver = Version::parse(b_clean).unwrap_or_else(|_| Version::new(0, 0, 0));
     
     a_ver.cmp(&b_ver)
+}
+
+#[tauri::command]
+pub async fn create_category_directories(app_handle: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    use tauri::Manager;
+    for path in paths {
+        let mut expanded = std::path::PathBuf::from(&path);
+        if path.starts_with("~/") {
+            if let Ok(home) = app_handle.path().home_dir() {
+                expanded = home.join(&path[2..]);
+            }
+        }
+        if !expanded.exists() {
+            if let Err(e) = tokio::fs::create_dir_all(&expanded).await {
+                eprintln!("Failed to create directory {}: {}", path, e);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

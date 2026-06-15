@@ -93,6 +93,7 @@ type CommandMap = {
   db_get_all_queues: { args: undefined; result: string[] };
   db_save_queue: { args: { id: string; data: string }; result: void };
   db_delete_queue: { args: { id: string }; result: void };
+  create_category_directories: { args: { paths: string[] }; result: void };
 };
 
 type CommandName = keyof CommandMap;

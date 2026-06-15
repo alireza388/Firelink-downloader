@@ -678,6 +678,9 @@ async fn start_download(
             options.insert("all-proxy".to_string(), serde_json::json!(prox));
         } else {
             options.insert("all-proxy".to_string(), serde_json::json!(""));
+            options.insert("http-proxy".to_string(), serde_json::json!(""));
+            options.insert("https-proxy".to_string(), serde_json::json!(""));
+            options.insert("no-proxy".to_string(), serde_json::json!("*"));
         }
         if let Some(cook) = cookies {
             options.insert("header".to_string(), serde_json::json!(format!("Cookie: {}", cook)));
@@ -1527,7 +1530,8 @@ pub fn run() {
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media,
-            db_save_settings, db_load_settings, db_get_all_downloads, db_save_download, db_delete_download, db_get_all_queues, db_save_queue, db_delete_queue
+            db_save_settings, db_load_settings, db_get_all_downloads, db_save_download, db_delete_download, db_get_all_queues, db_save_queue, db_delete_queue,
+            parity::create_category_directories
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

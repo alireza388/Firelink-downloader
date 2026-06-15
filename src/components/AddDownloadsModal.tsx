@@ -415,6 +415,13 @@ export const AddDownloadsModal = () => {
 
       if (active && firstReadyIndex !== null) {
         setSelectedItemIndex(firstReadyIndex);
+        const firstFile = updatedItems[firstReadyIndex].file;
+        if (firstFile) {
+          const category = categoryForFileName(firstFile);
+          const settingsStore = useSettingsStore.getState();
+          const categoryDir = (settingsStore.downloadDirectories && settingsStore.downloadDirectories[category]) || settingsStore.defaultDownloadPath || '~/Downloads';
+          setSaveLocation(categoryDir);
+        }
       }
     }, 400);
 

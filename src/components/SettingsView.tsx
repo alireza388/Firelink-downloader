@@ -137,14 +137,31 @@ export default function SettingsView() {
       });
       if (base && typeof base === 'string') {
         const cleanBase = base.replace(/\/$/, '');
-        settings.setCategoryDirectory('Musics', `${cleanBase}/Musics`);
-        settings.setCategoryDirectory('Movies', `${cleanBase}/Movies`);
-        settings.setCategoryDirectory('Compressed', `${cleanBase}/Compressed`);
-        settings.setCategoryDirectory('Documents', `${cleanBase}/Documents`);
-        settings.setCategoryDirectory('Pictures', `${cleanBase}/Pictures`);
-        settings.setCategoryDirectory('Applications', `${cleanBase}/Applications`);
-        settings.setCategoryDirectory('Other', `${cleanBase}/Other`);
-        showToast("Updated all categories to use base folder");
+        const paths = [
+          `${cleanBase}/Musics`,
+          `${cleanBase}/Movies`,
+          `${cleanBase}/Compressed`,
+          `${cleanBase}/Documents`,
+          `${cleanBase}/Pictures`,
+          `${cleanBase}/Applications`,
+          `${cleanBase}/Other`
+        ];
+        
+        settings.setCategoryDirectory('Musics', paths[0]);
+        settings.setCategoryDirectory('Movies', paths[1]);
+        settings.setCategoryDirectory('Compressed', paths[2]);
+        settings.setCategoryDirectory('Documents', paths[3]);
+        settings.setCategoryDirectory('Pictures', paths[4]);
+        settings.setCategoryDirectory('Applications', paths[5]);
+        settings.setCategoryDirectory('Other', paths[6]);
+        
+        try {
+          await invoke('create_category_directories', { paths });
+        } catch (e) {
+          console.error("Failed to create directories on disk:", e);
+        }
+        
+        showToast("Updated and created all category folders at base");
       }
     } catch (e) {
       console.error("Failed to browse base path:", e);

@@ -31,63 +31,91 @@ fn get_binary_name(base: &str) -> String {
 
 #[tauri::command]
 async fn fetch_metadata(url: String, user_agent: Option<String>, username: Option<String>, password: Option<String>) -> Result<MetadataResponse, String> {
-    let mut builder = reqwest::Client::builder();
-    if let Some(ua) = user_agent {
-        if !ua.is_empty() {
-            builder = builder.user_agent(ua);
+    let mut current_url = url.clone();
+    let mut redirects = 0;
+    let res;
+    
+    loop {
+        if redirects >= 5 {
+            return Err("Too many redirects".to_string());
+        }
+        
+        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+        
+        if let Some(ref ua) = user_agent {
+            if !ua.is_empty() {
+                builder = builder.user_agent(ua);
+            } else {
+                builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            }
         } else {
             builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         }
-    } else {
-        builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-    }
 
-    let mut resolved_addr = None;
-    if let Ok(parsed) = reqwest::Url::parse(&url) {
-        if let Some(host) = parsed.host_str() {
-            let port = parsed.port_or_known_default().unwrap_or(80);
-            if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&(host, port)) {
-                for addr in addrs {
-                    let ip = addr.ip();
-                    if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
-                        return Err("SSRF blocked: Private/local IP not allowed".to_string());
-                    }
-                    match ip {
-                        std::net::IpAddr::V4(ipv4) if ipv4.is_private() || ipv4.is_link_local() => {
+        let mut resolved_addr = None;
+        if let Ok(parsed) = reqwest::Url::parse(&current_url) {
+            if let Some(host) = parsed.host_str() {
+                let port = parsed.port_or_known_default().unwrap_or(80);
+                if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&(host, port)) {
+                    for addr in addrs {
+                        let ip = addr.ip();
+                        if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
                             return Err("SSRF blocked: Private/local IP not allowed".to_string());
                         }
-                        _ => {
-                            resolved_addr = Some((host.to_string(), addr));
-                            break;
+                        match ip {
+                            std::net::IpAddr::V4(ipv4) if ipv4.is_private() || ipv4.is_link_local() => {
+                                return Err("SSRF blocked: Private/local IP not allowed".to_string());
+                            }
+                            _ => {
+                                resolved_addr = Some((host.to_string(), addr));
+                                break;
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    if let Some((host, addr)) = resolved_addr {
-        builder = builder.resolve(&host, addr);
-    }
-
-    let client = builder.build().map_err(|e| e.to_string())?;
-
-    let mut head_req = client.head(&url);
-    if let Some(ref user) = username {
-        if !user.is_empty() {
-            head_req = head_req.basic_auth(user, password.as_deref());
+        if let Some((host, addr)) = resolved_addr {
+            builder = builder.resolve(&host, addr);
         }
-    }
-    let mut res = head_req.send().await.map_err(|e| e.to_string())?;
 
-    if !res.status().is_success() {
-        let mut get_req = client.get(&url);
+        let client = builder.build().map_err(|e| e.to_string())?;
+
+        let mut head_req = client.head(&current_url);
         if let Some(ref user) = username {
             if !user.is_empty() {
-                get_req = get_req.basic_auth(user, password.as_deref());
+                head_req = head_req.basic_auth(user, password.as_deref());
             }
         }
-        res = get_req.send().await.map_err(|e| e.to_string())?;
+        let mut current_res = head_req.send().await.map_err(|e| e.to_string())?;
+
+        if !current_res.status().is_success() && !current_res.status().is_redirection() {
+            let mut get_req = client.get(&current_url);
+            if let Some(ref user) = username {
+                if !user.is_empty() {
+                    get_req = get_req.basic_auth(user, password.as_deref());
+                }
+            }
+            current_res = get_req.send().await.map_err(|e| e.to_string())?;
+        }
+
+        if current_res.status().is_redirection() {
+            if let Some(loc) = current_res.headers().get(reqwest::header::LOCATION) {
+                if let Ok(loc_str) = loc.to_str() {
+                    if let Ok(parsed_base) = reqwest::Url::parse(&current_url) {
+                        if let Ok(new_url) = parsed_base.join(loc_str) {
+                            current_url = new_url.to_string();
+                            redirects += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        res = current_res;
+        break;
     }
 
     let mut filename = String::new();
@@ -95,16 +123,27 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
         if let Ok(cd_str) = cd.to_str() {
             if let Some(idx) = cd_str.find("filename=") {
                 let rest = &cd_str[idx + 9..];
-                filename = rest.trim_matches('"').to_string();
+                let raw_filename = rest.trim_matches(|c| c == '"' || c == '\'');
+                let normalized = raw_filename.replace('\\', "/");
+                filename = std::path::Path::new(&normalized)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("download")
+                    .to_string();
             }
         }
     }
 
     if filename.is_empty() {
-        if let Ok(parsed) = reqwest::Url::parse(&url) {
+        if let Ok(parsed) = reqwest::Url::parse(&current_url) {
             if let Some(segments) = parsed.path_segments() {
                 if let Some(last) = segments.last() {
-                    filename = last.to_string();
+                    let normalized = last.replace('\\', "/");
+                    filename = std::path::Path::new(&normalized)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("download")
+                        .to_string();
                 }
             }
         }
@@ -177,7 +216,7 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
         cmd.arg("--config-locations").arg(&config_path);
     }
 
-    cmd.arg(&url);
+    cmd.arg("--").arg(&url);
 
     // We use tokio AsyncCommand so it doesn't block the async thread
     let output = cmd.output()
@@ -283,8 +322,34 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-fn is_safe_path(path: &std::path::Path) -> bool {
-    !path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle) -> bool {
+    if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return false;
+    }
+
+    if !path.is_absolute() {
+        return true;
+    }
+
+    let mut allowed_prefixes = Vec::new();
+    use tauri::Manager;
+    if let Ok(home) = app_handle.path().home_dir() {
+        allowed_prefixes.push(home.join("Downloads"));
+        allowed_prefixes.push(home.join("Music"));
+        allowed_prefixes.push(home.join("Movies"));
+        allowed_prefixes.push(home.join("Pictures"));
+        allowed_prefixes.push(home.join("Documents"));
+        allowed_prefixes.push(home.join("Desktop"));
+    }
+    allowed_prefixes.push(std::path::PathBuf::from("/Volumes"));
+
+    for prefix in allowed_prefixes {
+        if path.starts_with(&prefix) {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[tauri::command]
@@ -303,7 +368,7 @@ async fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
         }
     }
     
-    if !is_safe_path(&resolved_dest) {
+    if !is_safe_path(&resolved_dest, &app) {
         return Err("Path traversal blocked".to_string());
     }
 
@@ -326,7 +391,7 @@ async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), Strin
         }
     }
     
-    if !is_safe_path(&resolved_dest) {
+    if !is_safe_path(&resolved_dest, &app) {
         return Err("Path traversal blocked".to_string());
     }
 
@@ -564,6 +629,12 @@ async fn start_download(
     println!("start_download called for id: {}", id);
     let download_id = Uuid::parse_str(&id).map_err(|error| AppError::Internal(error.to_string()))?;
 
+    let safe_filename = std::path::Path::new(&filename.replace('\\', "/"))
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download")
+        .to_string();
+
     let mut resolved_dest = std::path::PathBuf::from(&destination);
     if destination.starts_with("~/") {
         if let Ok(home) = app_handle.path().home_dir() {
@@ -575,7 +646,7 @@ async fn start_download(
         }
     }
     
-    if !is_safe_path(&resolved_dest) {
+    if !is_safe_path(&resolved_dest, &app_handle) {
         return Err(AppError::Internal("Path traversal blocked".to_string()));
     }
 
@@ -583,7 +654,7 @@ async fn start_download(
         println!("Routing multi-part/checksum download to aria2: {}", id);
         let mut options = serde_json::Map::new();
         options.insert("dir".to_string(), serde_json::json!(resolved_dest.to_string_lossy().to_string()));
-        options.insert("out".to_string(), serde_json::json!(filename));
+        options.insert("out".to_string(), serde_json::json!(safe_filename));
         if let Some(conn) = connections {
             options.insert("split".to_string(), serde_json::json!(conn.to_string()));
             options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
@@ -627,7 +698,7 @@ async fn start_download(
         .send(download::DownloadCmd::Start(download::DownloadPayload {
             id: download_id,
             urls: collect_download_uris(&url, mirrors.as_deref()),
-            output_path: resolved_dest.join(filename),
+            output_path: resolved_dest.join(safe_filename),
             speed_limit,
             username,
             password,
@@ -715,6 +786,12 @@ pub(crate) async fn start_media_download_internal(
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
     println!("start_media_download called for id: {}", id);
+    let safe_filename = std::path::Path::new(&filename.replace('\\', "/"))
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download")
+        .to_string();
+
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
     let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
     let ffmpeg_path = resource_dir.join("binaries").join(get_binary_name("ffmpeg"));
@@ -730,11 +807,15 @@ pub(crate) async fn start_media_download_internal(
         }
     }
 
+    if !is_safe_path(&resolved_dest, &app_handle) {
+        return Err("Path traversal blocked".to_string());
+    }
+
     if !resolved_dest.exists() {
         let _ = tokio::fs::create_dir_all(&resolved_dest).await;
     }
 
-    let out_path = resolved_dest.join(&filename);
+    let out_path = resolved_dest.join(&safe_filename);
 
     let total_tracks: f64 = if let Some(ref format) = format_selector {
         if format.contains('+') { 2.0 } else { 1.0 }
@@ -811,17 +892,17 @@ pub(crate) async fn start_media_download_internal(
     if let Some(format) = format_selector {
         cmd.arg("-f").arg(format);
         // If the filename implies an audio format, use it as audio output
-        if filename.ends_with(".mp3") {
+        if safe_filename.ends_with(".mp3") {
             cmd.arg("-x").arg("--audio-format").arg("mp3");
-        } else if filename.ends_with(".m4a") {
+        } else if safe_filename.ends_with(".m4a") {
             cmd.arg("-x").arg("--audio-format").arg("m4a");
-        } else if filename.ends_with(".opus") {
+        } else if safe_filename.ends_with(".opus") {
             cmd.arg("-x").arg("--audio-format").arg("opus");
         } else {
             // Otherwise attempt to merge into mp4 or mkv based on filename
-            if filename.ends_with(".mp4") {
+            if safe_filename.ends_with(".mp4") {
                 cmd.arg("--merge-output-format").arg("mp4");
-            } else if filename.ends_with(".webm") {
+            } else if safe_filename.ends_with(".webm") {
                 cmd.arg("--merge-output-format").arg("webm");
             } else {
                 cmd.arg("--merge-output-format").arg("mkv");
@@ -829,7 +910,7 @@ pub(crate) async fn start_media_download_internal(
         }
     }
 
-    cmd.arg(&url);
+    cmd.arg("--").arg(&url);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped()); // Also pipe stderr for better error reporting
 
@@ -930,7 +1011,7 @@ async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-async fn remove_download(state: tauri::State<'_, AppState>, id: String, filepath: Option<String>) -> Result<(), String> {
+async fn remove_download(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>, id: String, filepath: Option<String>) -> Result<(), String> {
     println!("remove_download called for id: {}", id);
 
     if let Ok(download_id) = Uuid::parse_str(&id) {
@@ -944,13 +1025,15 @@ async fn remove_download(state: tauri::State<'_, AppState>, id: String, filepath
     if let Some(path) = filepath {
         if !path.is_empty() {
             let p = std::path::Path::new(&path);
-            if p.exists() {
-                let _ = tokio::fs::remove_file(p).await;
-            }
-            let aria2_path = format!("{}.aria2", path);
-            let p_aria2 = std::path::Path::new(&aria2_path);
-            if p_aria2.exists() {
-                let _ = tokio::fs::remove_file(p_aria2).await;
+            if is_safe_path(p, &app_handle) {
+                if p.exists() {
+                    let _ = tokio::fs::remove_file(p).await;
+                }
+                let aria2_path = format!("{}.aria2", path);
+                let p_aria2 = std::path::Path::new(&aria2_path);
+                if p_aria2.exists() {
+                    let _ = tokio::fs::remove_file(p_aria2).await;
+                }
             }
         }
     }
@@ -1159,7 +1242,7 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
             resolved_dest = home;
         }
     }
-    if !is_safe_path(&resolved_dest) {
+    if !is_safe_path(&resolved_dest, &app_handle) {
         return false;
     }
     resolved_dest.exists()
@@ -1178,7 +1261,7 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
             resolved_dest = home;
         }
     }
-    if !is_safe_path(&resolved_dest) {
+    if !is_safe_path(&resolved_dest, &app_handle) {
         return Err("Path traversal blocked".to_string());
     }
     if resolved_dest.exists() {

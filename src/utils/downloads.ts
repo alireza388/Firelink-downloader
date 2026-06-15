@@ -1,7 +1,9 @@
 import type { DownloadCategory } from '../bindings/DownloadCategory';
 export type { DownloadCategory } from '../bindings/DownloadCategory';
 
-const MEDIA_DOMAINS = [
+import { invoke } from '@tauri-apps/api/core';
+
+let MEDIA_DOMAINS = [
   'youtube.com',
   'youtu.be',
   'twitter.com',
@@ -16,6 +18,17 @@ const MEDIA_DOMAINS = [
   'facebook.com',
   'fb.watch'
 ];
+
+export const initMediaDomains = async () => {
+  try {
+    const domains = await invoke<string[]>('get_supported_media_domains');
+    if (domains && domains.length > 0) {
+      MEDIA_DOMAINS = domains;
+    }
+  } catch (e) {
+    console.error('Failed to init media domains:', e);
+  }
+};
 
 export const categoryForFileName = (fileName: string): DownloadCategory => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';

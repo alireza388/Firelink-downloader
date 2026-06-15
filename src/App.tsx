@@ -1,3 +1,4 @@
+import { initMediaDomains } from './utils/downloads';
 import { useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
@@ -57,6 +58,7 @@ function App() {
   };
 
   useEffect(() => {
+    initMediaDomains();
     window.localStorage.setItem('firelink-sidebar-width', String(sidebarWidth));
   }, [sidebarWidth]);
 

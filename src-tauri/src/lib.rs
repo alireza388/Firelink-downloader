@@ -180,6 +180,7 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
     let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
 
+    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
     let mut cmd = AsyncCommand::new(&ytdlp_path);
     cmd.arg("-J")
        .arg("--no-warnings")
@@ -189,7 +190,9 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("--js-runtimes").arg("deno,node");
+       .arg("--js-runtimes").arg("deno,node")
+       .arg("--js-runtime-path").arg(format!("deno:{}", deno_path.display()))
+       .arg("--extractor-args").arg("youtube:player_client=ios,tv");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
@@ -213,7 +216,7 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
     config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
     if !config_content.is_empty() {
-        cmd.arg("--config-locations").arg(&config_path);
+        cmd.arg("--config-location").arg(&config_path);
     }
 
     cmd.arg("--").arg(&url);
@@ -310,9 +313,8 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("deno execution finished with status: {}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let first_line = text.lines().next().unwrap_or("").to_string();
-        let parts: Vec<&str> = first_line.split_whitespace().collect();
-        let clean = parts.get(1).unwrap_or(&first_line.as_str()).to_string();
+        let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").unwrap();
+        let clean = re.captures(&text).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or(&text).to_string();
         println!("deno output: {}", clean);
         Ok(clean)
     } else {
@@ -748,8 +750,8 @@ async fn start_media_download(
             }
         };
 
-        let _ = start_media_download_internal(
-            app_handle,
+        if let Err(e) = start_media_download_internal(
+            app_handle.clone(),
             &id, url,
             destination,
             filename,
@@ -763,7 +765,11 @@ async fn start_media_download(
             user_agent,
             max_tries,
             &mut cancel_rx,
-        ).await;
+        ).await {
+            eprintln!("Media download {} failed: {}", id, e);
+            use tauri::Emitter;
+            let _ = app_handle.emit("download-failed", id.clone());
+        }
 
         drop(permit);
         coordinator.finish_media(id).await;
@@ -818,6 +824,7 @@ pub(crate) async fn start_media_download_internal(
         1.0
     };
 
+    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
     let mut cmd = AsyncCommand::new(&ytdlp_path);
     cmd.arg("--newline")
        .arg("--ffmpeg-location")
@@ -829,6 +836,12 @@ pub(crate) async fn start_media_download_internal(
        .arg("--downloader").arg("aria2c")
        .arg("--downloader-args").arg("aria2c:-x 16 -s 16 -k 1M")
        .arg("--concurrent-fragments").arg("4")
+       .arg("--no-warnings")
+       .arg("--compat-options").arg("no-youtube-unavailable-videos")
+       .arg("--js-runtimes").arg("deno,node")
+       .arg("--js-runtime-path").arg(format!("deno:{}", deno_path.display()))
+       .arg("--extractor-args").arg("youtube:player_client=ios,tv")
+       .arg("--progress-template").arg("download:[%(progress.downloaded_bytes)s/%(progress.total_bytes)s]")
        .arg("-o").arg(out_path.to_string_lossy().to_string());
 
     if let Some(limit) = speed_limit {
@@ -881,7 +894,7 @@ pub(crate) async fn start_media_download_internal(
     config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
     if !config_content.is_empty() {
-        cmd.arg("--config-locations").arg(&config_path);
+        cmd.arg("--config-location").arg(&config_path);
     }
 
     if let Some(format) = format_selector {
@@ -1463,32 +1476,34 @@ pub fn run() {
             let app_handle_ws = app.handle().clone();
             let ws_port = aria2_port;
             tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", ws_port);
-                if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(&ws_url).await {
-                    use futures_util::StreamExt;
-                    let (_, mut read) = ws_stream.split();
-                    while let Some(msg) = read.next().await {
-                        if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
-                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
-                                    if let Some(params) = json.get("params").and_then(|p| p.as_array()) {
-                                        if let Some(event) = params.first().and_then(|p| p.as_object()) {
-                                            if let Some(gid) = event.get("gid").and_then(|g| g.as_str()) {
-                                                let id = {
-                                                    let map = aria2_gids_clone1.read().unwrap();
-                                                    map.iter().find(|(_, g)| *g == gid).map(|(i, _)| i.clone())
-                                                };
-                                                if let Some(id) = id {
-                                                    use tauri::Emitter;
-                                                    match method {
-                                                        "aria2.onDownloadComplete" => {
-                                                            let _ = app_handle_ws.emit("download-complete", id);
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", ws_port);
+                    if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(&ws_url).await {
+                        use futures_util::StreamExt;
+                        let (_, mut read) = ws_stream.split();
+                        while let Some(msg) = read.next().await {
+                            if let Ok(tokio_tungstenite::tungstenite::Message::Text(text)) = msg {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
+                                        if let Some(params) = json.get("params").and_then(|p| p.as_array()) {
+                                            if let Some(event) = params.first().and_then(|p| p.as_object()) {
+                                                if let Some(gid) = event.get("gid").and_then(|g| g.as_str()) {
+                                                    let id = {
+                                                        let map = aria2_gids_clone1.read().unwrap();
+                                                        map.iter().find(|(_, g)| *g == gid).map(|(i, _)| i.clone())
+                                                    };
+                                                    if let Some(id) = id {
+                                                        use tauri::Emitter;
+                                                        match method {
+                                                            "aria2.onDownloadComplete" => {
+                                                                let _ = app_handle_ws.emit("download-complete", id);
+                                                            }
+                                                            "aria2.onDownloadError" => {
+                                                                let _ = app_handle_ws.emit("download-failed", id);
+                                                            }
+                                                            _ => {}
                                                         }
-                                                        "aria2.onDownloadError" => {
-                                                            let _ = app_handle_ws.emit("download-failed", id);
-                                                        }
-                                                        _ => {}
                                                     }
                                                 }
                                             }
@@ -1498,6 +1513,8 @@ pub fn run() {
                             }
                         }
                     }
+                    // Connection lost, loop and reconnect
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 }
             });
 
@@ -1584,7 +1601,7 @@ pub fn run() {
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
-            parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media,
+            parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             db_save_settings, db_load_settings, db_get_all_downloads, db_save_download, db_delete_download, db_get_all_queues, db_save_queue, db_delete_queue,
             parity::create_category_directories
         ])

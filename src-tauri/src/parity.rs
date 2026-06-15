@@ -159,23 +159,29 @@ pub async fn create_category_directories(app_handle: tauri::AppHandle, paths: Ve
     Ok(())
 }
 
+pub static SUPPORTED_DOMAINS: &[&str] = &[
+    "youtube.com", "youtu.be",
+    "twitter.com", "x.com",
+    "vimeo.com",
+    "twitch.tv",
+    "instagram.com",
+    "tiktok.com",
+    "facebook.com", "fb.watch",
+    "reddit.com", "v.redd.it",
+    "soundcloud.com",
+];
+
+#[tauri::command]
+pub fn get_supported_media_domains() -> Vec<String> {
+    SUPPORTED_DOMAINS.iter().map(|s| s.to_string()).collect()
+}
+
 #[tauri::command]
 pub fn is_supported_media(url: String) -> bool {
     if let Ok(parsed_url) = reqwest::Url::parse(&url) {
         if let Some(host) = parsed_url.host_str() {
             let host_lower = host.to_lowercase();
-            let supported_domains = [
-                "youtube.com", "youtu.be",
-                "twitter.com", "x.com",
-                "vimeo.com",
-                "twitch.tv",
-                "instagram.com",
-                "tiktok.com",
-                "facebook.com", "fb.watch",
-                "reddit.com", "v.redd.it",
-                "soundcloud.com"
-            ];
-            for domain in supported_domains.iter() {
+            for domain in SUPPORTED_DOMAINS.iter() {
                 if host_lower == *domain || host_lower.ends_with(&format!(".{}", domain)) {
                     return true;
                 }

@@ -1,23 +1,8 @@
 use tauri::{Manager, Emitter};
 use chrono::{Local, Datelike};
 use std::time::Duration;
-use serde::Deserialize;
 
-#[derive(Deserialize, Debug)]
-struct SchedulerSettings {
-    enabled: bool,
-    #[serde(rename = "startTime")]
-    start_time: String,
-    #[serde(rename = "stopTimeEnabled")]
-    stop_time_enabled: bool,
-    #[serde(rename = "stopTime")]
-    stop_time: String,
-    everyday: bool,
-    #[serde(rename = "selectedDays")]
-    selected_days: Vec<u32>,
-    #[serde(rename = "postQueueAction")]
-    post_queue_action: String,
-}
+
 
 pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -33,7 +18,7 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
 
             if let Some(settings_str) = settings_opt {
                 if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&settings_str) {
-                    if let Ok(scheduler) = serde_json::from_value::<SchedulerSettings>(settings.get("scheduler").unwrap_or(&serde_json::json!({})).clone()) {
+                    if let Ok(scheduler) = serde_json::from_value::<crate::ipc::SchedulerSettings>(settings.get("scheduler").unwrap_or(&serde_json::json!({})).clone()) {
                         if !scheduler.enabled {
                             continue;
                         }
@@ -76,6 +61,10 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                                 let state = app_handle.state::<crate::db::DbState>();
                                 let conn = state.conn.lock().unwrap();
                                 let _ = crate::db::save_settings(&conn, &updated);
+                            }
+
+                            if !matches!(scheduler.post_queue_action, crate::ipc::PostQueueAction::None) {
+                                let _ = crate::execute_system_action(scheduler.post_queue_action.clone());
                             }
                         }
                     }

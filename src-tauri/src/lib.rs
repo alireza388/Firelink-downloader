@@ -895,8 +895,7 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
     }
 }
 
-#[tauri::command]
-fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), String> {
+pub(crate) fn execute_system_action(action: crate::ipc::PostQueueAction) -> Result<(), String> {
     match action {
         crate::ipc::PostQueueAction::Shutdown => {
             system_shutdown::shutdown().map_err(|e| e.to_string())
@@ -909,6 +908,11 @@ fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), Stri
         }
         crate::ipc::PostQueueAction::None => Err("Invalid action".to_string()),
     }
+}
+
+#[tauri::command]
+fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), String> {
+    execute_system_action(action)
 }
 
 #[tauri::command]

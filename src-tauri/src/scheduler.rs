@@ -12,7 +12,7 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
 
             let settings_opt = {
                 let state = app_handle.state::<crate::db::DbState>();
-                let conn = state.conn.lock().unwrap();
+                let conn = state.conn.lock().await;
                 crate::db::get_settings(&conn).unwrap_or(None)
             };
 
@@ -46,7 +46,7 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                             
                             if let Ok(updated) = serde_json::to_string(&settings) {
                                 let state = app_handle.state::<crate::db::DbState>();
-                                let conn = state.conn.lock().unwrap();
+                                let conn = state.conn.lock().await;
                                 let _ = crate::db::save_settings(&conn, &updated);
                             }
                         }
@@ -59,12 +59,8 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
 
                             if let Ok(updated) = serde_json::to_string(&settings) {
                                 let state = app_handle.state::<crate::db::DbState>();
-                                let conn = state.conn.lock().unwrap();
+                                let conn = state.conn.lock().await;
                                 let _ = crate::db::save_settings(&conn, &updated);
-                            }
-
-                            if !matches!(scheduler.post_queue_action, crate::ipc::PostQueueAction::None) {
-                                let _ = crate::execute_system_action(scheduler.post_queue_action.clone());
                             }
                         }
                     }

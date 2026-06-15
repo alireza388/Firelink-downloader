@@ -99,11 +99,15 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     pendingAddReferer: '',
     pendingAddFilename: ''
   }),
-  openAddModalWithUrls: (urls, referer, filename) => set({
-    isAddModalOpen: true,
-    pendingAddUrls: urls,
-    pendingAddReferer: referer?.trim() || '',
-    pendingAddFilename: filename?.trim() || ''
+  openAddModalWithUrls: (urls, referer, filename) => set((state) => {
+    const existingUrls = state.isAddModalOpen && state.pendingAddUrls ? state.pendingAddUrls : '';
+    const mergedUrls = existingUrls ? `${existingUrls}\n${urls}` : urls;
+    return {
+      isAddModalOpen: true,
+      pendingAddUrls: mergedUrls,
+      pendingAddReferer: referer?.trim() || state.pendingAddReferer || '',
+      pendingAddFilename: filename?.trim() || state.pendingAddFilename || ''
+    };
   }),
   handleExtensionDownload: (request) => {
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
@@ -161,14 +165,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     set((state) => ({
       downloads: state.downloads.map(d => {
         if (d.id === id) {
-          let newFraction = updates.fraction;
-          if (newFraction === 0 && d.fraction && d.fraction > 0) {
-            newFraction = d.fraction;
-          }
           const updated = { 
             ...d, 
             ...updates,
-            fraction: newFraction !== undefined ? newFraction : updates.fraction !== undefined ? updates.fraction : d.fraction
+            fraction: updates.fraction !== undefined ? updates.fraction : d.fraction
           };
           updatedItem = updated;
           return updated;
@@ -195,7 +195,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const item = get().downloads.find(d => d.id === id);
     if (item && item.status === 'downloading') {
       try {
-        await invoke('pause_download', { id });
+        await invoke('remove_download', { id, filepath: item.destination || null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
       }

@@ -162,8 +162,12 @@ function App() {
       if (theme === 'system') {
         const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         root.classList.add(systemDark ? 'theme-dark' : 'theme-light');
+        if (systemDark) root.classList.add('dark');
       } else {
         root.classList.add(`theme-${theme}`);
+        if (['dark', 'dracula', 'nord'].includes(theme)) {
+          root.classList.add('dark');
+        }
       }
     };
 

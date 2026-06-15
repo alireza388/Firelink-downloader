@@ -306,17 +306,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   </div>
                 </div>
               ))}
-              <div className="flex-1 overflow-hidden flex flex-col pointer-events-none">
-                {Array.from({ length: 50 }).map((_, index) => {
-                  const isEven = (filteredDownloads.length + index) % 2 === 1;
-                  return (
-                    <div 
-                      key={`ghost-${index}`} 
-                      className={`download-ghost-row ${isEven ? 'striped' : ''}`} 
-                    />
-                  );
-                })}
-              </div>
+              <div className="flex-1 bg-transparent pointer-events-none"></div>
             </div>
             </div>
             </div>

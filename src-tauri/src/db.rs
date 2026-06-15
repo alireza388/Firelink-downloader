@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result, params};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use std::path::PathBuf;
 use tauri::Manager;
 

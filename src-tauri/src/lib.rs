@@ -303,7 +303,7 @@ impl Drop for Aria2DaemonGuard {
     }
 }
 
-#[cfg(all(target_os = "macos", debug_assertions))]
+#[cfg(target_os = "macos")]
 fn resign_aria2_debug_bundle(aria2c_path: &std::path::Path) -> Result<(), String> {
     let lib_dir = aria2c_path
         .parent()
@@ -397,7 +397,7 @@ fn parse_firelink_urls(deep_links: impl IntoIterator<Item = url::Url>) -> Vec<St
         else {
             continue;
         };
-        if raw_urls.is_empty() || raw_urls.len() >= MAX_DEEP_LINK_PAYLOAD_LEN {
+        if raw_urls.is_empty() || raw_urls.chars().count() >= MAX_DEEP_LINK_PAYLOAD_LEN {
             continue;
         }
 
@@ -1255,7 +1255,7 @@ pub fn run() {
                 Err(error) => eprintln!("Failed to read startup deep link: {error}"),
             }
             let db_conn = crate::db::init_db(app.handle()).expect("Failed to init db");
-            app.manage(crate::db::DbState { conn: std::sync::Mutex::new(db_conn) });
+            app.manage(crate::db::DbState { conn: tokio::sync::Mutex::new(db_conn) });
 
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
@@ -1289,181 +1289,15 @@ pub fn run() {
                 Err(e) => eprintln!("Failed to spawn aria2c daemon: {}", e),
             }
 
-            let app_handle_clone = app.handle().clone();
-            let aria2_port_clone = aria2_port;
-            let aria2_secret_clone = aria2_secret.clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", aria2_port_clone);
-                
-                use futures_util::{StreamExt, SinkExt};
-                use tokio_tungstenite::connect_async;
-                use tokio_tungstenite::tungstenite::Message;
 
-                let mut connection = None;
-                for attempt in 1..=20 {
-                    match connect_async(&ws_url).await {
-                        Ok(stream) => {
-                            connection = Some(stream);
-                            break;
-                        }
-                        Err(error) if attempt < 20 => {
-                            if let Some(status) = app_handle_clone
-                                .state::<Aria2DaemonGuard>()
-                                .0
-                                .lock()
-                                .ok()
-                                .and_then(|mut guard| guard.as_mut().and_then(|child| child.try_wait().ok()).flatten())
-                            {
-                                eprintln!("aria2 daemon exited before RPC startup: {}", status);
-                                return;
-                            }
-                            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                            if attempt == 1 {
-                                eprintln!("Waiting for aria2 WebSocket: {}", error);
-                            }
-                        }
-                        Err(error) => {
-                            eprintln!("Failed to connect to aria2 WebSocket after retries: {}", error);
-                        }
-                    }
-                }
-                let Some((mut ws_stream, _)) = connection else {
-                    return;
-                };
-
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
-                
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            let req = serde_json::json!({
-                                "jsonrpc": "2.0",
-                                "id": "progress",
-                                "method": "aria2.tellActive",
-                                "params": [
-                                    format!("token:{}", aria2_secret_clone),
-                                    ["gid", "status", "completedLength", "totalLength", "downloadSpeed"]
-                                ]
-                            });
-                            if let Ok(msg) = serde_json::to_string(&req) {
-                                let _ = ws_stream.send(Message::Text(msg.into())).await;
-                            }
-                        }
-                        msg = ws_stream.next() => {
-                            match msg {
-                                Some(Ok(Message::Text(text))) => {
-                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
-                                        let tasks = HashMap::<String, TaskHandle>::new();
-                                        
-                                        // Process progress
-                                        if json.get("id").and_then(|i| i.as_str()) == Some("progress") {
-                                            let mut gid_to_id = HashMap::new();
-                                            {
-                                                for (id, handle) in tasks.iter() {
-                                                    if let TaskHandle::Aria2(gid) = handle {
-                                                        gid_to_id.insert(gid.clone(), id.clone());
-                                                    }
-                                                }
-                                            }
-                                            
-                                            if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
-                                                for item in arr {
-                                                    if let Some(gid) = item.get("gid").and_then(|v| v.as_str()) {
-                                                        if let Some(id) = gid_to_id.get(gid) {
-                                                            let completed = item.get("completedLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                                                            let total = item.get("totalLength").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(1.0);
-                                                            let speed_bytes = item.get("downloadSpeed").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                                                            
-                                                            let fraction = if total > 0.0 { completed / total } else { 0.0 };
-                                                            let speed = if speed_bytes > 1024.0 * 1024.0 {
-                                                                format!("{:.1} MB/s", speed_bytes / (1024.0 * 1024.0))
-                                                            } else if speed_bytes > 1024.0 {
-                                                                format!("{:.1} KB/s", speed_bytes / 1024.0)
-                                                            } else {
-                                                                format!("{:.0} B/s", speed_bytes)
-                                                            };
-                    
-                                                            let eta = if speed_bytes > 0.0 && total > completed {
-                                                                let seconds = (total - completed) / speed_bytes;
-                                                                if seconds > 3600.0 {
-                                                                    format!("{:.0}h {:.0}m", seconds / 3600.0, (seconds % 3600.0) / 60.0)
-                                                                } else if seconds > 60.0 {
-                                                                    format!("{:.0}m {:.0}s", seconds / 60.0, seconds % 60.0)
-                                                                } else {
-                                                                    format!("{:.0}s", seconds)
-                                                                }
-                                                            } else {
-                                                                "-".to_string()
-                                                            };
-                    
-                                                            let _ = app_handle_clone.emit("download-progress", DownloadProgressEvent {
-                                                                id: id.clone(),
-                                                                fraction,
-                                                                speed,
-                                                                eta,
-                                                            });
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        
-                                        // Process Events
-                                        if let Some(method) = json.get("method").and_then(|m| m.as_str()) {
-                                            if method == "aria2.onDownloadComplete" || method == "aria2.onDownloadError" {
-                                                if let Some(params) = json.get("params").and_then(|p| p.as_array()) {
-                                                    if let Some(event_info) = params.get(0) {
-                                                        if let Some(gid) = event_info.get("gid").and_then(|g| g.as_str()) {
-                                                            let mut target_id = None;
-                                                            {
-                                                                for (id, handle) in tasks.iter() {
-                                                                    if let TaskHandle::Aria2(task_gid) = handle {
-                                                                        if task_gid == gid {
-                                                                            target_id = Some(id.clone());
-                                                                            break;
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            
-                                                            if let Some(id) = target_id {
-                                                                if method == "aria2.onDownloadComplete" {
-                                                                    let _ = app_handle_clone.emit("download-complete", id.clone());
-                                                                } else {
-                                                                    let _ = app_handle_clone.emit("download-failed", id.clone());
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Some(Err(e)) => {
-                                    eprintln!("WebSocket error: {}", e);
-                                    break;
-                                }
-                                None => break, // Stream closed
-                                _ => {} // Ignore binary/ping/pong for now
-                            }
-                        }
-                    }
-                }
-            });
             let ext_app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match extension_server::start_server(
+                if let Err(error) = extension_server::start_server(
                     ext_app_handle,
                     server_pairing_token.clone(),
                     server_frontend_ready.clone(),
                 ).await {
-                    Ok(()) => println!(
-                        "Browser extension server listening on 127.0.0.1:{}",
-                        extension_server::EXTENSION_SERVER_PORT
-                    ),
-                    Err(error) => eprintln!("Browser extension server unavailable: {error}"),
+                    eprintln!("Browser extension server unavailable: {error}");
                 }
             });
             Ok(())
@@ -1500,50 +1334,50 @@ mod db;
 mod scheduler;
 
 #[tauri::command]
-fn db_save_settings(state: tauri::State<crate::db::DbState>, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_save_settings(state: tauri::State<'_, crate::db::DbState>, data: String) -> Result<(), String> {
+    let conn = state.conn.lock().await;
     crate::db::save_settings(&conn, &data).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_load_settings(state: tauri::State<crate::db::DbState>) -> Result<Option<String>, String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_load_settings(state: tauri::State<'_, crate::db::DbState>) -> Result<Option<String>, String> {
+    let conn = state.conn.lock().await;
     crate::db::get_settings(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_get_all_downloads(state: tauri::State<crate::db::DbState>) -> Result<Vec<String>, String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_get_all_downloads(state: tauri::State<'_, crate::db::DbState>) -> Result<Vec<String>, String> {
+    let conn = state.conn.lock().await;
     crate::db::get_all_downloads(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_save_download(state: tauri::State<crate::db::DbState>, id: String, status: crate::ipc::DownloadStatus, queue_id: String, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_save_download(state: tauri::State<'_, crate::db::DbState>, id: String, status: crate::ipc::DownloadStatus, queue_id: String, data: String) -> Result<(), String> {
+    let conn = state.conn.lock().await;
     crate::db::insert_download(&conn, &id, status.as_str(), &queue_id, &data)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_delete_download(state: tauri::State<crate::db::DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_delete_download(state: tauri::State<'_, crate::db::DbState>, id: String) -> Result<(), String> {
+    let conn = state.conn.lock().await;
     crate::db::delete_download(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_get_all_queues(state: tauri::State<crate::db::DbState>) -> Result<Vec<String>, String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_get_all_queues(state: tauri::State<'_, crate::db::DbState>) -> Result<Vec<String>, String> {
+    let conn = state.conn.lock().await;
     crate::db::get_all_queues(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_save_queue(state: tauri::State<crate::db::DbState>, id: String, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_save_queue(state: tauri::State<'_, crate::db::DbState>, id: String, data: String) -> Result<(), String> {
+    let conn = state.conn.lock().await;
     crate::db::insert_queue(&conn, &id, &data).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn db_delete_queue(state: tauri::State<crate::db::DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().unwrap();
+async fn db_delete_queue(state: tauri::State<'_, crate::db::DbState>, id: String) -> Result<(), String> {
+    let conn = state.conn.lock().await;
     crate::db::delete_queue(&conn, &id).map_err(|e| e.to_string())
 }

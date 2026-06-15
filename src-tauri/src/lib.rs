@@ -190,7 +190,7 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("--js-runtimes").arg(format!("deno:{},node", deno_path.display()));
+       .arg("--js-runtimes").arg(format!("deno:{}", deno_path.display()));
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {

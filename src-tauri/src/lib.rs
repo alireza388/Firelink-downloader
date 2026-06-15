@@ -190,8 +190,7 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("--js-runtimes").arg(format!("deno:{},node", deno_path.display()))
-       .arg("--extractor-args").arg("youtube:player_client=ios,tv");
+       .arg("--js-runtimes").arg(format!("deno:{},node", deno_path.display()));
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
@@ -838,7 +837,6 @@ pub(crate) async fn start_media_download_internal(
        .arg("--no-warnings")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
        .arg("--js-runtimes").arg(format!("deno:{},node", deno_path.display()))
-       .arg("--extractor-args").arg("youtube:player_client=ios,tv")
        .arg("--progress-template").arg("download:[%(progress.downloaded_bytes)s/%(progress.total_bytes)s]")
        .arg("-o").arg(out_path.to_string_lossy().to_string());
 

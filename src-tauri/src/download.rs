@@ -577,7 +577,7 @@ fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
     builder.build().map_err(|error| error.to_string())
 }
 
-fn format_speed(bytes_per_second: f64) -> String {
+pub(crate) fn format_speed(bytes_per_second: f64) -> String {
     if bytes_per_second >= 1024.0 * 1024.0 {
         format!("{:.1} MB/s", bytes_per_second / (1024.0 * 1024.0))
     } else if bytes_per_second >= 1024.0 {
@@ -587,7 +587,7 @@ fn format_speed(bytes_per_second: f64) -> String {
     }
 }
 
-fn format_size(bytes: f64) -> String {
+pub(crate) fn format_size(bytes: f64) -> String {
     if bytes >= 1024.0 * 1024.0 * 1024.0 {
         format!("{:.2} GB", bytes / (1024.0 * 1024.0 * 1024.0))
     } else if bytes >= 1024.0 * 1024.0 {
@@ -599,7 +599,7 @@ fn format_size(bytes: f64) -> String {
     }
 }
 
-fn format_duration(seconds: f64) -> String {
+pub(crate) fn format_duration(seconds: f64) -> String {
     if seconds >= 3600.0 {
         format!("{:.0}h {:.0}m", seconds / 3600.0, (seconds % 3600.0) / 60.0)
     } else if seconds >= 60.0 {

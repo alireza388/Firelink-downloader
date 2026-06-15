@@ -686,10 +686,19 @@ async fn start_download(
             options
         ]);
         
-        rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params)
+        let result = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params)
             .await
-            .map(|_| ())
             .map_err(|e| AppError::Internal(e))?;
+            
+        let gid = result.as_str().unwrap_or("").to_string();
+        
+        let port = state.aria2_port;
+        let secret = state.aria2_secret.clone();
+        let app_handle_clone = app_handle.clone();
+        let id_clone = id.clone();
+        tauri::async_runtime::spawn(async move {
+            poll_aria2(app_handle_clone, port, secret, id_clone, gid).await;
+        });
             
         return Ok(());
     }
@@ -1572,4 +1581,73 @@ async fn db_save_queue(state: tauri::State<'_, crate::db::DbState>, id: String, 
 async fn db_delete_queue(state: tauri::State<'_, crate::db::DbState>, id: String) -> Result<(), String> {
     let conn = state.conn.lock().await;
     crate::db::delete_queue(&conn, &id).map_err(|e| e.to_string())
+}
+
+async fn poll_aria2(app_handle: tauri::AppHandle, port: u16, secret: String, id: String, gid: String) {
+    use tauri::Emitter;
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
+    loop {
+        interval.tick().await;
+        let params = serde_json::json!([gid, ["status", "totalLength", "completedLength", "downloadSpeed", "errorMessage"]]);
+        match rpc_call(port, &secret, "aria2.tellStatus", params).await {
+            Ok(status_info) => {
+                let status = status_info.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                if status == "active" || status == "waiting" || status == "paused" {
+                    let total_str = status_info.get("totalLength").and_then(|s| s.as_str()).unwrap_or("0");
+                    let completed_str = status_info.get("completedLength").and_then(|s| s.as_str()).unwrap_or("0");
+                    let speed_str = status_info.get("downloadSpeed").and_then(|s| s.as_str()).unwrap_or("0");
+                    
+                    let total = total_str.parse::<u64>().unwrap_or(0);
+                    let completed = completed_str.parse::<u64>().unwrap_or(0);
+                    let speed_bytes = speed_str.parse::<f64>().unwrap_or(0.0);
+                    
+                    let fraction = if total > 0 { completed as f64 / total as f64 } else { 0.0 };
+                    
+                    let speed = crate::download::format_speed(speed_bytes);
+                    let eta = if speed_bytes > 0.0 && total > completed {
+                        crate::download::format_duration((total - completed) as f64 / speed_bytes)
+                    } else {
+                        "-".to_string()
+                    };
+                    
+                    let size = if total > 0 {
+                        Some(crate::download::format_size(total as f64))
+                    } else {
+                        None
+                    };
+                    
+                    let _ = app_handle.emit("download-progress", serde_json::json!({
+                        "id": id,
+                        "fraction": fraction,
+                        "speed": speed,
+                        "eta": eta,
+                        "size": size
+                    }));
+                } else if status == "complete" {
+                    let _ = app_handle.emit("download-complete", id);
+                    break;
+                } else if status == "error" {
+                    let err = status_info.get("errorMessage").and_then(|s| s.as_str()).unwrap_or("aria2 error").to_string();
+                    let _ = app_handle.emit("download-failed", serde_json::json!({
+                        "id": id,
+                        "error": err
+                    }));
+                    break;
+                } else if status == "removed" {
+                    let _ = app_handle.emit("download-failed", serde_json::json!({
+                        "id": id,
+                        "error": "Removed from aria2"
+                    }));
+                    break;
+                }
+            }
+            Err(e) => {
+                let _ = app_handle.emit("download-failed", serde_json::json!({
+                    "id": id,
+                    "error": format!("RPC error: {}", e)
+                }));
+                break;
+            }
+        }
+    }
 }

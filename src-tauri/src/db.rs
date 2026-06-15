@@ -53,22 +53,6 @@ pub fn insert_download(conn: &Connection, id: &str, status: &str, queue_id: &str
     Ok(())
 }
 
-pub fn update_download_status(conn: &Connection, id: &str, status: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE downloads SET status = ?1 WHERE id = ?2",
-        params![status, id],
-    )?;
-    Ok(())
-}
-
-pub fn update_download_data(conn: &Connection, id: &str, data: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE downloads SET data = ?1 WHERE id = ?2",
-        params![data, id],
-    )?;
-    Ok(())
-}
-
 pub fn delete_download(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM downloads WHERE id = ?1", params![id])?;
     Ok(())
@@ -77,16 +61,6 @@ pub fn delete_download(conn: &Connection, id: &str) -> Result<()> {
 pub fn get_all_downloads(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT data FROM downloads")?;
     let iter = stmt.query_map([], |row| row.get(0))?;
-    let mut res = Vec::new();
-    for data in iter {
-        res.push(data?);
-    }
-    Ok(res)
-}
-
-pub fn get_downloads_by_status(conn: &Connection, status: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT data FROM downloads WHERE status = ?1")?;
-    let iter = stmt.query_map(params![status], |row| row.get(0))?;
     let mut res = Vec::new();
     for data in iter {
         res.push(data?);

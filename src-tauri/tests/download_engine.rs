@@ -19,7 +19,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tauri_app_lib::download::{DownloadCmd, DownloadCoordinator, DownloadEvent, DownloadPayload};
+use firelink_lib::download::{DownloadCmd, DownloadCoordinator, DownloadEvent, DownloadPayload};
 use tempfile::TempDir;
 use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
 use uuid::Uuid;

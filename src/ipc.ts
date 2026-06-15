@@ -52,7 +52,6 @@ type CommandMap = {
     args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null };
     result: string;
   };
-  greet: { args: { name: string }; result: string };
   test_ytdlp: { args: undefined; result: string };
   test_aria2c: { args: undefined; result: string };
   test_ffmpeg: { args: undefined; result: string };

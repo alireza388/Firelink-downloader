@@ -184,12 +184,6 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
 }
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    println!("greet called with name: {}", name);
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
 async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ytdlp called!");
     let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
@@ -1484,7 +1478,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            greet, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
+            test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
             start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,

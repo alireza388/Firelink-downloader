@@ -1,7 +1,30 @@
 {
-  "name": "tauri-app",
+  "name": "firelink",
   "private": true,
   "version": "0.7.3",
+  "description": "A fast desktop download manager powered by Rust, Tauri, React, and TypeScript.",
+  "license": "MIT",
+  "homepage": "https://github.com/nimbold/Firelink",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nimbold/Firelink.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nimbold/Firelink/issues"
+  },
+  "keywords": [
+    "download-manager",
+    "tauri",
+    "rust",
+    "react",
+    "typescript",
+    "aria2",
+    "yt-dlp",
+    "desktop"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,11 +48,11 @@
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^8.0.16"
   }
 }

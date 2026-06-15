@@ -1,110 +1,135 @@
 <div align="center">
-  <img src="Resources/AppIcon.png" alt="Firelink Icon" width="128" height="128" />
-  <h1>Firelink</h1>
-  <p><strong>The modern, blazing-fast download manager built natively for Apple Silicon macOS.</strong></p>
+  <img src="src/assets/app-icon.png" alt="Firelink" width="112" height="112" />
 
-  <a href="https://swift.org"><img src="https://img.shields.io/badge/Swift-6.0-orange?logo=swift&logoColor=white" alt="Swift Version" /></a>
-  <a href="https://apple.com"><img src="https://img.shields.io/badge/macOS-14.0%2B-blue?logo=apple&logoColor=white" alt="Platform Support" /></a>
-  <a href="https://aria2.github.io/"><img src="https://img.shields.io/badge/Engine-aria2c-red?logo=terminal&logoColor=white" alt="Engine" /></a>
-  <a href="https://github.com/yt-dlp/yt-dlp"><img src="https://img.shields.io/badge/Engine-yt--dlp-red?logo=youtube&logoColor=white" alt="yt-dlp Engine" /></a>
-  <a href="https://ffmpeg.org/"><img src="https://img.shields.io/badge/Engine-ffmpeg-red?logo=ffmpeg&logoColor=white" alt="ffmpeg Engine" /></a>
-  <a href="https://deno.com/"><img src="https://img.shields.io/badge/Engine-deno-blue?logo=deno&logoColor=white" alt="Deno Engine" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License" /></a>
+  # Firelink
+
+  **A fast, focused desktop download manager powered by Rust and Tauri.**
+
+  [![Version](https://img.shields.io/badge/version-0.7.3-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
+  [![Platform](https://img.shields.io/badge/platform-macOS-111111?style=flat-square&logo=apple)](#project-status)
+  [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app/)
+  [![Rust](https://img.shields.io/badge/Rust-backend-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+  [![License](https://img.shields.io/github/license/nimbold/Firelink?style=flat-square)](LICENSE)
+  [![CI](https://img.shields.io/github/actions/workflow/status/nimbold/Firelink/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/nimbold/Firelink/actions/workflows/ci.yml)
+
+  [Features](#features) · [Install](#installation) · [Development](#development) · [Project status](#project-status)
 </div>
 
----
+Firelink brings segmented downloads, media extraction, scheduling, and browser
+integration into one native-feeling desktop application. The current app uses a
+Rust backend with a React and TypeScript interface, replacing the original
+SwiftUI implementation.
 
-**Firelink** reimagines macOS file downloading by wrapping legendary open-source engines (`aria2c`, `yt-dlp`, and `ffmpeg`) in a beautifully crafted, highly polished SwiftUI interface. Enjoy high-speed segmented downloads, native media extraction, seamless browser integration, and intelligent file organization without compromising on the aesthetics of your Mac.
+## Features
 
----
+- **Fast transfers** with segmented downloading powered by aria2
+- **Media downloads** through yt-dlp, FFmpeg, and Deno
+- **Persistent queues** with configurable concurrency and speed limits
+- **Download scheduling** with optional post-queue system actions
+- **Pause, resume, retry, and duplicate-file handling**
+- **Smart organization** with categories and configurable destinations
+- **Browser integration** through the Firelink Companion extension
+- **Secure local handoff** using authenticated extension pairing
+- **System integration** including tray controls, notifications, and sleep prevention
+- **Built-in update checks** backed by GitHub Releases
 
-## 📸 Screenshots
+## Installation
 
-<div align="center">
-  <img src="Resources/Screenshots/Dark/MainPage.png" alt="Firelink main window" width="32%" />
-  <img src="Resources/Screenshots/Dark/AddWindow.png" alt="Add downloads window" width="32%" />
-  <img src="Resources/Screenshots/Dark/Settings.png" alt="Settings" width="32%" />
-  <br/>
-  <sub>A premium native experience, from batch linking to advanced settings.</sub>
-</div>
+> [!IMPORTANT]
+> The Rust and Tauri application is still completing release packaging. The
+> current `v0.7.3` macOS asset on GitHub Releases belongs to the archived SwiftUI
+> implementation.
 
-<details>
-<summary><b>Light Theme Screenshots</b></summary>
-<br/>
+For now, run the maintained application from source using the development
+instructions below. New packaged builds will be published through
+[GitHub Releases](https://github.com/nimbold/Firelink/releases) once the
+migration is complete.
 
-<div align="center">
-  <img src="Resources/Screenshots/Light/MainPage.png" alt="Firelink main window light theme" width="32%" />
-  <img src="Resources/Screenshots/Light/AddWindow.png" alt="Add downloads window light theme" width="32%" />
-  <img src="Resources/Screenshots/Light/Settings.png" alt="Settings light theme" width="32%" />
-</div>
+Firelink is currently developed and tested on macOS. Production bundles include
+the media engines, so packaged releases will not require separate aria2, yt-dlp,
+FFmpeg, or Deno installations.
 
-</details>
+### Browser Extension
 
----
+Install [Firelink Companion for Firefox](https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/)
+to send browser downloads directly to Firelink. Pair the extension from
+**Settings → Integrations** using the generated local token.
 
-## ✨ Features
+## Project Status
 
-- ⚡ **Multi-Segmented Engine:** Ultra-fast parallel downloading powered by `aria2c` with configurable speed limits and a built-in download scheduler.
-- 🪄 **Media Downloader:** Instantly extract high-quality media (4K, 1080p, MP3) with smart cascading format pickers, powered by bundled `yt-dlp` and `ffmpeg`.
-- 🎨 **Premium Native UI:** A responsive, frosted-glass SwiftUI interface strictly adhering to Apple Human Interface Guidelines, featuring a visual chunk map and dynamic progress tracking.
-- 🌐 **Seamless Browser Integration:** Send downloads directly from your browser via the secure Firelink Companion extension.
-- 🛡️ **Privacy & Security:** Zero-configuration setup with deferred Keychain integration and secure HMAC-SHA256 authenticated local API endpoints ensure your system remains strictly isolated and protected from malicious scripts.
-- 🗂️ **Smart Organization:** Auto-categorizes incoming files and remembers your preferred download locations.
-- 🔄 **Native Updater:** Built-in seamless GitHub release checking for lightweight and transparent app updates.
+The migration from SwiftUI to Rust, Tauri, React, and TypeScript is in its final
+stage. The new application is the maintained implementation at the repository
+root.
 
----
+| Target | Status |
+| --- | --- |
+| macOS | Active development and automated testing |
+| Windows | Core architecture prepared; packaging and validation pending |
+| Linux | Core architecture prepared; packaging and validation pending |
+| Legacy SwiftUI app | Archived in [`legacy/swift`](legacy/swift) |
 
-## 🧩 Browser Integration
+See the [changelog](CHANGELOG.md) for release history and recent work.
 
-We are live! Send downloads directly from your browser to the Firelink app with zero friction.
+## Development
 
-<a href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"><img src="https://img.shields.io/badge/Install%20on%20Firefox-FF7139?logo=firefox-browser&logoColor=white&style=for-the-badge" alt="Install on Firefox" /></a>
+### Requirements
 
-*(Check out the [Firelink-Extension source code](https://github.com/nimbold/Firelink-Extension) to contribute or learn more.)*
+- Node.js 22 or newer
+- npm
+- Rust and Cargo
+- [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/)
 
----
+Clone the repository with its browser-extension submodule:
 
-## 🌍 Cross-Platform Evolution (Firelink Reborn)
-
-I'm currently rewriting Firelink from the ground up using **Tauri, React, and Rust** to bring our blazing-fast native experience to Windows and Linux, while maintaining our standard of excellence on macOS.
-
-### 🚀 Development Progress
-- [x] **Core Engine Port:** `aria2c` and `yt-dlp` integration in Rust
-- [x] **UI Foundation:** Pixel-perfect React + Tailwind interface
-- [x] **Settings & State:** Fully wired frontend-to-backend communication
-- [ ] **Cross-Platform Binaries:** Automated builds for Windows (`.exe`) and Linux (`.AppImage`)
-- [ ] **Feature Parity:** Porting remaining media extraction and scheduler features
-
-*Stay tuned as we prepare our first true cross-platform beta release!*
-
----
-
-## 🛠️ Quick Start
-
-**OS Support:** macOS 14.0 or newer (Apple Silicon natively).
-
-Run the application directly:
-```bash
-swift run Firelink
+```sh
+git clone --recurse-submodules https://github.com/nimbold/Firelink.git
+cd Firelink
 ```
 
-Or build a production `.app` bundle:
-```bash
-make app && open build/Firelink.app
+Install dependencies and launch the desktop app:
+
+```sh
+npm install
+npm run tauri dev
 ```
 
----
+Run the frontend build and backend tests:
 
-## 🏆 Credits
+```sh
+npm run build
+cd src-tauri
+cargo test --all-targets
+```
 
-Firelink stands on the shoulders of giants. A massive thank you to the contributors of these phenomenal open-source projects:
-- **[aria2](https://aria2.github.io/)** - The legendary multi-protocol download utility driving our core engine.
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** - The definitive command-line audio/video downloader.
-- **[FFmpeg](https://ffmpeg.org/)** - The industry standard for media stream manipulation and merging.
-- **[Deno](https://deno.com/)** - The secure runtime for JavaScript and TypeScript solving complex media extraction challenges.
+Create a production bundle:
 
----
+```sh
+npm run tauri build
+```
 
-## 📄 License
+Native media executables and runtime files are expected in
+`src-tauri/binaries` when running or packaging the application locally.
 
-Firelink is released under the MIT License. See [LICENSE](LICENSE) for details.
+## Repository Structure
+
+```text
+.
+├── src/                  React and TypeScript interface
+├── src-tauri/            Rust backend and Tauri configuration
+├── Extensions/Firefox/   Firelink Companion submodule
+└── legacy/swift/         Archived SwiftUI application
+```
+
+## Technology
+
+- [Tauri 2](https://tauri.app/) for the desktop runtime
+- [Rust](https://www.rust-lang.org/) and [Tokio](https://tokio.rs/) for native application logic
+- [React](https://react.dev/) and [TypeScript](https://www.typescriptlang.org/) for the interface
+- [Zustand](https://zustand-demo.pmnd.rs/) for frontend state
+- [SQLite](https://www.sqlite.org/) for persistent application data
+- [aria2](https://aria2.github.io/), [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+  [FFmpeg](https://ffmpeg.org/), and [Deno](https://deno.com/) for download and media processing
+
+## License
+
+Firelink is available under the [MIT License](LICENSE).

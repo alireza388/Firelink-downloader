@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Promote the Rust, Tauri, React, and TypeScript application to the repository root.
-- Archive the original SwiftUI implementation under `legacy/swift`.
-- Refresh project documentation, package metadata, CI, and the in-app About section for the current architecture and migration status.
-
-### Removed
-- Delete obsolete template assets, scratch files, duplicate icon exports, and unused backend helpers.
-
 ## [0.7.3] - 2026-06-11
 
 ### New Features & Improvements
@@ -351,7 +343,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-06-02
 
 ### Added
-- **Zero-Config Setup:** Firelink now automatically bundles the `aria2c` engine and all of its dynamic library dependencies internally via `dylibbundler`. End-users no longer need to install Homebrew or `aria2c` manually! 
+- **Zero-Config Setup:** Firelink now automatically bundles the `aria2c` engine and all of its dynamic library dependencies internally via `dylibbundler`. End-users no longer need to install Homebrew or `aria2c` manually!
 
 ### Changed
 - **README Redesign:** Modernized the README with a clean layout, centered App Icon header, and updated roadmap.

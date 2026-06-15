@@ -10,6 +10,7 @@ import {
   Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { getVersion } from '@tauri-apps/api/app';
 import { invokeCommand as invoke } from '../ipc';
 import { WindowDragRegion } from './WindowDragRegion';
 import appIcon from '../assets/app-icon.png';
@@ -35,6 +36,7 @@ export default function SettingsView() {
   const [ytdlpVersion, setYtdlpVersion] = useState<string>('Checking...');
   const [ffmpegVersion, setFfmpegVersion] = useState<string>('Checking...');
   const [denoVersion, setDenoVersion] = useState<string>('Checking...');
+  const [appVersion, setAppVersion] = useState('0.7.3');
 
   const getEngineStatus = (v: string) => {
     if (v === 'Checking...') return <span className="text-text-muted font-medium">Checking...</span>;
@@ -58,6 +60,10 @@ export default function SettingsView() {
       return () => clearTimeout(t);
     }
   }, [toastMessage]);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
 
   // Fetch engine versions when Engine tab is opened
   useEffect(() => {
@@ -833,9 +839,9 @@ export default function SettingsView() {
                 <img src={appIcon} alt="Firelink Icon" className="w-[72px] h-[72px] drop-shadow-md rounded-xl" />
                 <div className="space-y-1">
                   <h3 className="text-[17px] font-bold text-text-primary">Firelink</h3>
-                  <p className="text-text-secondary text-[12px] font-medium">Version 0.7.3</p>
+                  <p className="text-text-secondary text-[12px] font-medium">Version {appVersion}</p>
                   <p className="text-text-muted text-[11px]">
-                    A native macOS download manager for fast, organized, segmented transfers.
+                    A fast desktop download manager powered by Rust and Tauri.
                   </p>
                 </div>
               </div>
@@ -886,8 +892,11 @@ export default function SettingsView() {
                   </a>
                 </div>
                 <div className="flex justify-between items-center text-text-muted">
-                  <span>Powered by <span className="text-accent">aria2</span> • <span className="text-accent">yt-dlp</span> • <span className="text-accent">ffmpeg</span> • <span className="text-accent">Deno</span></span>
+                  <span>Built with <span className="text-accent">Rust</span> • <span className="text-accent">Tauri</span> • <span className="text-accent">React</span> • <span className="text-accent">TypeScript</span></span>
                   <a href="https://github.com/nimbold/Firelink/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-accent hover:underline">MIT License</a>
+                </div>
+                <div className="text-text-muted">
+                  Download engines: <span className="text-accent">aria2</span> • <span className="text-accent">yt-dlp</span> • <span className="text-accent">FFmpeg</span> • <span className="text-accent">Deno</span>
                 </div>
                 <div className="text-text-muted pt-1 border-t border-border-modal/40">
                   Copyright © 2026 NimBold. All rights reserved.

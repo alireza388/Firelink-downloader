@@ -1,14 +1,46 @@
+# OS and editor files
 .DS_Store
-.build/
-build/
-dist/
-*.dmg
-DerivedData/
+.idea/
 .vscode/
+*.suo
+*.sw?
 *.xcuserdata/
 *.xcuserstate
 
-# Local secrets and exported signing keys
+# Frontend output and logs
+node_modules/
+dist/
+dist-ssr/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.local
+
+# Rust and Tauri output
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# Locally provisioned native engines
+src-tauri/binaries/aria2c
+src-tauri/binaries/deno
+src-tauri/binaries/ffmpeg
+src-tauri/binaries/yt-dlp
+src-tauri/binaries/_internal/certifi/cacert.pem
+
+# Packaged artifacts
+build/
+*.dmg
+*.AppImage
+*.deb
+*.msi
+*.exe
+
+# Local secrets and signing material
 .env
 .env.*
 *.key
@@ -22,15 +54,17 @@ sparkle_private_key*
 SparklePrivateKey*
 private-key*
 private_key*
-yt-dlp
-deno
-ffmpeg
-aria2c
-Sources/Firelink/*-version.txt
-Sources/Firelink/_internal/
-Sources/Firelink/aria2-libs/
-Sources/Firelink/aria2-licenses/
-Sources/Firelink/aria2-cacert.pem
-!Sources/Firelink/_internal/
-Sources/Firelink/_internal/*
-!Sources/Firelink/_internal/.gitkeep
+
+# Legacy Swift build output and downloaded engines
+legacy/swift/.build/
+legacy/swift/DerivedData/
+legacy/swift/Sources/Firelink/*-version.txt
+legacy/swift/Sources/Firelink/yt-dlp
+legacy/swift/Sources/Firelink/deno
+legacy/swift/Sources/Firelink/ffmpeg
+legacy/swift/Sources/Firelink/aria2c
+legacy/swift/Sources/Firelink/_internal/*
+legacy/swift/Sources/Firelink/aria2-libs/
+legacy/swift/Sources/Firelink/aria2-licenses/
+legacy/swift/Sources/Firelink/aria2-cacert.pem
+!legacy/swift/Sources/Firelink/_internal/.gitkeep

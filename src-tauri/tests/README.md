@@ -3,7 +3,7 @@
 Run the full Rust suite:
 
 ```sh
-cd apps/desktop/src-tauri
+cd src-tauri
 cargo test --all-targets
 ```
 
@@ -11,7 +11,7 @@ Run only the async download integration harness with deterministic serial
 performance measurements and visible test output:
 
 ```sh
-cd apps/desktop/src-tauri
+cd src-tauri
 RUST_BACKTRACE=1 cargo test --test download_engine -- --test-threads=1 --nocapture
 ```
 

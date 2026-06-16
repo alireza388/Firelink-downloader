@@ -1,4 +1,4 @@
-use tauri::{Manager, Emitter};
+use tauri::Emitter;
 use chrono::{Local, Datelike};
 use std::time::Duration;
 

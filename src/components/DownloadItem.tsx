@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadStore';
-import { Play, Pause, MoreVertical } from 'lucide-react';
+import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
 
 interface DownloadItemProps {
@@ -24,6 +24,9 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   getCategoryIcon,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
+  const pendingOrder = useDownloadStore(state => state.pendingOrder);
+  const moveInQueue = useDownloadStore(state => state.moveInQueue);
+  const queueIndex = pendingOrder.indexOf(downloadId);
 
   const progressBarRef = useRef<HTMLDivElement>(null);
   const statusTextRef = useRef<HTMLSpanElement>(null);
@@ -31,7 +34,6 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   const etaTextRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    // We only need transient updates while it's actively downloading
     if (!download || download.status !== 'downloading') return;
 
     const unsubscribe = useDownloadProgressStore.subscribe((state) => {
@@ -89,17 +91,32 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
             <div className="download-progress-track">
               <div
                 ref={progressBarRef}
-                className={`download-progress-fill ${download.status === 'paused' ? 'paused' : ''}`}
+                className={`download-progress-fill ${
+                  download.status === 'paused' ? 'paused' : 
+                  download.status === 'queued' ? 'queued' : ''
+                }`}
                 style={{ width: `${(download.fraction || 0) * 100}%` }}
               />
             </div>
             <span 
               ref={statusTextRef}
-              className={`download-status ${download.status === 'paused' ? 'download-status-paused' : download.status === 'failed' ? 'download-status-failed' : download.status === 'downloading' ? 'download-status-downloading' : ''}`}
+              className={`download-status flex items-center gap-1.5 ${
+                download.status === 'paused' ? 'download-status-paused' : 
+                download.status === 'failed' ? 'download-status-failed' : 
+                download.status === 'downloading' ? 'download-status-downloading' : 
+                download.status === 'queued' ? 'download-status-queued' : ''
+              }`}
             >
-              {download.status === 'downloading'
-                ? `${((download.fraction || 0) * 100).toFixed(0)}%`
-                : download.status.charAt(0).toUpperCase() + download.status.slice(1)}
+              {download.status === 'queued' && queueIndex !== -1 ? (
+                <>
+                  <Clock size={12} className="animate-pulse shrink-0" />
+                  <span className="truncate">Queued #{queueIndex + 1}</span>
+                </>
+              ) : download.status === 'downloading' ? (
+                `${((download.fraction || 0) * 100).toFixed(0)}%`
+              ) : (
+                download.status.charAt(0).toUpperCase() + download.status.slice(1)
+              )}
             </span>
           </>
         )}
@@ -119,6 +136,26 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         </span>
         
         <div className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto">
+          {download.status === 'queued' && queueIndex !== -1 && (
+            <>
+              <button 
+                onClick={() => moveInQueue(download.id, 'Up')} 
+                disabled={queueIndex === 0}
+                className="app-icon-button h-7 w-7 disabled:opacity-40" 
+                title="Move Up"
+              >
+                <ArrowUp size={14} />
+              </button>
+              <button 
+                onClick={() => moveInQueue(download.id, 'Down')} 
+                disabled={queueIndex === pendingOrder.length - 1}
+                className="app-icon-button h-7 w-7 disabled:opacity-40" 
+                title="Move Down"
+              >
+                <ArrowDown size={14} />
+              </button>
+            </>
+          )}
           {download.status === 'downloading' && (
             <button onClick={() => handlePause(download.id)} className="app-icon-button h-7 w-7" title="Pause">
               <Pause size={14} fill="currentColor" />

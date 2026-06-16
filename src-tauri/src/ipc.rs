@@ -87,9 +87,6 @@ pub struct DownloadItem {
     #[ts(optional)]
     pub media_format_selector: Option<String>,
     pub queue_id: String,
-    #[serde(rename = "_dispatched")]
-    #[ts(optional)]
-    pub dispatched: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -233,4 +230,38 @@ pub struct PersistedSettings {
     pub site_logins: Vec<SiteLogin>,
     pub extension_pairing_token: String,
     pub auto_check_updates: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub enum QueueDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct DownloadStateEvent {
+    pub id: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+impl DownloadStateEvent {
+    pub fn new(id: impl Into<String>, status: DownloadStatus) -> Self {
+        Self {
+            id: id.into(),
+            status: status.as_str().to_string(),
+            error: None,
+        }
+    }
+
+    pub fn failed(id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            status: DownloadStatus::Failed.as_str().to_string(),
+            error: Some(error.into()),
+        }
+    }
 }

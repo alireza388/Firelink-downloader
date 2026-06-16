@@ -343,7 +343,7 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle) -> bool {
+pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle) -> bool {
     if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return false;
     }
@@ -419,8 +419,9 @@ impl Drop for Aria2DaemonGuard {
 
 
 pub mod download;
+pub mod queue;
 #[allow(dead_code)]
-mod ipc;
+pub mod ipc;
 mod parity;
 pub mod error;
 pub mod commands;
@@ -441,7 +442,7 @@ pub struct AppState {
     pub aria2_secret: String,
     pub media_semaphore: Arc<tokio::sync::Semaphore>,
     pub sleep_preventer: Arc<Mutex<Option<keepawake::KeepAwake>>>,
-    pub aria2_gids: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    pub queue_manager: Arc<queue::QueueManager>,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -455,7 +456,7 @@ pub struct DownloadProgressEvent {
 }
 
 
-fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+pub(crate) fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     let mut resolved = std::path::PathBuf::from(path);
     if let Some(stripped) = path.strip_prefix("~/") {
@@ -470,7 +471,7 @@ fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf
     resolved
 }
 
-fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<String> {
+pub(crate) fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<String> {
     let mut uris = Vec::new();
     for uri in std::iter::once(url).chain(mirrors.into_iter().flat_map(str::lines)) {
         let uri = uri.trim();
@@ -549,7 +550,7 @@ fn dispatch_deep_links(app_handle: tauri::AppHandle, deep_links: Vec<url::Url>) 
     });
 }
 
-async fn rpc_call(port: u16, secret: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
     let url = format!("http://127.0.0.1:{}/jsonrpc", port);
     let mut payload = serde_json::Map::new();
     payload.insert("jsonrpc".to_string(), serde_json::json!("2.0"));
@@ -596,180 +597,6 @@ async fn test_aria2c(state: tauri::State<'_, AppState>) -> Result<String, String
         .ok_or_else(|| "aria2 returned an invalid version response".to_string())
 }
 
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-async fn start_download(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    id: String,
-    url: String,
-    destination: String,
-    filename: String,
-    connections: Option<i32>,
-    speed_limit: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
-    headers: Option<String>,
-    checksum: Option<String>,
-    cookies: Option<String>,
-    mirrors: Option<String>,
-    user_agent: Option<String>,
-    max_tries: Option<i32>,
-    proxy: Option<String>,
-) -> Result<(), AppError> {
-    println!("start_download called for id: {}", id);
-    let download_id = Uuid::parse_str(&id).map_err(|error| AppError::Internal(error.to_string()))?;
-
-    let safe_filename = std::path::Path::new(&filename.replace('\\', "/"))
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download")
-        .to_string();
-
-    let resolved_dest = resolve_path(&destination, &app_handle);
-    if !is_safe_path(&resolved_dest, &app_handle) {
-        return Err(AppError::Internal("Path traversal blocked".to_string()));
-    }
-
-    let mt = max_tries.unwrap_or(1).max(1) as u32;
-
-    let mut options = serde_json::Map::new();
-    options.insert("dir".to_string(), serde_json::json!(resolved_dest.to_string_lossy().to_string()));
-    options.insert("out".to_string(), serde_json::json!(safe_filename));
-    
-    let conn = connections.unwrap_or(1);
-    options.insert("split".to_string(), serde_json::json!(conn.to_string()));
-    options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
-    options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
-
-    options.insert("continue".to_string(), serde_json::json!("true"));
-
-    if let Some(speed) = &speed_limit {
-        options.insert("max-download-limit".to_string(), serde_json::json!(speed));
-    }
-    if let Some(user) = &username {
-        options.insert("http-user".to_string(), serde_json::json!(user));
-    }
-    if let Some(pass) = &password {
-        options.insert("http-passwd".to_string(), serde_json::json!(pass));
-    }
-    if let Some(chk) = &checksum {
-        options.insert("checksum".to_string(), serde_json::json!(chk));
-    }
-    if let Some(ua) = &user_agent {
-        options.insert("user-agent".to_string(), serde_json::json!(ua));
-    }
-
-    let mut header_list = Vec::new();
-    if let Some(cook) = &cookies {
-        header_list.push(format!("Cookie: {}", cook));
-    }
-    if let Some(hdrs) = &headers {
-        for line in hdrs.lines() {
-            if !line.trim().is_empty() {
-                header_list.push(line.trim().to_string());
-            }
-        }
-    }
-    if !header_list.is_empty() {
-        options.insert("header".to_string(), serde_json::json!(header_list));
-    }
-
-    if let Some(prox) = &proxy {
-        options.insert("all-proxy".to_string(), serde_json::json!(prox));
-    }
-
-    let uris = collect_download_uris(&url, mirrors.as_deref());
-    let params = serde_json::json!([uris, options]);
-
-    match rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params).await {
-        Ok(result) => {
-            let gid = result.as_str().unwrap_or("").to_string();
-            state.aria2_gids.write().unwrap().insert(id.clone(), gid);
-            Ok(())
-        }
-        Err(e) => {
-            eprintln!("aria2 failed, falling back to native coordinator: {}", e);
-            state
-                .download_coordinator
-                .send(download::DownloadCmd::Start(Box::new(download::DownloadPayload {
-                    id: download_id,
-                    urls: collect_download_uris(&url, mirrors.as_deref()),
-                    output_path: resolved_dest.join(safe_filename),
-                    speed_limit,
-                    username,
-                    password,
-                    headers,
-                    cookies,
-                    user_agent,
-                    max_tries: mt,
-                    proxy,
-                })))
-                .await
-                .map_err(AppError::Internal)?;
-            Ok(())
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-async fn start_media_download(
-    app_handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    id: String,
-    url: String,
-    destination: String,
-    filename: String,
-    format_selector: Option<String>,
-    cookie_source: Option<String>,
-    speed_limit: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
-    headers: Option<String>,
-    proxy: Option<String>,
-    user_agent: Option<String>,
-    max_tries: Option<i32>,
-) -> Result<(), String> {
-    let media_semaphore = state.media_semaphore.clone();
-    let coordinator = state.download_coordinator.clone();
-    let mut cancel_rx = coordinator.register_media(id.clone()).await?;
-    tauri::async_runtime::spawn(async move {
-        let permit = tokio::select! {
-            permit = media_semaphore.acquire() => permit,
-            _ = cancel_rx.changed() => {
-                coordinator.finish_media(id).await;
-                return;
-            }
-        };
-
-        if let Err(e) = start_media_download_internal(
-            app_handle.clone(),
-            &id, url,
-            destination,
-            filename,
-            format_selector,
-            cookie_source,
-            speed_limit,
-            username,
-            password,
-            headers,
-            proxy,
-            user_agent,
-            max_tries,
-            &mut cancel_rx,
-        ).await {
-            eprintln!("Media download {} failed: {}", id, e);
-            use tauri::Emitter;
-            let _ = app_handle.emit("download-failed", id.clone());
-        }
-
-        drop(permit);
-        coordinator.finish_media(id).await;
-    });
-
-    Ok(())
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_media_download_internal(
@@ -1009,12 +836,32 @@ pub(crate) async fn start_media_download_internal(
 }
 
 #[tauri::command]
-async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+async fn pause_download(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
     println!("pause_download called for id: {}", id);
-    
-    let gid = state.aria2_gids.read().unwrap().get(&id).cloned();
+
+    // Release the concurrency slot FIRST, before signaling the sidecar to die.
+    state.queue_manager.release_permit(&id).await;
+    state.queue_manager.remove_from_pending(&id).await;
+
+    // Emit the paused state.
+    use tauri::Emitter;
+    let _ = app_handle.emit(
+        "download-state",
+        crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
+    );
+
+    let gid = state.queue_manager.aria2_gids.read().unwrap()
+        .iter()
+        .find(|(_, v)| **v == id)
+        .map(|(k, _)| k.clone());
     if let Some(g) = gid {
-        let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([g])).await;
+        if !g.starts_with("native:") {
+            let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([g])).await;
+        }
     }
 
     if let Ok(download_id) = Uuid::parse_str(&id) {
@@ -1027,8 +874,23 @@ async fn pause_download(state: tauri::State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-async fn remove_download(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>, id: String, filepath: Option<String>) -> Result<(), String> {
+async fn remove_download(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    filepath: Option<String>,
+) -> Result<(), String> {
     println!("remove_download called for id: {}", id);
+
+    // Remove from the queue (pending or active) and free the slot.
+    state.queue_manager.remove_from_pending(&id).await;
+    state.queue_manager.release_permit(&id).await;
+
+    use tauri::Emitter;
+    let _ = app_handle.emit(
+        "download-state",
+        crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
+    );
 
     if let Ok(download_id) = Uuid::parse_str(&id) {
         state
@@ -1036,8 +898,8 @@ async fn remove_download(app_handle: tauri::AppHandle, state: tauri::State<'_, A
             .send(download::DownloadCmd::Cancel(download_id))
             .await?;
     }
-    state.download_coordinator.pause_media(id).await?;
-    
+    state.download_coordinator.pause_media(id.clone()).await?;
+
     if let Some(path) = filepath {
         if !path.is_empty() {
             let p = std::path::Path::new(&path);
@@ -1053,7 +915,7 @@ async fn remove_download(app_handle: tauri::AppHandle, state: tauri::State<'_, A
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1111,16 +973,48 @@ fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), Stri
 }
 
 #[tauri::command]
+async fn get_pending_order(state: tauri::State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    Ok(state.queue_manager.pending_order().await)
+}
+
+#[tauri::command]
+async fn enqueue_download(
+    state: tauri::State<'_, AppState>,
+    item: queue::EnqueueItem,
+) -> Result<String, AppError> {
+    let id = item.id.clone();
+    state.queue_manager.push(item.into_task()).await;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn enqueue_many(
+    state: tauri::State<'_, AppState>,
+    items: Vec<queue::EnqueueItem>,
+) -> Result<(), AppError> {
+    let tasks = items.into_iter().map(queue::EnqueueItem::into_task).collect();
+    state.queue_manager.enqueue_many(tasks).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn move_in_queue(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    direction: crate::ipc::QueueDirection,
+) -> Result<Vec<String>, AppError> {
+    Ok(state.queue_manager.move_in_queue(&id, direction).await)
+}
+
+#[tauri::command]
+async fn remove_from_queue(state: tauri::State<'_, AppState>, id: String) -> Result<bool, AppError> {
+    Ok(state.queue_manager.remove_from_pending(&id).await)
+}
+
+#[tauri::command]
 async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -> Result<(), String> {
-    rpc_call(
-        state.aria2_port,
-        &state.aria2_secret,
-        "aria2.changeGlobalOption",
-        serde_json::json!([{"max-concurrent-downloads": limit.to_string()}])
-    ).await.map(|_| ()).map_err(|e| {
-        eprintln!("Failed to set concurrent limit: {}", e);
-        e
-    })
+    state.queue_manager.set_capacity(limit);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1457,10 +1351,33 @@ pub fn run() {
                 .build(app)
                 .unwrap();
 
-            let aria2_gids = Arc::new(RwLock::new(std::collections::HashMap::new()));
-            let aria2_gids_clone1 = aria2_gids.clone();
-            let aria2_gids_clone2 = aria2_gids.clone();
             
+            let max_concurrent = {
+                use tauri_plugin_store::StoreExt;
+                let mut capacity = crate::queue::DEFAULT_MAX_CONCURRENT;
+                if let Ok(store) = app.handle().store("store.bin") {
+                    if let Some(settings_val) = store.get("settings") {
+                        if let Some(settings_str) = settings_val.as_str() {
+                            if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(settings_str) {
+                                if let Some(n) = settings_json.get("maxConcurrentDownloads").and_then(|v| v.as_u64()) {
+                                    capacity = n as usize;
+                                }
+                            }
+                        }
+                    }
+                }
+                capacity
+            };
+
+            let queue_manager = Arc::new(queue::QueueManager::new(app.handle().clone(), max_concurrent));
+            let dispatcher_mgr = Arc::clone(&queue_manager);
+            tauri::async_runtime::spawn(async move {
+                dispatcher_mgr.run_dispatcher().await;
+            });
+
+            let queue_manager_clone = Arc::clone(&queue_manager);
+            let queue_manager_poll = Arc::clone(&queue_manager);
+
             app.manage(AppState {
                 download_coordinator: download::DownloadCoordinator::spawn(app.handle().clone()),
                 extension_pairing_token,
@@ -1469,8 +1386,42 @@ pub fn run() {
                 aria2_secret: aria2_secret.clone(),
                 media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
                 sleep_preventer: Arc::new(Mutex::new(None)),
-                aria2_gids,
+                queue_manager,
             });
+
+            // Backend listener: release permits + emit terminal state for
+            // native (and aria2-fallback) downloads. Idempotent for Media/aria2
+            // which already release via finish_runner/handle_aria2_event.
+            let completion_app = app.handle().clone();
+            let completion_mgr = Arc::clone(&queue_manager_clone);
+            tauri::async_runtime::spawn(async move {
+                use tauri::Listener;
+                let rx_complete = completion_app.listen("download-complete", move |event| {
+                    let raw_id = event.payload();
+                    let id: String = serde_json::from_str(raw_id)
+                        .unwrap_or_else(|_| raw_id.trim_matches('"').to_string());
+                    let mgr = Arc::clone(&completion_mgr);
+                    tauri::async_runtime::spawn(async move {
+                        mgr.apply_completion(&id, crate::queue::PendingOutcome::Complete).await;
+                    });
+                });
+                let completion_app2 = completion_app.clone();
+                let completion_mgr2 = Arc::clone(&queue_manager_clone);
+                let rx_failed = completion_app2.listen("download-failed", move |event| {
+                    let raw_id = event.payload();
+                    let id: String = serde_json::from_str(raw_id)
+                        .unwrap_or_else(|_| raw_id.trim_matches('"').to_string());
+                    let mgr = Arc::clone(&completion_mgr2);
+                    tauri::async_runtime::spawn(async move {
+                        mgr.apply_completion(&id, crate::queue::PendingOutcome::Error("download failed".to_string())).await;
+                    });
+                });
+                // Keep the task alive; the listeners are unregistered on drop.
+                std::future::pending::<()>().await;
+                let _ = rx_complete;
+                let _ = rx_failed;
+            });
+
             let deep_link_app = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 dispatch_deep_links(deep_link_app.clone(), event.urls());
@@ -1581,23 +1532,17 @@ pub fn run() {
                                         if let Some(params) = json.get("params").and_then(|p| p.as_array()) {
                                             if let Some(event) = params.first().and_then(|p| p.as_object()) {
                                                 if let Some(gid) = event.get("gid").and_then(|g| g.as_str()) {
-                                                    let id = {
-                                                        let map = aria2_gids_clone1.read().unwrap();
-                                                        map.iter().find(|(_, g)| *g == gid).map(|(i, _)| i.clone())
-                                                    };
-                                                    if let Some(id) = id {
-                                                        use tauri::Emitter;
-                                                        match method {
-                                                            "aria2.onDownloadComplete" => {
-                                                                let _ = app_handle_ws.emit("download-complete", id.clone());
-                                                                use tauri_plugin_notification::NotificationExt;
-                                                                let _ = app_handle_ws.notification().builder().title("Download Complete").body(&format!("File downloaded successfully")).show();
-                                                            }
-                                                            "aria2.onDownloadError" => {
-                                                                let _ = app_handle_ws.emit("download-failed", id);
-                                                            }
-                                                            _ => {}
+                                                    let state = app_handle_ws.state::<AppState>();
+                                                    let outcome = match method {
+                                                        "aria2.onDownloadComplete" => Some(crate::queue::PendingOutcome::Complete),
+                                                        "aria2.onDownloadError" => {
+                                                            let msg = event.get("error_message").and_then(|m| m.as_str()).unwrap_or("aria2 download error").to_string();
+                                                            Some(crate::queue::PendingOutcome::Error(msg))
                                                         }
+                                                        _ => None,
+                                                    };
+                                                    if let Some(outcome) = outcome {
+                                                        state.queue_manager.handle_aria2_event(gid, outcome).await;
                                                     }
                                                 }
                                             }
@@ -1615,6 +1560,7 @@ pub fn run() {
             let app_handle_poll = app.handle().clone();
             let poll_port = aria2_port;
             let poll_secret = aria2_secret.clone();
+            let poll_mgr = Arc::clone(&queue_manager_poll);
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
                 loop {
@@ -1624,10 +1570,7 @@ pub fn run() {
                         if let Some(active_arr) = active_list.as_array() {
                             for status_info in active_arr {
                                 let gid = status_info.get("gid").and_then(|s| s.as_str()).unwrap_or("");
-                                let id = {
-                                    let map = aria2_gids_clone2.read().unwrap();
-                                    map.iter().find(|(_, g)| *g == gid).map(|(i, _)| i.clone())
-                                };
+                                let id = poll_mgr.aria2_gids.read().unwrap().get(gid).cloned();
                                 if let Some(id) = id {
                                     let total = status_info.get("totalLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let completed = status_info.get("completedLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
@@ -1699,12 +1642,13 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
-            start_download, start_media_download, pause_download, fetch_metadata, fetch_media_metadata,
+            pause_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
+            enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories

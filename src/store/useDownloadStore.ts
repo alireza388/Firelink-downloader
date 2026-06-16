@@ -60,8 +60,6 @@ const syncSystemIntegrations = () => {
   }
 };
 
-// Legacy manual speed limit math removed
-
 export type { DownloadStatus };
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -76,6 +74,10 @@ export type DeleteModalState = {
 interface DownloadState {
   downloads: DownloadItem[];
   queues: Queue[];
+  pendingOrder: string[];
+  setPendingOrder: (order: string[]) => void;
+  moveInQueue: (id: string, direction: 'Up' | 'Down') => Promise<void>;
+  removeFromQueue: (id: string) => Promise<void>;
   isAddModalOpen: boolean;
   pendingAddUrls: string;
   pendingAddReferer: string;
@@ -88,11 +90,11 @@ interface DownloadState {
   openDeleteModal: (downloadId?: string) => void;
   closeDeleteModal: () => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
-  addDownload: (item: DownloadItem) => void;
+  addDownload: (item: DownloadItem) => Promise<void>;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
   removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
-  redownload: (id: string) => void;
-  processQueue: () => Promise<void>;
+  redownload: (id: string) => Promise<void>;
+  resumeDownload: (id: string) => Promise<void>;
   startQueue: (queueId: string) => Promise<number>;
   pauseQueue: (queueId: string) => Promise<number>;
   addQueue: (name: string) => void;
@@ -108,11 +110,29 @@ interface DownloadState {
   clearMetadata: () => void;
 }
 
-let isProcessingQueue = false;
-
 export const useDownloadStore = create<DownloadState>((set, get) => ({
   downloads: [],
   queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
+  pendingOrder: [],
+  setPendingOrder: (order) => set({ pendingOrder: order }),
+  moveInQueue: async (id, direction) => {
+    try {
+      const order = await invoke('move_in_queue', { id, direction });
+      set({ pendingOrder: order });
+    } catch (e) {
+      console.error("Failed to move item in queue:", e);
+    }
+  },
+  removeFromQueue: async (id) => {
+    try {
+      await invoke('remove_from_queue', { id });
+      set((state) => ({
+        pendingOrder: state.pendingOrder.filter(x => x !== id)
+      }));
+    } catch (e) {
+      console.error("Failed to remove item from queue:", e);
+    }
+  },
   isAddModalOpen: false,
   pendingAddUrls: '',
   pendingAddReferer: '',
@@ -170,10 +190,54 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       info(`Media metadata parsing failed for ${url}: ${e}`);
     }
   },
-  addDownload: (item) => {
+  addDownload: async (item) => {
     info(`Download ${item.id} added to queue`);
     set((state) => ({ downloads: [...state.downloads, item] }));
-    get().processQueue();
+
+    try {
+      const settings = useSettingsStore.getState();
+      const login = getSiteLogin(item.url, settings);
+      let keychainPassword = null;
+      if (login) {
+        try {
+          keychainPassword = await invoke('get_keychain_password', { id: login.id });
+        } catch (e) {
+          console.warn("Could not fetch keychain password for login:", e);
+        }
+      }
+      const destPath = item.destination || 
+                       (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
+                       settings.defaultDownloadPath || 
+                       '~/Downloads';
+                       
+      const enqueueItem = {
+        id: item.id,
+        url: item.url,
+        destination: destPath,
+        filename: item.fileName,
+        connections: item.connections || settings.perServerConnections || null,
+        speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
+        username: item.username || (login ? login.username : null),
+        password: item.password || keychainPassword,
+        headers: item.headers || null,
+        checksum: item.checksum || null,
+        cookies: item.cookies || null,
+        mirrors: item.mirrors || null,
+        user_agent: settings.customUserAgent || null,
+        max_tries: settings.maxAutomaticRetries,
+        proxy: await getProxyArgs(settings),
+        format_selector: item.mediaFormatSelector || null,
+        cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+        is_media: item.isMedia || false
+      };
+      
+      await invoke('enqueue_download', { item: enqueueItem });
+      const order = await invoke('get_pending_order');
+      set({ pendingOrder: order });
+    } catch (e) {
+      console.error("Failed to enqueue download:", e);
+      get().updateDownload(item.id, { status: 'failed' });
+    }
   },
   updateDownload: (id, updates) => {
     set((state) => ({
@@ -190,10 +254,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       })
     }));
     
-    // If status changed to something that frees up a slot, process queue
     if (updates.status && ['completed', 'failed', 'paused'].includes(updates.status)) {
       info(`Download ${id} status changed to ${updates.status}`);
-      get().processQueue();
       syncSystemIntegrations();
     } else if (updates.status === 'downloading') {
       info(`Download ${id} status changed to downloading`);
@@ -202,9 +264,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   removeDownload: async (id, deleteFile = false) => {
     const item = get().downloads.find(d => d.id === id);
-    if (item && item.status === 'downloading') {
+    if (item) {
       try {
-        // Just cancel the active download via the backend, don't delete files via remove_download
         await invoke('remove_download', { id, filepath: null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
@@ -223,50 +284,196 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       }
     }
     set((state) => ({
-      downloads: state.downloads.filter(d => d.id !== id)
+      downloads: state.downloads.filter(d => d.id !== id),
+      pendingOrder: state.pendingOrder.filter(x => x !== id)
     }));
     info(`Download ${id} removed`);
-    get().processQueue();
     syncSystemIntegrations();
   },
-  redownload: (id) => {
+  redownload: async (id) => {
     let wasDownloading = false;
+    let targetItem: DownloadItem | undefined;
+    set((state) => {
+      targetItem = state.downloads.find(d => d.id === id);
+      if (targetItem && targetItem.status === 'downloading') {
+        wasDownloading = true;
+      }
+      return {
+        downloads: state.downloads.map(d => {
+          if (d.id === id) {
+            return { ...d, status: 'queued', fraction: 0, speed: '-', eta: '-' };
+          }
+          return d;
+        })
+      };
+    });
+    
+    if (wasDownloading) {
+      await invoke('pause_download', { id }).catch(console.error);
+    }
+    
+    if (targetItem) {
+      try {
+        const settings = useSettingsStore.getState();
+        const login = getSiteLogin(targetItem.url, settings);
+        let keychainPassword = null;
+        if (login) {
+          try {
+            keychainPassword = await invoke('get_keychain_password', { id: login.id });
+          } catch (e) {
+            console.warn("Could not fetch keychain password for login:", e);
+          }
+        }
+        const destPath = targetItem.destination || 
+                         (settings.downloadDirectories && settings.downloadDirectories[targetItem.category]) || 
+                         settings.defaultDownloadPath || 
+                         '~/Downloads';
+        const enqueueItem = {
+          id: targetItem.id,
+          url: targetItem.url,
+          destination: destPath,
+          filename: targetItem.fileName,
+          connections: targetItem.connections || settings.perServerConnections || null,
+          speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
+          username: targetItem.username || (login ? login.username : null),
+          password: targetItem.password || keychainPassword,
+          headers: targetItem.headers || null,
+          checksum: targetItem.checksum || null,
+          cookies: targetItem.cookies || null,
+          mirrors: targetItem.mirrors || null,
+          user_agent: settings.customUserAgent || null,
+          max_tries: settings.maxAutomaticRetries,
+          proxy: await getProxyArgs(settings),
+          format_selector: targetItem.mediaFormatSelector || null,
+          cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+          is_media: targetItem.isMedia || false
+        };
+        await invoke('enqueue_download', { item: enqueueItem });
+        const order = await invoke('get_pending_order');
+        set({ pendingOrder: order });
+      } catch (e) {
+        console.error("Failed to enqueue redownload:", e);
+      }
+    }
+    info(`Download ${id} redownload requested (queued)`);
+  },
+  resumeDownload: async (id) => {
+    let targetItem = get().downloads.find(d => d.id === id);
+    if (!targetItem) return;
+    
     set((state) => ({
       downloads: state.downloads.map(d => {
         if (d.id === id) {
-          if (d.status === 'downloading') {
-            wasDownloading = true;
-          }
-          const updated: DownloadItem = { ...d, status: 'queued', _dispatched: false, fraction: 0, speed: '-', eta: '-' };
-          return updated;
+          return { ...d, status: 'queued', speed: '-', eta: '-' };
         }
         return d;
       })
     }));
-    if (wasDownloading) {
-      invoke('pause_download', { id }).catch(console.error);
+
+    try {
+      const settings = useSettingsStore.getState();
+      const login = getSiteLogin(targetItem.url, settings);
+      let keychainPassword = null;
+      if (login) {
+        try {
+          keychainPassword = await invoke('get_keychain_password', { id: login.id });
+        } catch (e) {
+          console.warn("Could not fetch keychain password for login:", e);
+        }
+      }
+      const destPath = targetItem.destination || 
+                       (settings.downloadDirectories && settings.downloadDirectories[targetItem.category]) || 
+                       settings.defaultDownloadPath || 
+                       '~/Downloads';
+      const enqueueItem = {
+        id: targetItem.id,
+        url: targetItem.url,
+        destination: destPath,
+        filename: targetItem.fileName,
+        connections: targetItem.connections || settings.perServerConnections || null,
+        speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
+        username: targetItem.username || (login ? login.username : null),
+        password: targetItem.password || keychainPassword,
+        headers: targetItem.headers || null,
+        checksum: targetItem.checksum || null,
+        cookies: targetItem.cookies || null,
+        mirrors: targetItem.mirrors || null,
+        user_agent: settings.customUserAgent || null,
+        max_tries: settings.maxAutomaticRetries,
+        proxy: await getProxyArgs(settings),
+        format_selector: targetItem.mediaFormatSelector || null,
+        cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+        is_media: targetItem.isMedia || false
+      };
+      await invoke('enqueue_download', { item: enqueueItem });
+      const order = await invoke('get_pending_order');
+      set({ pendingOrder: order });
+    } catch (e) {
+      console.error("Failed to enqueue resume:", e);
     }
-    info(`Download ${id} redownload requested (queued)`);
-    get().processQueue();
   },
   startQueue: async (queueId) => {
-    const runnableIds = get().downloads
-      .filter(item => item.queueId === queueId && (item.status === 'queued' || item.status === 'paused' || item.status === 'failed'))
-      .map(item => item.id);
+    const runnable = get().downloads
+      .filter(item => item.queueId === queueId && (item.status === 'queued' || item.status === 'paused' || item.status === 'failed'));
 
-    if (runnableIds.length === 0) return 0;
+    if (runnable.length === 0) return 0;
 
     set((state) => ({
       downloads: state.downloads.map(item =>
-        runnableIds.includes(item.id)
-          ? { ...item, status: 'queued', _dispatched: false, speed: '-', eta: '-' }
+        runnable.some(r => r.id === item.id)
+          ? { ...item, status: 'queued', speed: '-', eta: '-' }
           : item
       )
     }));
 
-    info(`Queue ${queueId} started, ${runnableIds.length} items queued`);
-    await get().processQueue();
-    return runnableIds.length;
+    try {
+      const settings = useSettingsStore.getState();
+      const itemsToEnqueue = [];
+      for (const item of runnable) {
+        const login = getSiteLogin(item.url, settings);
+        let keychainPassword = null;
+        if (login) {
+          try {
+            keychainPassword = await invoke('get_keychain_password', { id: login.id });
+          } catch (e) {
+            console.warn("Could not fetch keychain password for login:", e);
+          }
+        }
+        const destPath = item.destination || 
+                         (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
+                         settings.defaultDownloadPath || 
+                         '~/Downloads';
+                         
+        itemsToEnqueue.push({
+          id: item.id,
+          url: item.url,
+          destination: destPath,
+          filename: item.fileName,
+          connections: item.connections || settings.perServerConnections || null,
+          speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
+          username: item.username || (login ? login.username : null),
+          password: item.password || keychainPassword,
+          headers: item.headers || null,
+          checksum: item.checksum || null,
+          cookies: item.cookies || null,
+          mirrors: item.mirrors || null,
+          user_agent: settings.customUserAgent || null,
+          max_tries: settings.maxAutomaticRetries,
+          proxy: await getProxyArgs(settings),
+          format_selector: item.mediaFormatSelector || null,
+          cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+          is_media: item.isMedia || false
+        });
+      }
+      await invoke('enqueue_many', { items: itemsToEnqueue });
+      const order = await invoke('get_pending_order');
+      set({ pendingOrder: order });
+    } catch (e) {
+      console.error("Failed to start queue:", e);
+    }
+
+    info(`Queue ${queueId} started, ${runnable.length} items queued`);
+    return runnable.length;
   },
   pauseQueue: async (queueId) => {
     const activeIds = get().downloads
@@ -326,131 +533,56 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         downloads: downloads.length > 0 ? downloads : state.downloads
       }));
       
-      // Auto resume downloads that were active
-      const active = get().downloads.filter(d => d.status === 'downloading');
-      const settings = useSettingsStore.getState();
-      active.forEach(item => {
-        if (item.isMedia) {
-          invoke('start_media_download', {
-            id: item.id,
-            url: item.url,
-            destination: item.destination || '~/Downloads',
-            filename: item.fileName,
-            formatSelector: item.mediaFormatSelector || null,
-            cookieSource: null,
-            speedLimit: item.speedLimit || settings.globalSpeedLimit || null,
-            username: item.username || null,
-            password: item.password || null,
-            headers: item.headers || null,
-            proxy: null,
-            userAgent: null,
-            maxTries: null
-          }).catch(console.error);
-        } else {
-          invoke('start_download', {
-            id: item.id,
-            url: item.url,
-            destination: item.destination || '~/Downloads',
-            filename: item.fileName,
-            connections: item.connections ?? null,
-            speedLimit: item.speedLimit || settings.globalSpeedLimit || null,
-            username: item.username || null,
-            password: item.password || null,
-            headers: item.headers || null,
-            checksum: item.checksum || null,
-            cookies: item.cookies || null,
-            mirrors: item.mirrors || null,
-            userAgent: null,
-            maxTries: null,
-            proxy: null
-          }).catch(console.error);
-        }
-      });
-      
-      void get().processQueue();
-    } catch (e) {
-      console.error("Failed to init DB", e);
-    }
-  },
-  processQueue: async () => {
-    if (isProcessingQueue) return;
-    isProcessingQueue = true;
-    
-    try {
-      const { downloads, updateDownload } = get();
-      const settings = useSettingsStore.getState();
-      const concurrentLimit = settings.maxConcurrentDownloads || 3;
-      const activeCount = downloads.filter(d => d.status === 'downloading').length;
-      let availableSlots = concurrentLimit - activeCount;
-
-      if (availableSlots <= 0) return;
-
-      const itemsToStart = downloads.filter(d => d.status === 'queued' && !d._dispatched);
-      
-      for (const item of itemsToStart) {
-        if (availableSlots <= 0) break;
-        availableSlots--;
-
-        // Mark as dispatched so we don't send it again on the next pass
-        updateDownload(item.id, { _dispatched: true });
+      // Auto resume downloads that were active or queued
+      const active = get().downloads.filter(d => d.status === 'downloading' || d.status === 'queued');
+      if (active.length > 0) {
         try {
-          const login = getSiteLogin(item.url, settings);
-          let keychainPassword = null;
-          if (login) {
-            try {
-              keychainPassword = await invoke('get_keychain_password', { id: login.id });
-            } catch (e) {
-              console.warn("Could not fetch keychain password for login:", e);
+          const settings = useSettingsStore.getState();
+          const itemsToEnqueue = [];
+          for (const item of active) {
+            const login = getSiteLogin(item.url, settings);
+            let keychainPassword = null;
+            if (login) {
+              try {
+                keychainPassword = await invoke('get_keychain_password', { id: login.id });
+              } catch (e) {
+                console.warn("Could not fetch keychain password for login:", e);
+              }
             }
-          }
-          
-          const destPath = item.destination || 
-                           (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
-                           settings.defaultDownloadPath || 
-                           '~/Downloads';
-
-          if (item.isMedia) {
-            await invoke('start_media_download', {
-              id: item.id,
-              url: item.url,
-              destination: destPath,
-              filename: item.fileName,
-              formatSelector: item.mediaFormatSelector || null,
-              cookieSource: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
-              speedLimit: item.speedLimit || settings.globalSpeedLimit || null,
-              username: item.username || (login ? login.username : null),
-              password: item.password || keychainPassword,
-              headers: item.headers || null,
-              proxy: await getProxyArgs(settings),
-              userAgent: settings.customUserAgent || null,
-              maxTries: settings.maxAutomaticRetries
-            });
-          } else {
-            await invoke('start_download', {
+            const destPath = item.destination || 
+                             (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
+                             settings.defaultDownloadPath || 
+                             '~/Downloads';
+            itemsToEnqueue.push({
               id: item.id,
               url: item.url,
               destination: destPath,
               filename: item.fileName,
               connections: item.connections || settings.perServerConnections || null,
-              speedLimit: item.speedLimit || settings.globalSpeedLimit || null,
+              speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
               username: item.username || (login ? login.username : null),
               password: item.password || keychainPassword,
               headers: item.headers || null,
               checksum: item.checksum || null,
               cookies: item.cookies || null,
               mirrors: item.mirrors || null,
-              userAgent: settings.customUserAgent || null,
-              maxTries: settings.maxAutomaticRetries,
-              proxy: await getProxyArgs(settings)
+              user_agent: settings.customUserAgent || null,
+              max_tries: settings.maxAutomaticRetries,
+              proxy: await getProxyArgs(settings),
+              format_selector: item.mediaFormatSelector || null,
+              cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+              is_media: item.isMedia || false
             });
           }
+          await invoke('enqueue_many', { items: itemsToEnqueue });
+          const order = await invoke('get_pending_order');
+          set({ pendingOrder: order });
         } catch (e) {
-          console.error("Failed to start queued download:", e);
-          updateDownload(item.id, { status: 'failed' });
+          console.error("Failed to auto-resume active downloads:", e);
         }
       }
-    } finally {
-      isProcessingQueue = false;
+    } catch (e) {
+      console.error("Failed to init DB", e);
     }
   }
 }));
@@ -469,7 +601,6 @@ useDownloadStore.subscribe(async (state, prevState) => {
       delete copy.fraction;
       delete copy.speed;
       delete copy.eta;
-      delete copy._dispatched;
       return copy;
     });
     

@@ -21,7 +21,7 @@ function App() {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
     return Number.isFinite(stored) && stored >= 190 && stored <= 260 ? stored : 220;
   });
-  const updateDownload = useDownloadStore(state => state.updateDownload);
+
   const theme = useSettingsStore(state => state.theme);
   const isSidebarVisible = useSettingsStore(state => state.isSidebarVisible);
   const activeView = useSettingsStore(state => state.activeView);
@@ -209,8 +209,6 @@ function App() {
     initDownloadListener();
 
     const unlistenComplete = listen('download-complete', (event) => {
-      updateDownload(event.payload, { status: 'completed', fraction: 1.0, speed: '-', eta: '-' });
-      
       const settings = useSettingsStore.getState();
       if (settings.showNotifications) {
         const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
@@ -225,10 +223,15 @@ function App() {
     });
 
     const unlistenFailed = listen('download-failed', (event) => {
-      // If it's already paused, don't mark as failed (since we aborted it)
-      const current = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
-      if (current && current.status !== 'paused') {
-        updateDownload(event.payload, { status: 'failed', speed: '-', eta: '-' });
+      const settings = useSettingsStore.getState();
+      if (settings.showNotifications) {
+        const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
+        const fileName = item?.fileName || 'A file';
+        
+        sendNotification({
+          title: 'Download Failed',
+          body: `${fileName} failed to download.`,
+        });
       }
     });
 

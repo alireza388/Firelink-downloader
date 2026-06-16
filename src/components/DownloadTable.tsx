@@ -12,7 +12,7 @@ interface DownloadTableProps {
 }
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, toggleAddModal, updateDownload, openDeleteModal, redownload } = useDownloadStore();
+  const { downloads, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
 
   const isMac = navigator.userAgent.includes('Mac');
@@ -93,15 +93,13 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const handlePause = async (id: string) => {
     try {
       await invoke('pause_download', { id });
-      updateDownload(id, { status: 'paused', speed: '-', eta: '-' });
     } catch (e) {
       console.error("Failed to pause:", e);
     }
   };
 
   const handleResume = (item: DownloadItem) => {
-    updateDownload(item.id, { status: 'queued', _dispatched: false, speed: '-', eta: '-' });
-    useDownloadStore.getState().processQueue();
+    useDownloadStore.getState().resumeDownload(item.id);
   };
 
   const handleDelete = (id: string) => {

@@ -423,6 +423,7 @@ pub mod download;
 mod ipc;
 mod parity;
 pub mod error;
+pub mod commands;
 pub use error::AppError;
 
 // Retained only for compatibility with the optional aria2 diagnostic monitor.
@@ -1704,6 +1705,7 @@ pub fn run() {
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
+            commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories
         ])

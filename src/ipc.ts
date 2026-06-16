@@ -60,6 +60,9 @@ type CommandMap = {
   test_deno: { args: undefined; result: string };
   open_file: { args: { path: string }; result: void };
   show_in_folder: { args: { path: string }; result: void };
+  reveal_in_file_manager: { args: { path: string }; result: void };
+  open_downloaded_file: { args: { path: string }; result: void };
+  trash_download_assets: { args: { path: string; partialPaths: string[] }; result: void };
   start_download: { args: StartDownloadArgs; result: void };
   start_media_download: { args: StartMediaDownloadArgs; result: void };
   pause_download: { args: { id: string }; result: void };

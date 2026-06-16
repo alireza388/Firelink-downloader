@@ -255,7 +255,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 setContextMenu(null);
                 try {
                   const fullPath = await resolvePath(contextItem.destination || '~/Downloads', contextItem.fileName);
-                  await invoke('open_file', { path: fullPath });
+                  await invoke('open_downloaded_file', { path: fullPath });
                 } catch (e) {
                   console.error("Failed to open file:", e);
                 }
@@ -271,7 +271,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               setContextMenu(null);
               try {
                 const fullPath = await resolvePath(contextItem.destination || '~/Downloads', contextItem.fileName);
-                await invoke('show_in_folder', { path: fullPath });
+                await invoke('reveal_in_file_manager', { path: fullPath });
               } catch (e) {
                 console.error("Failed to show in folder:", e);
               }

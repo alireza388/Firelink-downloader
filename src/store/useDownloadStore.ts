@@ -204,17 +204,22 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const item = get().downloads.find(d => d.id === id);
     if (item && item.status === 'downloading') {
       try {
-        const filepath = item.destination ? `${item.destination}/${item.fileName}` : null;
-        await invoke('remove_download', { id, filepath });
+        // Just cancel the active download via the backend, don't delete files via remove_download
+        await invoke('remove_download', { id, filepath: null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
       }
-    } else if (item && deleteFile) {
+    } 
+    
+    if (item && deleteFile) {
       try {
         const filepath = item.destination ? `${item.destination}/${item.fileName}` : null;
-        await invoke('remove_download', { id, filepath });
+        if (filepath) {
+          const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
+          await invoke('trash_download_assets', { path: filepath, partialPaths });
+        }
       } catch (e) {
-        console.error("Failed to delete file from disk:", e);
+        console.error("Failed to trash file from disk:", e);
       }
     }
     set((state) => ({

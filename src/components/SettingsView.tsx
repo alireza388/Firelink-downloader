@@ -5,6 +5,7 @@ import {
   SettingsTab,
   useSettingsStore
 } from '../store/useSettingsStore';
+import { useDirectoryPicker } from '../hooks/useDirectoryPicker';
 import {
   Download, Palette, Globe, Folder, Key,
   Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
@@ -29,6 +30,7 @@ const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[
 
 export default function SettingsView() {
   const settings = useSettingsStore();
+  const { pickDirectory } = useDirectoryPicker();
   const activeTab = settings.activeSettingsTab;
 
   // Local state for versions
@@ -537,6 +539,30 @@ export default function SettingsView() {
           {/* Locations Pane */}
           {activeTab === 'locations' && (
             <div className="settings-pane max-w-[760px]">
+              <div className="mac-settings-group">
+                <div className="mac-settings-row">
+                  <span className="text-[13px] font-semibold text-text-primary">Default Download Path</span>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={settings.defaultDownloadPath || ''}
+                      onChange={(e) => settings.setDefaultDownloadPath(e.target.value)}
+                      className="app-control w-64 text-[11px] px-2"
+                      placeholder="~/Downloads"
+                    />
+                    <button
+                      onClick={async () => {
+                        const path = await pickDirectory(settings.defaultDownloadPath);
+                        if (path) settings.setDefaultDownloadPath(path);
+                      }}
+                      className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="mac-settings-group">
                 <label className="mac-settings-row cursor-default">
                   <span className="text-[13px] text-text-primary">Ask where to save each file</span>

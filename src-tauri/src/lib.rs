@@ -1435,10 +1435,26 @@ pub fn run() {
             }
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
+            let mut global_speed_limit = String::new();
+            {
+                use tauri_plugin_store::StoreExt;
+                if let Ok(store) = app.handle().store("store.bin") {
+                    if let Some(settings_val) = store.get("settings") {
+                        if let Some(settings_str) = settings_val.as_str() {
+                            if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(settings_str) {
+                                if let Some(limit) = settings_json.get("globalSpeedLimit").and_then(|v| v.as_str()) {
+                                    global_speed_limit = limit.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             use tauri_plugin_shell::ShellExt;
             let aria2_process = match app.handle().shell().sidecar("aria2c") {
-                Ok(cmd) => {
-                    cmd.arg("--enable-rpc=true")
+                Ok(mut cmd) => {
+                    cmd = cmd.arg("--enable-rpc=true")
                         .arg(format!("--rpc-listen-port={}", aria2_port))
                         .arg(format!("--rpc-secret={}", aria2_secret))
                         .arg("--rpc-listen-all=false")
@@ -1447,8 +1463,13 @@ pub fn run() {
                         .arg("--summary-interval=1")
                         .arg("--console-log-level=warn")
                         .arg("--download-result=hide")
-                        .arg("--check-certificate=true")
-                        .spawn()
+                        .arg("--check-certificate=true");
+                        
+                    if !global_speed_limit.is_empty() {
+                        cmd = cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
+                    }
+                    
+                    cmd.spawn()
                         .map(|(_, child)| child)
                         .ok()
                 }

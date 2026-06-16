@@ -34,7 +34,7 @@ function App() {
   const doneCount = downloads.filter(download => download.status === 'completed').length;
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
-  const previousSpeedLimit = useRef(globalSpeedLimit);
+  const previousSpeedLimit = useRef<string | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
 
   const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {

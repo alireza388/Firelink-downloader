@@ -1,5 +1,8 @@
 import { create } from 'zustand';
+import { LazyStore } from '@tauri-apps/plugin-store';
 import { invokeCommand as invoke } from '../ipc';
+
+export const tauriStore = new LazyStore('store.bin');
 import type { DownloadItem } from '../bindings/DownloadItem';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
@@ -138,13 +141,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
   addDownload: (item) => {
     set((state) => ({ downloads: [...state.downloads, item] }));
-    const toSave = { ...item };
-    delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-    invoke('db_save_download', { id: item.id, status: item.status, queueId: item.queueId, data: JSON.stringify(toSave) }).catch(console.error);
+    set((state) => ({ downloads: [...state.downloads, item] }));
     get().processQueue();
   },
   updateDownload: (id, updates) => {
-    let updatedItem: DownloadItem | null = null;
     set((state) => ({
       downloads: state.downloads.map(d => {
         if (d.id === id) {
@@ -153,18 +153,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             ...updates,
             fraction: updates.fraction !== undefined ? updates.fraction : d.fraction
           };
-          updatedItem = updated;
           return updated;
         }
         return d;
       })
     }));
-    
-    if (updatedItem && Object.keys(updates).some(k => !['fraction', 'speed', 'eta'].includes(k))) {
-      const toSave = { ...(updatedItem as DownloadItem) };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: toSave.id, status: toSave.status, queueId: toSave.queueId, data: JSON.stringify(toSave) }).catch(console.error);
-    }
     
     // If status changed to something that frees up a slot, process queue
     if (updates.status && ['completed', 'failed', 'paused'].includes(updates.status)) {
@@ -194,12 +187,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     set((state) => ({
       downloads: state.downloads.filter(d => d.id !== id)
     }));
-    invoke('db_delete_download', { id }).catch(console.error);
     get().processQueue();
     syncSystemIntegrations();
   },
   redownload: (id) => {
-    let updatedItem: DownloadItem | null = null;
     let wasDownloading = false;
     set((state) => ({
       downloads: state.downloads.map(d => {
@@ -208,7 +199,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             wasDownloading = true;
           }
           const updated: DownloadItem = { ...d, status: 'queued', _dispatched: false, fraction: 0, speed: '-', eta: '-' };
-          updatedItem = updated;
           return updated;
         }
         return d;
@@ -216,11 +206,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }));
     if (wasDownloading) {
       invoke('pause_download', { id }).catch(console.error);
-    }
-    if (updatedItem) {
-      const toSave = { ...(updatedItem as DownloadItem) };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: toSave.id, status: toSave.status, queueId: toSave.queueId, data: JSON.stringify(toSave) }).catch(console.error);
     }
     get().processQueue();
   },
@@ -238,13 +223,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           : item
       )
     }));
-    
-    const downloadsToSave = get().downloads.filter(item => runnableIds.includes(item.id));
-    downloadsToSave.forEach(d => {
-      const toSave = { ...d };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: toSave.id, status: toSave.status, queueId: toSave.queueId, data: JSON.stringify(toSave) }).catch(console.error);
-    });
 
     await get().processQueue();
     return runnableIds.length;
@@ -263,13 +241,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           : item
       )
     }));
-    
-    const downloadsToSave = get().downloads.filter(item => activeIds.includes(item.id));
-    downloadsToSave.forEach(d => {
-      const toSave = { ...d };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: toSave.id, status: toSave.status, queueId: toSave.queueId, data: JSON.stringify(toSave) }).catch(console.error);
-    });
 
     await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
     syncSystemIntegrations();
@@ -281,28 +252,20 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     set((state) => ({
       queues: [...state.queues, q]
     }));
-    invoke('db_save_queue', { id, data: JSON.stringify(q) }).catch(console.error);
   },
   renameQueue: (id, name) => {
-    let updatedQ: Queue | null = null;
     set((state) => ({
       queues: state.queues.map(q => {
         if (q.id === id) {
           const newQ = { ...q, name };
-          updatedQ = newQ;
           return newQ;
         }
         return q;
       })
     }));
-    if (updatedQ) {
-      invoke('db_save_queue', { id, data: JSON.stringify(updatedQ) }).catch(console.error);
-    }
   },
   removeQueue: (id) => {
     if (id === MAIN_QUEUE_ID) return;
-    
-    const affectedDownloads = get().downloads.filter(d => d.queueId === id);
     
     set((state) => ({
       queues: state.queues.filter(q => q.id !== id),
@@ -310,22 +273,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         d.queueId === id ? { ...d, queueId: MAIN_QUEUE_ID } : d
       )
     }));
-    invoke('db_delete_queue', { id }).catch(console.error);
-    
-    // Also we need to save the updated downloads to DB
-    affectedDownloads.forEach(d => {
-      const toSave = { ...d, queueId: MAIN_QUEUE_ID };
-      delete toSave.fraction; delete toSave.speed; delete toSave.eta;
-      invoke('db_save_download', { id: toSave.id, status: toSave.status, queueId: MAIN_QUEUE_ID, data: JSON.stringify(toSave) }).catch(console.error);
-    });
   },
   initDB: async () => {
     try {
-      const queuesStr = await invoke('db_get_all_queues');
-      const queues = queuesStr.map(q => JSON.parse(q));
-      
-      const downloadsStr = await invoke('db_get_all_downloads');
-      const downloads = downloadsStr.map(d => JSON.parse(d));
+      const queues = await tauriStore.get<Queue[]>('queues') || [];
+      const downloads = await tauriStore.get<DownloadItem[]>('download_queue') || [];
       
       set(state => ({
         queues: queues.length > 0 ? queues : state.queues,
@@ -460,3 +412,30 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
   }
 }));
+
+let lastSavedDownloads = '';
+
+useDownloadStore.subscribe(async (state, prevState) => {
+  if (state.queues !== prevState.queues) {
+    await tauriStore.set('queues', state.queues);
+    await tauriStore.save();
+  }
+
+  if (state.downloads !== prevState.downloads) {
+    const staticDownloads = state.downloads.map(d => {
+      const copy = { ...d };
+      delete copy.fraction;
+      delete copy.speed;
+      delete copy.eta;
+      delete copy._dispatched;
+      return copy;
+    });
+    
+    const currentSerialized = JSON.stringify(staticDownloads);
+    if (currentSerialized !== lastSavedDownloads) {
+      lastSavedDownloads = currentSerialized;
+      await tauriStore.set('download_queue', staticDownloads);
+      await tauriStore.save();
+    }
+  }
+});

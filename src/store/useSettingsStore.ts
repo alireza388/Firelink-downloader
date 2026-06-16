@@ -13,12 +13,14 @@ import type { SettingsTab } from '../bindings/SettingsTab';
 import type { SiteLogin } from '../bindings/SiteLogin';
 import type { Theme } from '../bindings/Theme';
 
+import { tauriStore } from './useDownloadStore';
+
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (name === 'firelink-settings') {
       try {
-        const data = await invoke('db_load_settings');
-        return data;
+        const data = await tauriStore.get<string>('settings');
+        return data || null;
       } catch (e) {
         console.error("Failed to load settings from DB", e);
         return null;
@@ -29,7 +31,8 @@ const tauriStorage: StateStorage = {
   setItem: async (name: string, value: string): Promise<void> => {
     if (name === 'firelink-settings') {
       try {
-        await invoke('db_save_settings', { data: value });
+        await tauriStore.set('settings', value);
+        await tauriStore.save();
       } catch (e) {
         console.error("Failed to save settings to DB", e);
       }

@@ -21,6 +21,7 @@ export const useDownloadProgressStore = create<DownloadProgressState>((set) => (
 }));
 
 let unlistenProgress: UnlistenFn | null = null;
+let unlistenTray: UnlistenFn | null = null;
 
 export async function initDownloadListener() {
   if (unlistenProgress) return;
@@ -38,4 +39,17 @@ export async function initDownloadListener() {
       mainStore.updateDownload(payload.id, { size: payload.size });
     }
   });
+
+  if (!unlistenTray) {
+    unlistenTray = await listen<string>('tray-action', (event) => {
+      const mainStore = useDownloadStore.getState();
+      if (event.payload === 'pause-all') {
+        const uniqueQueues = Array.from(new Set(mainStore.downloads.map(d => d.queueId)));
+        uniqueQueues.forEach(qid => mainStore.pauseQueue(qid));
+      } else if (event.payload === 'resume-all') {
+        const uniqueQueues = Array.from(new Set(mainStore.downloads.map(d => d.queueId)));
+        uniqueQueues.forEach(qid => mainStore.startQueue(qid));
+      }
+    });
+  }
 }

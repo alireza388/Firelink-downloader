@@ -11,9 +11,13 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
             interval.tick().await;
 
             let settings_opt = {
-                let state = app_handle.state::<crate::db::DbState>();
-                let conn = state.conn.lock().await;
-                crate::db::get_settings(&conn).unwrap_or(None)
+                use tauri_plugin_store::StoreExt;
+                let store = app_handle.store("store.bin");
+                if let Ok(store) = store {
+                    store.get("settings").and_then(|v| v.as_str().map(|s| s.to_string()))
+                } else {
+                    None
+                }
             };
 
             if let Some(settings_str) = settings_opt {
@@ -45,9 +49,11 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                             let _ = app_handle.emit("schedule-trigger", "start");
                             
                             if let Ok(updated) = serde_json::to_string(&settings) {
-                                let state = app_handle.state::<crate::db::DbState>();
-                                let conn = state.conn.lock().await;
-                                let _ = crate::db::save_settings(&conn, &updated);
+                                use tauri_plugin_store::StoreExt;
+                                if let Ok(store) = app_handle.store("store.bin") {
+                                    store.set("settings", serde_json::json!(updated));
+                                    let _ = store.save();
+                                }
                             }
                         }
 
@@ -58,9 +64,11 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                             let _ = app_handle.emit("schedule-trigger", "stop");
 
                             if let Ok(updated) = serde_json::to_string(&settings) {
-                                let state = app_handle.state::<crate::db::DbState>();
-                                let conn = state.conn.lock().await;
-                                let _ = crate::db::save_settings(&conn, &updated);
+                                use tauri_plugin_store::StoreExt;
+                                if let Ok(store) = app_handle.store("store.bin") {
+                                    store.set("settings", serde_json::json!(updated));
+                                    let _ = store.save();
+                                }
                             }
                         }
                     }

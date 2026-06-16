@@ -601,6 +601,8 @@ async fn start_download(
     options.insert("max-connection-per-server".to_string(), serde_json::json!(conn.to_string()));
     options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
 
+    options.insert("continue".to_string(), serde_json::json!("true"));
+
     if let Some(speed) = &speed_limit {
         options.insert("max-download-limit".to_string(), serde_json::json!(speed));
     }
@@ -780,9 +782,10 @@ pub(crate) async fn start_media_download_internal(
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
        .arg("--downloader").arg("aria2c")
-       .arg("--downloader-args").arg("aria2c:-x 16 -s 16 -k 1M")
+       .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M")
        .arg("--concurrent-fragments").arg("4")
        .arg("--no-warnings")
+       .arg("--continue")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
        .arg("-o").arg(out_path.to_string_lossy().to_string());
 
@@ -941,6 +944,8 @@ pub(crate) async fn start_media_download_internal(
                         println!("child exit status: {:?}", payload.code);
                         if payload.code == Some(0) {
                             let _ = app_handle.emit("download-complete", id.to_string());
+                            use tauri_plugin_notification::NotificationExt;
+                            let _ = app_handle.notification().builder().title("Download Complete").body(&safe_filename).show();
                         } else {
                             let _ = app_handle.emit("download-failed", id.to_string());
                         }
@@ -1362,6 +1367,49 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard(std::sync::Mutex::new(None)))
         .setup(move |app| {
+            use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
+            use tauri::menu::{Menu, MenuItem};
+
+            let show_i = MenuItem::with_id(app, "show", "Show Firelink", true, None::<&str>).unwrap();
+            let pause_all_i = MenuItem::with_id(app, "pause_all", "Pause All", true, None::<&str>).unwrap();
+            let resume_all_i = MenuItem::with_id(app, "resume_all", "Resume All", true, None::<&str>).unwrap();
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).unwrap();
+            let menu = Menu::with_items(app, &[&show_i, &pause_all_i, &resume_all_i, &quit_i]).unwrap();
+
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")).unwrap();
+            let _tray = TrayIconBuilder::with_id("main_startup")
+                .icon(tray_icon)
+                .icon_as_template(true)
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => { restore_main_window(app); }
+                    "pause_all" => { 
+                        use tauri::Emitter;
+                        let _ = app.emit("tray-action", "pause-all");
+                    }
+                    "resume_all" => { 
+                        use tauri::Emitter;
+                        let _ = app.emit("tray-action", "resume-all");
+                    }
+                    "quit" => { app.exit(0); }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        }
+                    ) {
+                        restore_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)
+                .unwrap();
+
             let aria2_gids = Arc::new(RwLock::new(std::collections::HashMap::new()));
             let aria2_gids_clone1 = aria2_gids.clone();
             let aria2_gids_clone2 = aria2_gids.clone();
@@ -1385,9 +1433,6 @@ pub fn run() {
                 Ok(None) => {}
                 Err(error) => eprintln!("Failed to read startup deep link: {error}"),
             }
-            let db_conn = crate::db::init_db(app.handle()).expect("Failed to init db");
-            app.manage(crate::db::DbState { conn: tokio::sync::Mutex::new(db_conn) });
-
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
             use tauri_plugin_shell::ShellExt;
@@ -1446,7 +1491,9 @@ pub fn run() {
                                                         use tauri::Emitter;
                                                         match method {
                                                             "aria2.onDownloadComplete" => {
-                                                                let _ = app_handle_ws.emit("download-complete", id);
+                                                                let _ = app_handle_ws.emit("download-complete", id.clone());
+                                                                use tauri_plugin_notification::NotificationExt;
+                                                                let _ = app_handle_ws.notification().builder().title("Download Complete").body(&format!("File downloaded successfully")).show();
                                                             }
                                                             "aria2.onDownloadError" => {
                                                                 let _ = app_handle_ws.emit("download-failed", id);
@@ -1529,6 +1576,7 @@ pub fn run() {
             });
             Ok(())
         })
+        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -1536,10 +1584,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    if window.app_handle().tray_by_id("main").is_some() {
-                        api.prevent_close();
-                        let _ = window.hide();
-                    }
+                    api.prevent_close();
+                    let _ = window.hide();
                 }
             }
         })
@@ -1552,62 +1598,10 @@ pub fn run() {
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
-            db_save_settings, db_load_settings, db_get_all_downloads, db_save_download, db_delete_download, db_get_all_queues, db_save_queue, db_delete_queue,
             parity::create_category_directories
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 mod extension_server;
-mod db;
 mod scheduler;
-
-#[tauri::command]
-async fn db_save_settings(state: tauri::State<'_, crate::db::DbState>, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().await;
-    crate::db::save_settings(&conn, &data).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_load_settings(state: tauri::State<'_, crate::db::DbState>) -> Result<Option<String>, String> {
-    let conn = state.conn.lock().await;
-    crate::db::get_settings(&conn).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_get_all_downloads(state: tauri::State<'_, crate::db::DbState>) -> Result<Vec<String>, String> {
-    let conn = state.conn.lock().await;
-    crate::db::get_all_downloads(&conn).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_save_download(state: tauri::State<'_, crate::db::DbState>, id: String, status: crate::ipc::DownloadStatus, queue_id: String, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().await;
-    crate::db::insert_download(&conn, &id, status.as_str(), &queue_id, &data)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_delete_download(state: tauri::State<'_, crate::db::DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().await;
-    crate::db::delete_download(&conn, &id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_get_all_queues(state: tauri::State<'_, crate::db::DbState>) -> Result<Vec<String>, String> {
-    let conn = state.conn.lock().await;
-    crate::db::get_all_queues(&conn).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_save_queue(state: tauri::State<'_, crate::db::DbState>, id: String, data: String) -> Result<(), String> {
-    let conn = state.conn.lock().await;
-    crate::db::insert_queue(&conn, &id, &data).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn db_delete_queue(state: tauri::State<'_, crate::db::DbState>, id: String) -> Result<(), String> {
-    let conn = state.conn.lock().await;
-    crate::db::delete_queue(&conn, &id).map_err(|e| e.to_string())
-}
-

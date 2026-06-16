@@ -284,7 +284,7 @@ async fn pause_then_resume_uses_range_and_preserves_integrity() {
     let (coordinator, mut events) = DownloadCoordinator::spawn_headless();
 
     coordinator
-        .send(DownloadCmd::Start(download))
+        .send(DownloadCmd::Start(Box::new(download)))
         .await
         .unwrap();
     wait_for_progress(&mut events, id, 256 * 1024).await;
@@ -296,11 +296,11 @@ async fn pause_then_resume_uses_range_and_preserves_integrity() {
     assert!(paused_len < expected.len() as u64);
 
     coordinator
-        .send(DownloadCmd::Start(payload(
+        .send(DownloadCmd::Start(Box::new(payload(
             id,
             server.file_url(),
             output_path.clone(),
-        )))
+        ))))
         .await
         .unwrap();
     wait_for_completion(&mut events, id).await;
@@ -331,11 +331,11 @@ async fn aggregates_many_http_chunks_with_complete_progress() {
     let started = Instant::now();
 
     coordinator
-        .send(DownloadCmd::Start(payload(
+        .send(DownloadCmd::Start(Box::new(payload(
             id,
             server.file_url(),
             output_path.clone(),
-        )))
+        ))))
         .await
         .unwrap();
     let observed = wait_for_completion(&mut events, id).await;
@@ -376,7 +376,7 @@ async fn retries_transient_http_failures_then_completes() {
     download.max_tries = 3;
 
     coordinator
-        .send(DownloadCmd::Start(download))
+        .send(DownloadCmd::Start(Box::new(download)))
         .await
         .unwrap();
     wait_for_completion(&mut events, id).await;
@@ -399,7 +399,7 @@ async fn reports_terminal_http_errors_after_retry_budget() {
     download.max_tries = 2;
 
     coordinator
-        .send(DownloadCmd::Start(download))
+        .send(DownloadCmd::Start(Box::new(download)))
         .await
         .unwrap();
     let error = loop {
@@ -430,11 +430,11 @@ async fn cancel_removes_partial_file_without_terminal_success_event() {
     let (coordinator, mut events) = DownloadCoordinator::spawn_headless();
 
     coordinator
-        .send(DownloadCmd::Start(payload(
+        .send(DownloadCmd::Start(Box::new(payload(
             id,
             server.file_url(),
             output_path.clone(),
-        )))
+        ))))
         .await
         .unwrap();
     wait_for_progress(&mut events, id, 256 * 1024).await;

@@ -48,20 +48,17 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
             if let Some(host) = parsed.host_str() {
                 let port = parsed.port_or_known_default().unwrap_or(80);
                 if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&(host, port)) {
-                    for addr in addrs {
+                    if let Some(addr) = addrs.into_iter().next() {
                         let ip = addr.ip();
                         if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
                             return Err("SSRF blocked: Private/local IP not allowed".to_string());
                         }
-                        match ip {
-                            std::net::IpAddr::V4(ipv4) if ipv4.is_private() || ipv4.is_link_local() => {
+                        if let std::net::IpAddr::V4(ipv4) = ip {
+                            if ipv4.is_private() || ipv4.is_link_local() {
                                 return Err("SSRF blocked: Private/local IP not allowed".to_string());
                             }
-                            _ => {
-                                resolved_addr = Some((host.to_string(), addr));
-                                break;
-                            }
                         }
+                        resolved_addr = Some((host.to_string(), addr));
                     }
                 }
             }
@@ -127,8 +124,8 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 
     if filename.is_empty() {
         if let Ok(parsed) = reqwest::Url::parse(&current_url) {
-            if let Some(segments) = parsed.path_segments() {
-                if let Some(last) = segments.last() {
+            if let Some(mut segments) = parsed.path_segments() {
+                if let Some(last) = segments.next_back() {
                     let normalized = last.replace('\\', "/");
                     filename = std::path::Path::new(&normalized)
                         .file_name()
@@ -390,10 +387,9 @@ pub use error::AppError;
 
 // Retained only for compatibility with the optional aria2 diagnostic monitor.
 // Active downloads are owned by DownloadCoordinator.
+#[non_exhaustive]
 pub enum TaskHandle {
     Aria2(String),
-    #[doc(hidden)]
-    Inactive,
 }
 
 pub struct AppState {
@@ -421,9 +417,9 @@ pub struct DownloadProgressEvent {
 fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     let mut resolved = std::path::PathBuf::from(path);
-    if path.starts_with("~/") {
+    if let Some(stripped) = path.strip_prefix("~/") {
         if let Ok(home) = app_handle.path().home_dir() {
-            resolved = home.join(&path[2..]);
+            resolved = home.join(stripped);
         }
     } else if path == "~" {
         if let Ok(home) = app_handle.path().home_dir() {
@@ -559,6 +555,7 @@ async fn test_aria2c(state: tauri::State<'_, AppState>) -> Result<String, String
         .ok_or_else(|| "aria2 returned an invalid version response".to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn start_download(
     app_handle: tauri::AppHandle,
@@ -646,13 +643,13 @@ async fn start_download(
         Ok(result) => {
             let gid = result.as_str().unwrap_or("").to_string();
             state.aria2_gids.write().unwrap().insert(id.clone(), gid);
-            return Ok(());
+            Ok(())
         }
         Err(e) => {
             eprintln!("aria2 failed, falling back to native coordinator: {}", e);
             state
                 .download_coordinator
-                .send(download::DownloadCmd::Start(download::DownloadPayload {
+                .send(download::DownloadCmd::Start(Box::new(download::DownloadPayload {
                     id: download_id,
                     urls: collect_download_uris(&url, mirrors.as_deref()),
                     output_path: resolved_dest.join(safe_filename),
@@ -664,14 +661,15 @@ async fn start_download(
                     user_agent,
                     max_tries: mt,
                     proxy,
-                }))
+                })))
                 .await
                 .map_err(AppError::Internal)?;
-            return Ok(());
+            Ok(())
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn start_media_download(
     app_handle: tauri::AppHandle,
@@ -730,6 +728,7 @@ async fn start_media_download(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_media_download_internal(
     app_handle: tauri::AppHandle,
     id: &str,
@@ -1120,7 +1119,7 @@ fn open_automation_settings(app_handle: tauri::AppHandle) -> Result<(), String> 
         use tauri_plugin_opener::OpenerExt;
         app_handle.opener().open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", None::<String>)
             .map_err(|e| format!("Failed to open Automation settings: {}", e))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

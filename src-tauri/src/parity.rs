@@ -107,7 +107,7 @@ pub async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<ReleaseCh
         None => return Err("No stable release was found.".to_string()),
     };
 
-    let latest_version = release.tag_name.trim_start_matches(|c| c == 'v' || c == 'V').to_string();
+    let latest_version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
 
     if cmp_versions(&latest_version, &current_version) == std::cmp::Ordering::Greater {
         Ok(ReleaseCheckOutcome::UpdateAvailable {
@@ -131,8 +131,8 @@ pub async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<ReleaseCh
 fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
     use semver::Version;
     
-    let a_clean = a.trim_start_matches(|c| c == 'v' || c == 'V');
-    let b_clean = b.trim_start_matches(|c| c == 'v' || c == 'V');
+    let a_clean = a.trim_start_matches(['v', 'V']);
+    let b_clean = b.trim_start_matches(['v', 'V']);
     
     let a_ver = Version::parse(a_clean).unwrap_or_else(|_| Version::new(0, 0, 0));
     let b_ver = Version::parse(b_clean).unwrap_or_else(|_| Version::new(0, 0, 0));
@@ -145,9 +145,9 @@ pub async fn create_category_directories(app_handle: tauri::AppHandle, paths: Ve
     use tauri::Manager;
     for path in paths {
         let mut expanded = std::path::PathBuf::from(&path);
-        if path.starts_with("~/") {
+        if let Some(stripped) = path.strip_prefix("~/") {
             if let Ok(home) = app_handle.path().home_dir() {
-                expanded = home.join(&path[2..]);
+                expanded = home.join(stripped);
             }
         }
         if !expanded.exists() {

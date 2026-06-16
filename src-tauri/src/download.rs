@@ -23,7 +23,7 @@ const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 
 #[derive(Debug)]
 pub enum DownloadCmd {
-    Start(DownloadPayload),
+    Start(Box<DownloadPayload>),
     Pause(Uuid),
     Cancel(Uuid),
     CaptureUrls(Vec<String>),
@@ -255,7 +255,8 @@ async fn run_coordinator(
                 };
 
                 match command {
-                    DownloadCmd::Start(payload) => {
+                    DownloadCmd::Start(payload_box) => {
+                        let payload = *payload_box;
                         if let Some(previous) = active.remove(&payload.id) {
                             let _ = previous.control_tx.send(DownloadControl::Replace).await;
                         }

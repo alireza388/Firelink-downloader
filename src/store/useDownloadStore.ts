@@ -8,6 +8,7 @@ import type { DownloadItem } from '../bindings/DownloadItem';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
+import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
 
 export type { DownloadCategory } from '../utils/downloads';
@@ -98,6 +99,13 @@ interface DownloadState {
   renameQueue: (id: string, name: string) => void;
   removeQueue: (id: string) => void;
   initDB: () => Promise<void>;
+  
+  isParsing: boolean;
+  activeMetadata: MediaMetadata | null;
+  activeMetadataUrl: string | null;
+  parsingError: string | null;
+  fetchMetadataAction: (url: string) => Promise<void>;
+  clearMetadata: () => void;
 }
 
 let isProcessingQueue = false;
@@ -110,6 +118,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddReferer: '',
   pendingAddFilename: '',
   selectedPropertiesDownloadId: null,
+  isParsing: false,
+  activeMetadata: null,
+  activeMetadataUrl: null,
+  parsingError: null,
   deleteModalState: { isOpen: false },
   openDeleteModal: (downloadId) => set({ deleteModalState: { isOpen: true, downloadId } }),
   closeDeleteModal: () => set({ deleteModalState: { isOpen: false } }),
@@ -140,6 +152,24 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     );
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
+  clearMetadata: () => set({ isParsing: false, activeMetadata: null, activeMetadataUrl: null, parsingError: null }),
+  fetchMetadataAction: async (url) => {
+    set({ isParsing: true, parsingError: null, activeMetadata: null, activeMetadataUrl: url });
+    try {
+      const settings = useSettingsStore.getState();
+      const metadata = await invoke('fetch_media_metadata', { 
+        url,
+        cookieBrowser: settings.mediaCookieSource === 'none' ? null : settings.mediaCookieSource,
+        username: null,
+        password: null
+      });
+      set({ isParsing: false, activeMetadata: metadata });
+      info(`Media metadata parsed for ${url}: found ${metadata.formats.length} formats`);
+    } catch (e) {
+      set({ isParsing: false, parsingError: String(e) });
+      info(`Media metadata parsing failed for ${url}: ${e}`);
+    }
+  },
   addDownload: (item) => {
     info(`Download ${item.id} added to queue`);
     set((state) => ({ downloads: [...state.downloads, item] }));

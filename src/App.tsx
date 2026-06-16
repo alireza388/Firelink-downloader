@@ -5,6 +5,7 @@ import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
 import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
+import { QualityModal } from './components/QualityModal';
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
@@ -298,6 +299,7 @@ function App() {
       
       <AddDownloadsModal />
       <PropertiesModal />
+      <QualityModal />
       <DeleteConfirmationModal />
     </div>
   );

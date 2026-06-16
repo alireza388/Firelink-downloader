@@ -141,6 +141,22 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
+// @ts-ignore
+interface QualityOption {
+  h: number;
+  name: string;
+}
+
+const standardResolutions = [
+  { h: 2160, name: "4K" },
+  { h: 1440, name: "1440p" },
+  { h: 1080, name: "1080p" },
+  { h: 720, name: "720p" },
+  { h: 480, name: "480p" },
+  { h: 360, name: "360p" }
+];
+
+// @ts-ignore
 const parseMediaFormats = (jsonStr: string) => {
   try {
     const parsed: unknown = JSON.parse(jsonStr);
@@ -153,15 +169,6 @@ const parseMediaFormats = (jsonStr: string) => {
       : [];
 
     const options = [];
-
-    const standardResolutions = [
-      { h: 2160, name: "4K" },
-      { h: 1440, name: "1440p" },
-      { h: 1080, name: "1080p" },
-      { h: 720, name: "720p" },
-      { h: 480, name: "480p" },
-      { h: 360, name: "360p" }
-    ];
 
     const availableResolutions = standardResolutions.filter(res =>
       rawFormats.some(f => isVideo(f) && matchesHeight(f, res.h))
@@ -359,22 +366,30 @@ export const AddDownloadsModal = () => {
               }
             }
 
-            const jsonStr = await invoke('fetch_media_metadata', {
+            const mediaData = await invoke('fetch_media_metadata', {
               url, 
               cookieBrowser: browserArg,
               username: login?.username || null,
               password: keychainPassword
             });
-            const mediaData = parseMediaFormats(jsonStr);
             if (mediaData && mediaData.formats.length > 0) {
+              const mappedFormats = mediaData.formats.map(f => ({
+                id: f.format_id,
+                name: f.resolution,
+                ext: f.ext,
+                bytes: f.filesize || 0,
+                detail: `${f.resolution} • ${f.ext} • ${f.fps ? f.fps + 'fps' : ''} • ${f.filesize ? formatBytes(f.filesize) : 'Unknown size'}`,
+                selector: f.format_id,
+                type: 'video'
+              }));
               updatedItems[i] = {
                 url,
                 file: `${mediaData.title}.${mediaData.formats[0].ext}`,
-                size: mediaData.formats[0].detail || 'Unknown (Media)',
-                sizeBytes: mediaData.formats[0].bytes,
+                size: mappedFormats[0].detail,
+                sizeBytes: mappedFormats[0].bytes,
                 status: 'Ready',
                 isMedia: true,
-                formats: mediaData.formats,
+                formats: mappedFormats,
                 selectedFormat: 0
               };
             } else {

@@ -17,6 +17,28 @@ pub struct MetadataResponse {
     size_bytes: u64,
 }
 
+#[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct MediaFormat {
+    pub format_id: String,
+    pub resolution: String,
+    pub ext: String,
+    #[ts(type = "number | null")]
+    pub fps: Option<f64>,
+    #[ts(type = "number | null")]
+    pub filesize: Option<u64>,
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct MediaMetadata {
+    pub title: String,
+    #[ts(type = "number | null")]
+    pub duration: Option<u64>,
+    pub thumbnail: Option<String>,
+    pub formats: Vec<MediaFormat>,
+}
+
 
 
 
@@ -163,14 +185,13 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 }
 
 #[tauri::command]
-async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<String, String> {
+async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
     println!("fetch_media_metadata called for: {}", url);
     use tauri_plugin_shell::ShellExt;
     let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| format!("Failed to create sidecar yt-dlp: {}", e))?;
-    cmd = cmd.arg("-J")
+    cmd = cmd.arg("--dump-json")
        .arg("--no-warnings")
        .arg("--no-playlist")
-       .arg("--no-check-formats")
        .arg("--socket-timeout").arg("20")
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
@@ -203,14 +224,33 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
 
     cmd = cmd.arg("--").arg(&url);
 
-    // We use tokio AsyncCommand so it doesn't block the async thread
     let output = cmd.output()
         .await
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
     if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(text)
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        
+        let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown Title").to_string();
+        let duration = value.get("duration").and_then(|v| v.as_f64()).map(|v| v as u64);
+        let thumbnail = value.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string());
+        
+        let mut formats = Vec::new();
+        if let Some(formats_arr) = value.get("formats").and_then(|v| v.as_array()) {
+            for fmt in formats_arr {
+                let format_id = fmt.get("format_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let resolution = fmt.get("resolution").and_then(|v| v.as_str()).unwrap_or("audio only").to_string();
+                let ext = fmt.get("ext").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let fps = fmt.get("fps").and_then(|v| v.as_f64());
+                let filesize = fmt.get("filesize").and_then(|v| v.as_u64()).or_else(|| fmt.get("filesize_approx").and_then(|v| v.as_f64().map(|f| f as u64)));
+                
+                if !format_id.is_empty() {
+                    formats.push(MediaFormat { format_id, resolution, ext, fps, filesize });
+                }
+            }
+        }
+        
+        Ok(MediaMetadata { title, duration, thumbnail, formats })
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
         Err(format!("yt-dlp error: {}", err))

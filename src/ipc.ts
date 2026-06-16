@@ -6,6 +6,7 @@ import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
 import type { DownloadStatus } from './bindings/DownloadStatus';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
 import type { MediaCookieSource } from './bindings/MediaCookieSource';
+import type { MediaMetadata } from './bindings/MediaMetadata';
 import type { MetadataResponse } from './bindings/MetadataResponse';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
@@ -51,7 +52,7 @@ type CommandMap = {
   };
   fetch_media_metadata: {
     args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null };
-    result: string;
+    result: MediaMetadata;
   };
   test_ytdlp: { args: undefined; result: string };
   test_aria2c: { args: undefined; result: string };

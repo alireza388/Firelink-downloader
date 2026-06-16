@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, MoreVertical, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
+import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
+import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
 import { homeDir } from '@tauri-apps/api/path';
 
@@ -210,87 +211,16 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             <div className="download-table-body">
             <div className="h-full overflow-auto flex flex-col">
               {filteredDownloads.map((d, index) => (
-                <div
+                <DownloadItemComponent
                   key={d.id}
-                  className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''}`}
-                  style={{ gridTemplateColumns: tableGridTemplate }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
-                  }}
-                >
-                  <div className="download-file-cell">
-                    <span className="shrink-0 text-text-muted">
-                      {getCategoryIcon(d.category)}
-                    </span>
-                    <span className="download-file-name">
-                      {d.fileName}
-                    </span>
-                  </div>
-                  
-                  <div>
-                    <span className="tabular-nums">
-                      {d.size && d.size !== '-' ? d.size : 'Unknown'}
-                    </span>
-                  </div>
-                  
-                  <div className="download-status-cell">
-                    {d.status === 'completed' ? (
-                      <span className="download-status download-status-completed">Completed</span>
-                    ) : (
-                      <>
-                        <div className="download-progress-track">
-                          <div
-                            className={`download-progress-fill ${d.status === 'paused' ? 'paused' : ''}`}
-                            style={{ width: `${(d.fraction || 0) * 100}%` }}
-                          />
-                        </div>
-                        <span className={`download-status ${d.status === 'paused' ? 'download-status-paused' : d.status === 'failed' ? 'download-status-failed' : d.status === 'downloading' ? 'download-status-downloading' : ''}`}>
-                          {d.status === 'downloading'
-                            ? `${((d.fraction || 0) * 100).toFixed(0)}%`
-                            : d.status.charAt(0).toUpperCase() + d.status.slice(1)}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  
-                  <div>
-                    <span className="tabular-nums">{d.status === 'downloading' ? d.speed : '-'}</span>
-                  </div>
-                  
-                  <div>
-                    <span className="tabular-nums">{d.status === 'downloading' ? d.eta : '-'}</span>
-                  </div>
-                  
-                  <div className="download-cell-right">
-                    <span className="truncate group-hover:hidden tabular-nums ml-auto">
-                      {d.dateAdded ? new Date(d.dateAdded).toLocaleDateString() : '-'}
-                    </span>
-                    
-                    <div className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto">
-                      {d.status === 'downloading' && (
-                        <button onClick={() => handlePause(d.id)} className="app-icon-button h-7 w-7" title="Pause">
-                          <Pause size={14} fill="currentColor" />
-                        </button>
-                      )}
-                      {d.status === 'paused' && (
-                        <button onClick={() => handleResume(d)} className="app-icon-button h-7 w-7" title="Resume">
-                          <Play size={14} fill="currentColor" />
-                        </button>
-                      )}
-                      <button
-                        onClick={(e) => {
-                           e.stopPropagation();
-                           setContextMenu({ x: e.clientX, y: e.clientY, id: d.id });
-                        }}
-                        className="app-icon-button h-7 w-7"
-                        title="Options"
-                      >
-                        <MoreVertical size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                  downloadId={d.id}
+                  index={index}
+                  tableGridTemplate={tableGridTemplate}
+                  setContextMenu={setContextMenu}
+                  handlePause={handlePause}
+                  handleResume={handleResume}
+                  getCategoryIcon={getCategoryIcon}
+                />
               ))}
               {Array.from({ length: Math.max(0, 50 - filteredDownloads.length) }).map((_, i) => {
                 const globalIndex = filteredDownloads.length + i;

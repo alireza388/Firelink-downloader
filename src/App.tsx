@@ -8,6 +8,7 @@ import { PropertiesModal } from "./components/PropertiesModal";
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
+import { initDownloadListener } from './store/downloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import SchedulerView from "./components/SchedulerView";
@@ -204,20 +205,7 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unlistenProgress = listen('download-progress', (event: any) => {
-      const { id, fraction, speed, eta, size } = event.payload;
-      const state = useDownloadStore.getState();
-      const current = state.downloads.find(d => d.id === id);
-      
-      const updates: any = { fraction, speed, eta };
-      if (size) updates.size = size;
-      
-      if (current && current.status === 'queued') {
-        updates.status = 'downloading';
-      }
-      
-      updateDownload(id, updates);
-    });
+    initDownloadListener();
 
     const unlistenComplete = listen('download-complete', (event) => {
       updateDownload(event.payload, { status: 'completed', fraction: 1.0, speed: '-', eta: '-' });
@@ -255,7 +243,6 @@ function App() {
 
     return () => {
       invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
-      unlistenProgress.then(f => f());
       unlistenComplete.then(f => f());
       unlistenFailed.then(f => f());
       unlistenExtension.then(f => f());

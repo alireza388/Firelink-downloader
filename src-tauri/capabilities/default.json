@@ -9,6 +9,28 @@
     "opener:default",
     "dialog:default",
     "notification:default",
-    "notification:allow-is-permission-granted"
+    "notification:allow-is-permission-granted",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "cmd": "yt-dlp",
+          "args": true
+        },
+        {
+          "cmd": "aria2c",
+          "args": true
+        },
+        {
+          "cmd": "ffmpeg",
+          "args": true
+        },
+        {
+          "cmd": "deno",
+          "args": true
+        }
+      ]
+    }
   ]
 }

@@ -2,9 +2,6 @@
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::{Manager, Emitter};
-use tokio::process::Command as AsyncCommand;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use regex::Regex;
 use serde::Serialize;
 use ts_rs::TS;
@@ -20,13 +17,7 @@ pub struct MetadataResponse {
     size_bytes: u64,
 }
 
-fn get_binary_name(base: &str) -> String {
-    if cfg!(target_os = "windows") {
-        format!("{}.exe", base)
-    } else {
-        base.to_string()
-    }
-}
+
 
 
 #[tauri::command]
@@ -177,24 +168,20 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 #[tauri::command]
 async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<String, String> {
     println!("fetch_media_metadata called for: {}", url);
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
-
-    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
-    let mut cmd = AsyncCommand::new(&ytdlp_path);
-    cmd.arg("-J")
+    use tauri_plugin_shell::ShellExt;
+    let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| format!("Failed to create sidecar yt-dlp: {}", e))?;
+    cmd = cmd.arg("-J")
        .arg("--no-warnings")
        .arg("--no-playlist")
        .arg("--no-check-formats")
        .arg("--socket-timeout").arg("20")
        .arg("--retries").arg("3")
        .arg("--extractor-retries").arg("3")
-       .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("--js-runtimes").arg(format!("deno:{}", deno_path.display()));
+       .arg("--compat-options").arg("no-youtube-unavailable-videos");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
-            cmd.arg("--cookies-from-browser").arg(&browser);
+            cmd = cmd.arg("--cookies-from-browser").arg(&browser);
         }
     }
     
@@ -214,10 +201,10 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
     config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
     if !config_content.is_empty() {
-        cmd.arg("--config-location").arg(&config_path);
+        cmd = cmd.arg("--config-location").arg(&config_path);
     }
 
-    cmd.arg("--").arg(&url);
+    cmd = cmd.arg("--").arg(&url);
 
     // We use tokio AsyncCommand so it doesn't block the async thread
     let output = cmd.output()
@@ -236,11 +223,10 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
 #[tauri::command]
 async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ytdlp called!");
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
-    println!("Resolved yt-dlp path: {:?}", ytdlp_path);
-
-    let output = AsyncCommand::new(&ytdlp_path)
+    use tauri_plugin_shell::ShellExt;
+    
+    let output = app_handle.shell().sidecar("yt-dlp")
+        .map_err(|e| e.to_string())?
         .arg("--version")
         .output()
         .await
@@ -249,7 +235,7 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
             format!("Failed to execute yt-dlp: {}", e)
         })?;
 
-    println!("yt-dlp execution finished with status: {}", output.status);
+    println!("yt-dlp execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         println!("yt-dlp output: {}", text);
@@ -264,11 +250,10 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ffmpeg called!");
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ffmpeg_path = resource_dir.join("binaries").join(get_binary_name("ffmpeg"));
-    println!("Resolved ffmpeg path: {:?}", ffmpeg_path);
+    use tauri_plugin_shell::ShellExt;
 
-    let output = AsyncCommand::new(&ffmpeg_path)
+    let output = app_handle.shell().sidecar("ffmpeg")
+        .map_err(|e| e.to_string())?
         .arg("-version")
         .output()
         .await
@@ -277,7 +262,7 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
             format!("Failed to execute ffmpeg: {}", e)
         })?;
 
-    println!("ffmpeg execution finished with status: {}", output.status);
+    println!("ffmpeg execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let first_line = text.lines().next().unwrap_or("").to_string();
@@ -295,11 +280,10 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_deno called!");
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
-    println!("Resolved deno path: {:?}", deno_path);
+    use tauri_plugin_shell::ShellExt;
 
-    let output = AsyncCommand::new(&deno_path)
+    let output = app_handle.shell().sidecar("deno")
+        .map_err(|e| e.to_string())?
         .arg("--version")
         .output()
         .await
@@ -308,7 +292,7 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
             format!("Failed to execute deno: {}", e)
         })?;
 
-    println!("deno execution finished with status: {}", output.status);
+    println!("deno execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").unwrap();
@@ -383,49 +367,19 @@ async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), Strin
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-struct Aria2DaemonGuard(std::sync::Mutex<Option<std::process::Child>>);
+struct Aria2DaemonGuard(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
 impl Drop for Aria2DaemonGuard {
     fn drop(&mut self) {
         if let Ok(mut lock) = self.0.lock() {
-            if let Some(mut child) = lock.take() {
+            if let Some(child) = lock.take() {
                 let _ = child.kill();
             }
         }
     }
 }
 
-#[cfg(target_os = "macos")]
-fn resign_aria2_debug_bundle(aria2c_path: &std::path::Path) -> Result<(), String> {
-    let lib_dir = aria2c_path
-        .parent()
-        .ok_or_else(|| "aria2 resource directory is missing".to_string())?
-        .join("aria2-libs");
-    let mut libraries = std::fs::read_dir(&lib_dir)
-        .map_err(|error| format!("Failed to read aria2 libraries: {error}"))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("dylib"))
-        .collect::<Vec<_>>();
-    libraries.sort();
 
-    for path in libraries.into_iter().chain(std::iter::once(aria2c_path.to_path_buf())) {
-        let output = std::process::Command::new("/usr/bin/codesign")
-            .args(["--force", "--sign", "-"])
-            .arg(&path)
-            .output()
-            .map_err(|error| format!("Failed to run codesign for {}: {error}", path.display()))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Failed to sign {}: {}",
-                path.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-    }
-
-    Ok(())
-}
 
 pub mod download;
 #[allow(dead_code)]
@@ -800,9 +754,6 @@ pub(crate) async fn start_media_download_internal(
         .unwrap_or("download")
         .to_string();
 
-    let resource_dir = app_handle.path().resource_dir().map_err(|e| e.to_string())?;
-    let ytdlp_path = resource_dir.join("binaries").join(get_binary_name("yt-dlp"));
-    let ffmpeg_path = resource_dir.join("binaries").join(get_binary_name("ffmpeg"));
 
     let resolved_dest = resolve_path(&destination, &app_handle);
 
@@ -822,11 +773,9 @@ pub(crate) async fn start_media_download_internal(
         1.0
     };
 
-    let deno_path = resource_dir.join("binaries").join(get_binary_name("deno"));
-    let mut cmd = AsyncCommand::new(&ytdlp_path);
-    cmd.arg("--newline")
-       .arg("--ffmpeg-location")
-       .arg(&ffmpeg_path)
+    use tauri_plugin_shell::ShellExt;
+    let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
+       .arg("--newline")
        .arg("--no-check-formats")
        .arg("--socket-timeout").arg("20")
        .arg("--retries").arg("3")
@@ -836,37 +785,35 @@ pub(crate) async fn start_media_download_internal(
        .arg("--concurrent-fragments").arg("4")
        .arg("--no-warnings")
        .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("--js-runtimes").arg(format!("deno:{},node", deno_path.display()))
-       .arg("--progress-template").arg("download:[%(progress.downloaded_bytes)s/%(progress.total_bytes)s]")
        .arg("-o").arg(out_path.to_string_lossy().to_string());
 
     if let Some(limit) = speed_limit {
         if !limit.is_empty() {
-            cmd.arg("--limit-rate").arg(limit);
+            cmd = cmd.arg("--limit-rate").arg(limit);
         }
     }
 
     if let Some(p) = proxy {
         if !p.is_empty() {
-            cmd.arg("--proxy").arg(p);
+            cmd = cmd.arg("--proxy").arg(p);
         }
     }
 
     if let Some(mut cs) = cookie_source {
         if !cs.is_empty() && cs != "none" {
             if cs == "safari" { cs = "safari:".to_string() }
-            cmd.arg("--cookies-from-browser").arg(cs);
+            cmd = cmd.arg("--cookies-from-browser").arg(cs);
         }
     }
 
     if let Some(ua) = user_agent {
         if !ua.is_empty() {
-            cmd.arg("--user-agent").arg(ua);
+            cmd = cmd.arg("--user-agent").arg(ua);
         }
     }
 
     if let Some(tries) = max_tries {
-        cmd.arg("--retries").arg(tries.to_string());
+        cmd = cmd.arg("--retries").arg(tries.to_string());
     }
 
     let mut config_file = tempfile::Builder::new().prefix("ytdlp-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
@@ -890,36 +837,33 @@ pub(crate) async fn start_media_download_internal(
     config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
     if !config_content.is_empty() {
-        cmd.arg("--config-location").arg(&config_path);
+        cmd = cmd.arg("--config-location").arg(config_path.to_string_lossy().to_string());
     }
 
     if let Some(format) = format_selector {
-        cmd.arg("-f").arg(format);
+        cmd = cmd.arg("-f").arg(format);
         // If the filename implies an audio format, use it as audio output
         if safe_filename.ends_with(".mp3") {
-            cmd.arg("-x").arg("--audio-format").arg("mp3");
+            cmd = cmd.arg("-x").arg("--audio-format").arg("mp3");
         } else if safe_filename.ends_with(".m4a") {
-            cmd.arg("-x").arg("--audio-format").arg("m4a");
+            cmd = cmd.arg("-x").arg("--audio-format").arg("m4a");
         } else if safe_filename.ends_with(".opus") {
-            cmd.arg("-x").arg("--audio-format").arg("opus");
+            cmd = cmd.arg("-x").arg("--audio-format").arg("opus");
         } else {
             // Otherwise attempt to merge into mp4 or mkv based on filename
             if safe_filename.ends_with(".mp4") {
-                cmd.arg("--merge-output-format").arg("mp4");
+                cmd = cmd.arg("--merge-output-format").arg("mp4");
             } else if safe_filename.ends_with(".webm") {
-                cmd.arg("--merge-output-format").arg("webm");
+                cmd = cmd.arg("--merge-output-format").arg("webm");
             } else {
-                cmd.arg("--merge-output-format").arg("mkv");
+                cmd = cmd.arg("--merge-output-format").arg("mkv");
             }
         }
     }
 
-    cmd.arg("--").arg(&url);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped()); // Also pipe stderr for better error reporting
+    cmd = cmd.arg("--").arg(&url);
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
-    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
 
     // yt-dlp parsing regex
     static PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -931,27 +875,28 @@ pub(crate) async fn start_media_download_internal(
     let eta_re = ETA_RE.get_or_init(|| Regex::new(r"ETA\s+([^\s]+)").unwrap());
 
     let _keep_alive = config_path;
-    let mut reader = BufReader::new(stdout).lines();
     let mut current_track: f64 = 0.0;
     let mut last_fraction: f64 = 0.0;
     let mut last_progress_at = std::time::Instant::now()
-        .checked_sub(std::time::Duration::from_millis(150))
+        .checked_sub(std::time::Duration::from_millis(200))
         .unwrap_or_else(std::time::Instant::now);
 
     loop {
         tokio::select! {
             _ = cancel_rx.changed() => {
-                let _ = child.kill().await;
+                let _ = child.kill();
                 return Ok(());
             }
-            line_result = reader.next_line() => {
-                match line_result {
-                    Ok(Some(line)) => {
+            event = rx.recv() => {
+                match event {
+                    Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
+                        let line = String::from_utf8_lossy(&line_bytes);
                         if line.contains("[download]") && line.contains("%") {
-                            let fraction = pct_re.captures(&line)
-                                .and_then(|cap| cap.get(1))
-                                .and_then(|m| m.as_str().parse::<f64>().ok())
-                                .unwrap_or(0.0) / 100.0;
+                            let fraction = if let Some(cap) = pct_re.captures(&line) {
+                                cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()).unwrap_or(0.0) / 100.0
+                            } else {
+                                0.0
+                            };
 
                             if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
                                 current_track += 1.0;
@@ -960,18 +905,20 @@ pub(crate) async fn start_media_download_internal(
 
                             let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
 
-                            let speed = spd_re.captures(&line)
-                                .and_then(|cap| cap.get(1))
-                                .map(|m| m.as_str().to_string())
-                                .unwrap_or_else(|| "-".to_string());
+                            let speed = if let Some(cap) = spd_re.captures(&line) {
+                                cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
+                            } else {
+                                "-".to_string()
+                            };
 
-                            let eta = eta_re.captures(&line)
-                                .and_then(|cap| cap.get(1))
-                                .map(|m| m.as_str().to_string())
-                                .unwrap_or_else(|| "-".to_string());
+                            let eta = if let Some(cap) = eta_re.captures(&line) {
+                                cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
+                            } else {
+                                "-".to_string()
+                            };
 
                             let now = std::time::Instant::now();
-                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(1000) {
+                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                 let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                     id: id.to_string(),
                                     fraction: overall_fraction,
@@ -983,19 +930,27 @@ pub(crate) async fn start_media_download_internal(
                             }
                         }
                     }
-                    _ => break,
+                    Some(tauri_plugin_shell::process::CommandEvent::Stderr(_line_bytes)) => {
+                        // Consume stderr to avoid blocking
+                    }
+                    Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
+                        eprintln!("yt-dlp shell error: {}", err);
+                        let _ = app_handle.emit("download-failed", id.to_string());
+                        break;
+                    }
+                    Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
+                        println!("child exit status: {:?}", payload.code);
+                        if payload.code == Some(0) {
+                            let _ = app_handle.emit("download-complete", id.to_string());
+                        } else {
+                            let _ = app_handle.emit("download-failed", id.to_string());
+                        }
+                        break;
+                    }
+                    Some(_) => {}
+                    None => break,
                 }
             }
-        }
-    }
-
-    let status = child.wait().await;
-    println!("child exit status: {:?}", status);
-    if let Ok(exit_status) = status {
-        if exit_status.success() {
-            let _ = app_handle.emit("download-complete", id.to_string());
-        } else {
-            let _ = app_handle.emit("download-failed", id.to_string());
         }
     }
 
@@ -1436,34 +1391,36 @@ pub fn run() {
 
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
-            let resource_dir = app.path().resource_dir().unwrap();
-            let aria2c_path = resource_dir.join("binaries").join(get_binary_name("aria2c"));
-
-            #[cfg(all(target_os = "macos", debug_assertions))]
-            if let Err(error) = resign_aria2_debug_bundle(&aria2c_path) {
-                eprintln!("{error}");
-            }
-            
-            let aria2_process = std::process::Command::new(&aria2c_path)
-                .arg("--enable-rpc=true")
-                .arg(format!("--rpc-listen-port={}", aria2_port))
-                .arg(format!("--rpc-secret={}", aria2_secret))
-                .arg("--rpc-listen-all=false")
-                .arg("--continue=true")
-                .arg("--allow-overwrite=false")
-                .arg("--summary-interval=1")
-                .arg("--console-log-level=warn")
-                .arg("--download-result=hide")
-                .arg("--check-certificate=true")
-                .spawn();
+            use tauri_plugin_shell::ShellExt;
+            let aria2_process = match app.handle().shell().sidecar("aria2c") {
+                Ok(cmd) => {
+                    cmd.arg("--enable-rpc=true")
+                        .arg(format!("--rpc-listen-port={}", aria2_port))
+                        .arg(format!("--rpc-secret={}", aria2_secret))
+                        .arg("--rpc-listen-all=false")
+                        .arg("--continue=true")
+                        .arg("--allow-overwrite=false")
+                        .arg("--summary-interval=1")
+                        .arg("--console-log-level=warn")
+                        .arg("--download-result=hide")
+                        .arg("--check-certificate=true")
+                        .spawn()
+                        .map(|(_, child)| child)
+                        .ok()
+                }
+                Err(e) => {
+                    eprintln!("Failed to create aria2c sidecar: {}", e);
+                    None
+                }
+            };
 
             match aria2_process {
-                Ok(process) => {
+                Some(process) => {
                     println!("Spawned global aria2c daemon on port {}", aria2_port);
                     let guard = app.state::<Aria2DaemonGuard>();
                     *guard.0.lock().unwrap() = Some(process);
                 }
-                Err(e) => eprintln!("Failed to spawn aria2c daemon: {}", e),
+                None => eprintln!("Failed to spawn aria2c daemon"),
             }
 
             let app_handle_ws = app.handle().clone();
@@ -1574,6 +1531,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {

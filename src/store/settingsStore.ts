@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import { LazyStore } from '@tauri-apps/plugin-store';
+import { info } from '@tauri-apps/plugin-log';
 
 export const tauriStore = new LazyStore('store.bin');
 
@@ -49,9 +50,18 @@ export const useSettingsStore = create<SettingsState>()(
       globalSpeedLimit: 0,
       concurrentDownloads: 3,
 
-      setDefaultDownloadPath: (path) => set({ defaultDownloadPath: path }),
-      setGlobalSpeedLimit: (limit) => set({ globalSpeedLimit: limit }),
-      setConcurrentDownloads: (count) => set({ concurrentDownloads: count }),
+      setDefaultDownloadPath: (path) => {
+        info(`Settings updated: defaultDownloadPath = ${path}`);
+        set({ defaultDownloadPath: path });
+      },
+      setGlobalSpeedLimit: (limit) => {
+        info(`Settings updated: globalSpeedLimit = ${limit}`);
+        set({ globalSpeedLimit: limit });
+      },
+      setConcurrentDownloads: (count) => {
+        info(`Settings updated: concurrentDownloads = ${count}`);
+        set({ concurrentDownloads: count });
+      },
     }),
     {
       name: 'firelink-engine-settings',

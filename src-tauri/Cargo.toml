@@ -54,6 +54,8 @@ futures-util = { version = "0.3.32", features = ["sink"] }
 chrono = "0.4.38"
 url = "2"
 tauri-plugin-store = "2.4.3"
+log = "0.4.32"
+tauri-plugin-log = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25"
 objc = "0.2.7"

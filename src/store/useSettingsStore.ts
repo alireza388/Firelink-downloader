@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import { invokeCommand as invoke } from '../ipc';
+import { info } from '@tauri-apps/plugin-log';
 import type { ActiveView } from '../bindings/ActiveView';
 import type { AppFontSize } from '../bindings/AppFontSize';
 import type { ListRowDensity } from '../bindings/ListRowDensity';
@@ -232,12 +233,14 @@ export const useSettingsStore = create<SettingsState>()(
       extensionPairingToken: generateSecureToken(),
       autoCheckUpdates: true,
 
-      setTheme: (theme) => set({ theme }),
-      setDefaultDownloadPath: (path) => set({ defaultDownloadPath: path }),
+      setTheme: (theme) => { info('Settings updated: theme'); set({ theme }); },
+      setDefaultDownloadPath: (path) => { info('Settings updated: defaultDownloadPath'); set({ defaultDownloadPath: path }); },
       setMaxConcurrentDownloads: (max) => {
+        info('Settings updated: maxConcurrentDownloads');
         set({ maxConcurrentDownloads: max });
       },
       setGlobalSpeedLimit: (limit) => {
+        info('Settings updated: globalSpeedLimit');
         set({ globalSpeedLimit: limit });
       },
       setActiveView: (view) => set({ activeView: view }),
@@ -266,14 +269,18 @@ export const useSettingsStore = create<SettingsState>()(
       setCustomUserAgent: (customUserAgent) => set({ customUserAgent }),
       setAskWhereToSaveEachFile: (askWhereToSaveEachFile) => set({ askWhereToSaveEachFile }),
       setPreventsSleepWhileDownloading: (preventsSleepWhileDownloading) => {
+        info('Settings updated: preventsSleepWhileDownloading');
         set({ preventsSleepWhileDownloading });
         if (!preventsSleepWhileDownloading) invoke('set_prevent_sleep', { prevent: false }).catch(console.error);
       },
-      setMediaCookieSource: (mediaCookieSource) => set({ mediaCookieSource }),
-      setCategoryDirectory: (category, path) => set((state) => ({
-        downloadDirectories: { ...state.downloadDirectories, [category]: path }
-      })),
-      resetCategoryDirectories: () => set({ downloadDirectories: { ...defaultDirectories } }),
+      setMediaCookieSource: (mediaCookieSource) => { info('Settings updated: mediaCookieSource'); set({ mediaCookieSource }); },
+      setCategoryDirectory: (category, path) => {
+        info(`Settings updated: category directory ${category}`);
+        set((state) => ({
+          downloadDirectories: { ...state.downloadDirectories, [category]: path }
+        }));
+      },
+      resetCategoryDirectories: () => { info('Settings updated: resetCategoryDirectories'); set({ downloadDirectories: { ...defaultDirectories } }); },
       addSiteLogin: (login) => set((state) => ({
         siteLogins: [...state.siteLogins, login]
       })),

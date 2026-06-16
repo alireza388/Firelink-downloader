@@ -866,6 +866,7 @@ pub(crate) async fn start_media_download_internal(
     cmd = cmd.arg("--").arg(&url);
 
     let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
+    log::info!("yt-dlp successfully spawned for id: {}", id);
 
     // yt-dlp parsing regex
     static PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -932,21 +933,26 @@ pub(crate) async fn start_media_download_internal(
                             }
                         }
                     }
-                    Some(tauri_plugin_shell::process::CommandEvent::Stderr(_line_bytes)) => {
-                        // Consume stderr to avoid blocking
+                    Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
+                        let line = String::from_utf8_lossy(&line_bytes);
+                        let lower = line.to_lowercase();
+                        if lower.contains("error") || lower.contains("critical") {
+                            log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
+                        }
                     }
                     Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
-                        eprintln!("yt-dlp shell error: {}", err);
+                        log::error!("yt-dlp shell error [{}]: {}", id, err);
                         let _ = app_handle.emit("download-failed", id.to_string());
                         break;
                     }
                     Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
-                        println!("child exit status: {:?}", payload.code);
                         if payload.code == Some(0) {
+                            log::info!("yt-dlp completed successfully for id: {}", id);
                             let _ = app_handle.emit("download-complete", id.to_string());
                             use tauri_plugin_notification::NotificationExt;
                             let _ = app_handle.notification().builder().title("Download Complete").body(&safe_filename).show();
                         } else {
+                            log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
                             let _ = app_handle.emit("download-failed", id.to_string());
                         }
                         break;
@@ -1469,23 +1475,53 @@ pub fn run() {
                         cmd = cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
                     }
                     
-                    cmd.spawn()
-                        .map(|(_, child)| child)
-                        .ok()
+                    match cmd.spawn() {
+                        Ok((mut rx, child)) => {
+                            log::info!("aria2c spawned successfully on port {}", aria2_port);
+                            tauri::async_runtime::spawn(async move {
+                                while let Some(event) = rx.recv().await {
+                                    match event {
+                                        tauri_plugin_shell::process::CommandEvent::Stderr(bytes) => {
+                                            let line = String::from_utf8_lossy(&bytes);
+                                            let lower = line.to_lowercase();
+                                            if lower.contains("error") || lower.contains("critical") {
+                                                log::error!("aria2c stderr: {}", line.trim());
+                                            }
+                                        }
+                                        tauri_plugin_shell::process::CommandEvent::Error(err) => {
+                                            log::error!("aria2c process error: {}", err);
+                                        }
+                                        tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
+                                            if payload.code == Some(0) {
+                                                log::info!("aria2c completed successfully");
+                                            } else {
+                                                log::error!("aria2c exited with non-zero code: {:?}", payload.code);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
+                            Some(child)
+                        }
+                        Err(e) => {
+                            log::error!("Failed to spawn aria2c: {}", e);
+                            None
+                        }
+                    }
                 }
                 Err(e) => {
-                    eprintln!("Failed to create aria2c sidecar: {}", e);
+                    log::error!("Failed to create aria2c sidecar: {}", e);
                     None
                 }
             };
 
             match aria2_process {
                 Some(process) => {
-                    println!("Spawned global aria2c daemon on port {}", aria2_port);
                     let guard = app.state::<Aria2DaemonGuard>();
                     *guard.0.lock().unwrap() = Some(process);
                 }
-                None => eprintln!("Failed to spawn aria2c daemon"),
+                None => log::error!("Failed to spawn aria2c daemon"),
             }
 
             let app_handle_ws = app.handle().clone();
@@ -1597,6 +1633,16 @@ pub fn run() {
             });
             Ok(())
         })
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+                .build(),
+        )
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())

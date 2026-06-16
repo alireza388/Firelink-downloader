@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { error as logError } from '@tauri-apps/plugin-log';
 import { listen as tauriListen, type Event, type EventCallback, type UnlistenFn } from '@tauri-apps/api/event';
 import type { DownloadCategory } from './bindings/DownloadCategory';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
@@ -104,7 +105,10 @@ export function invokeCommand<K extends CommandName>(
   command: K,
   ...args: CommandArgs<K> extends undefined ? [] : [args: CommandArgs<K>]
 ): Promise<CommandResult<K>> {
-  return tauriInvoke<CommandResult<K>>(command, args[0]);
+  return tauriInvoke<CommandResult<K>>(command, args[0]).catch(err => {
+    logError(`Invoke command ${command} failed: ${err}`);
+    throw err;
+  });
 }
 
 type EventMap = {

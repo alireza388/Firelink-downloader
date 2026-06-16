@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { LazyStore } from '@tauri-apps/plugin-store';
+import { info } from '@tauri-apps/plugin-log';
 import { invokeCommand as invoke } from '../ipc';
 
 export const tauriStore = new LazyStore('store.bin');
@@ -140,7 +141,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
   addDownload: (item) => {
-    set((state) => ({ downloads: [...state.downloads, item] }));
+    info(`Download ${item.id} added to queue`);
     set((state) => ({ downloads: [...state.downloads, item] }));
     get().processQueue();
   },
@@ -161,9 +162,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     
     // If status changed to something that frees up a slot, process queue
     if (updates.status && ['completed', 'failed', 'paused'].includes(updates.status)) {
+      info(`Download ${id} status changed to ${updates.status}`);
       get().processQueue();
       syncSystemIntegrations();
     } else if (updates.status === 'downloading') {
+      info(`Download ${id} status changed to downloading`);
       syncSystemIntegrations();
     }
   },
@@ -187,6 +190,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     set((state) => ({
       downloads: state.downloads.filter(d => d.id !== id)
     }));
+    info(`Download ${id} removed`);
     get().processQueue();
     syncSystemIntegrations();
   },
@@ -207,6 +211,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     if (wasDownloading) {
       invoke('pause_download', { id }).catch(console.error);
     }
+    info(`Download ${id} redownload requested (queued)`);
     get().processQueue();
   },
   startQueue: async (queueId) => {
@@ -224,6 +229,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       )
     }));
 
+    info(`Queue ${queueId} started, ${runnableIds.length} items queued`);
     await get().processQueue();
     return runnableIds.length;
   },
@@ -242,6 +248,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       )
     }));
 
+    info(`Queue ${queueId} paused, ${activeIds.length} items paused`);
     await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
     syncSystemIntegrations();
     return activeIds.length;

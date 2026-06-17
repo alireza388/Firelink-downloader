@@ -66,7 +66,6 @@ root.
 | macOS | Active development and automated testing |
 | Windows | Core architecture prepared; packaging and validation pending |
 | Linux | Core architecture prepared; packaging and validation pending |
-| Legacy SwiftUI app | Archived in [`legacy/swift`](legacy/swift) |
 
 See the [changelog](CHANGELOG.md) for release history and recent work.
 

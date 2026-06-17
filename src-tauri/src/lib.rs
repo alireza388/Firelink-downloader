@@ -1452,7 +1452,11 @@ pub fn run() {
     let aria2_secret = uuid::Uuid::new_v4().to_string();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            restore_main_window(app);
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                window.show().unwrap();
+                window.set_focus().unwrap();
+            }
         }))
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard(std::sync::Mutex::new(None)))

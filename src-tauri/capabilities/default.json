@@ -10,28 +10,55 @@
     "dialog:default",
     "notification:default",
     "notification:allow-is-permission-granted",
+    "shell:allow-execute",
+    "shell:allow-spawn",
     {
       "identifier": "shell:allow-execute",
       "allow": [
         {
           "name": "yt-dlp",
           "sidecar": true,
-          "args": ["--version"]
+          "args": true
         },
         {
           "name": "aria2c",
           "sidecar": true,
-          "args": ["--version"]
+          "args": true
         },
         {
           "name": "ffmpeg",
           "sidecar": true,
-          "args": ["-version"]
+          "args": true
         },
         {
           "name": "deno",
           "sidecar": true,
-          "args": ["--version"]
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "yt-dlp",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "aria2c",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "ffmpeg",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "deno",
+          "sidecar": true,
+          "args": true
         }
       ]
     }

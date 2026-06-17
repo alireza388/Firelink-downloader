@@ -9,6 +9,7 @@ import type { ExtensionDownload } from './bindings/ExtensionDownload';
 import type { MediaCookieSource } from './bindings/MediaCookieSource';
 import type { MediaMetadata } from './bindings/MediaMetadata';
 import type { MetadataResponse } from './bindings/MetadataResponse';
+import type { EngineStatusResult } from './bindings/EngineStatusResult';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
 
@@ -55,10 +56,7 @@ type CommandMap = {
     args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null };
     result: MediaMetadata;
   };
-  test_ytdlp: { args: undefined; result: string };
-  test_aria2c: { args: undefined; result: string };
-  test_ffmpeg: { args: undefined; result: string };
-  test_deno: { args: undefined; result: string };
+  get_engine_status: { args: undefined; result: EngineStatusResult };
   open_file: { args: { path: string }; result: void };
   show_in_folder: { args: { path: string }; result: void };
   reveal_in_file_manager: { args: { path: string }; result: void };

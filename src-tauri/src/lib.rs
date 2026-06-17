@@ -462,6 +462,7 @@ use std::sync::{Arc, Mutex, RwLock};
 struct Aria2DaemonGuard {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     startup_error: Mutex<Option<String>>,
+    last_stderr: Mutex<String>,
 }
 
 impl Aria2DaemonGuard {
@@ -469,6 +470,7 @@ impl Aria2DaemonGuard {
         Self {
             child: Mutex::new(None),
             startup_error: Mutex::new(None),
+            last_stderr: Mutex::new(String::new()),
         }
     }
 }
@@ -522,6 +524,33 @@ pub struct DownloadProgressEvent {
     speed: String,
     eta: String,
     size: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct EngineStatusItem {
+    name: String,
+    kind: String,
+    expected_sidecar: String,
+    resolved_path: Option<String>,
+    version: Option<String>,
+    ready: bool,
+    error: Option<String>,
+    stderr_tail: Option<String>,
+    remediation_hint: Option<String>,
+    rpc_port: Option<u16>,
+    daemon_alive: Option<bool>,
+    rpc_ready: Option<bool>,
+    last_stderr_tail: Option<String>,
+    expects_internal_dir: Option<bool>,
+    has_internal_dir: Option<bool>,
+    has_python_framework: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct EngineStatusResult {
+    pub engines: Vec<EngineStatusItem>,
 }
 
 
@@ -670,6 +699,273 @@ async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppSt
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "aria2 returned an invalid version response".to_string())
+}
+
+// ── get_engine_status: Structured engine diagnostics ──────────────
+
+async fn run_sidecar_version(
+    app_handle: &tauri::AppHandle,
+    sidecar_name: &str,
+    args: &[&str],
+) -> (Option<String>, Option<String>, Option<String>) {
+    use tauri_plugin_shell::ShellExt;
+
+    let cmd = match app_handle.shell().sidecar(sidecar_name) {
+        Ok(cmd) => cmd,
+        Err(e) => return (None, Some(format!("Cannot create sidecar '{}': {}", sidecar_name, e)), None),
+    };
+    let cmd = args.iter().fold(cmd, |c, arg| c.arg(arg));
+
+    let output = match tokio::time::timeout(std::time::Duration::from_secs(8), cmd.output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return (None, Some(format!("Failed to execute '{}': {}", sidecar_name, e)), None),
+        Err(_) => return (None, Some(format!("'{}' version check timed out", sidecar_name)), None),
+    };
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stderr_tail = if stderr.is_empty() { None } else { Some(stderr.clone()) };
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (Some(stdout), None, stderr_tail)
+    } else {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let err = if !stderr.is_empty() {
+            stderr.lines().rev().take(10).collect::<Vec<_>>().join("\n")
+        } else {
+            format!("Exited with code {:?}", output.status.code())
+        };
+        (if stdout.is_empty() { None } else { Some(stdout) }, Some(err), stderr_tail)
+    }
+}
+
+fn generate_remediation_hint(error: &str, _kind: &str) -> Option<String> {
+    let lower = error.to_lowercase();
+    if lower.contains("library not loaded") || lower.contains("dylib") {
+        Some("A required system library is missing. Try reinstalling Firelink or run 'brew install openssl'.".to_string())
+    } else if lower.contains("not found") || lower.contains("could not find") {
+        Some("The bundled binary file is missing. Reinstall Firelink to restore it.".to_string())
+    } else if lower.contains("timed out") {
+        Some("The binary did not respond within the timeout. It may be damaged or incompatible with this system.".to_string())
+    } else if lower.contains("permission denied") {
+        Some("The binary does not have execute permission. Try reinstalling Firelink.".to_string())
+    } else {
+        None
+    }
+}
+
+fn arch_suffix() -> &'static str {
+    if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }
+}
+
+async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> EngineStatusItem {
+    let sidecar_name = "aria2c";
+    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+
+    let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
+    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+
+    let (startup_err, daemon_stderr) = {
+        let guard = app_handle.state::<Aria2DaemonGuard>();
+        let se = guard.startup_error.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let stderr = guard.last_stderr.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        (se, stderr)
+    };
+    let daemon_alive = startup_err.is_none();
+    let last_stderr_tail = if daemon_stderr.is_empty() { None } else { Some(daemon_stderr) };
+
+    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let version = version_raw.and_then(|v| v.lines().next().map(|l| l.trim().to_string()));
+
+    let rpc_ready = if daemon_alive {
+        rpc_call(port, secret, "aria2.getVersion", serde_json::json!([]))
+            .await
+            .is_ok()
+    } else {
+        false
+    };
+
+    let error = startup_err.or(run_error);
+    let ready = daemon_alive && rpc_ready && version.is_some();
+    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+
+    EngineStatusItem {
+        name: "Aria2".to_string(),
+        kind: "aria2".to_string(),
+        expected_sidecar,
+        resolved_path,
+        version,
+        ready,
+        error,
+        stderr_tail,
+        remediation_hint,
+        rpc_port: Some(port),
+        daemon_alive: Some(daemon_alive),
+        rpc_ready: Some(rpc_ready),
+        last_stderr_tail,
+        expects_internal_dir: None,
+        has_internal_dir: None,
+        has_python_framework: None,
+    }
+}
+
+async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
+    let sidecar_name = "yt-dlp";
+    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+
+    let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
+    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+
+    let (expects_internal_dir, has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
+        let parent = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
+        if let Some(parent) = parent {
+            let internal = parent.join("_internal");
+            let hi = internal.is_dir();
+            let hp = if hi {
+                internal.join("Python.framework").is_dir() || internal.join("Python").exists()
+            } else {
+                false
+            };
+            (true, hi, hp)
+        } else {
+            (true, false, false)
+        }
+    } else {
+        (true, false, false)
+    };
+
+    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let version = version_raw.and_then(|v| v.lines().next().map(|l| l.trim().to_string()));
+
+    let mut error = run_error;
+    let mut remediation_hint = None;
+
+    if error.is_none() {
+        if !has_internal_dir {
+            error = Some("_internal directory was not found beside yt-dlp sidecar".to_string());
+            remediation_hint = Some("The yt-dlp distribution is missing its _internal directory. Reinstall Firelink.".to_string());
+        } else if !has_python_framework {
+            error = Some("_internal/Python.framework was not found beside yt-dlp sidecar".to_string());
+            remediation_hint = Some("The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink.".to_string());
+        }
+    }
+
+    if remediation_hint.is_none() {
+        remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+    }
+
+    EngineStatusItem {
+        name: "yt-dlp".to_string(),
+        kind: "ytdlp".to_string(),
+        expected_sidecar,
+        resolved_path,
+        version,
+        ready: error.is_none(),
+        error,
+        stderr_tail,
+        remediation_hint,
+        rpc_port: None,
+        daemon_alive: None,
+        rpc_ready: None,
+        last_stderr_tail: None,
+        expects_internal_dir: Some(expects_internal_dir),
+        has_internal_dir: Some(has_internal_dir),
+        has_python_framework: Some(has_python_framework),
+    }
+}
+
+async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
+    let sidecar_name = "ffmpeg";
+    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+
+    let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
+    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+
+    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
+    let version = version_raw.as_ref().and_then(|text| {
+        text.lines().next().and_then(|first| {
+            let parts: Vec<&str> = first.split_whitespace().collect();
+            parts.get(2).map(|v| v.split('-').next().unwrap_or(v).to_string())
+        })
+    });
+
+    let error = run_error;
+    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+
+    EngineStatusItem {
+        name: "FFmpeg".to_string(),
+        kind: "ffmpeg".to_string(),
+        expected_sidecar,
+        resolved_path,
+        version,
+        ready: error.is_none(),
+        error,
+        stderr_tail,
+        remediation_hint,
+        rpc_port: None,
+        daemon_alive: None,
+        rpc_ready: None,
+        last_stderr_tail: None,
+        expects_internal_dir: None,
+        has_internal_dir: None,
+        has_python_framework: None,
+    }
+}
+
+async fn check_deno(app_handle: &tauri::AppHandle) -> EngineStatusItem {
+    let sidecar_name = "deno";
+    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+
+    let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
+    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+
+    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let version = version_raw.as_ref().and_then(|text| {
+        let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").ok()?;
+        re.captures(text).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+    }).or(version_raw);
+
+    let error = run_error;
+    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+
+    EngineStatusItem {
+        name: "Deno".to_string(),
+        kind: "deno".to_string(),
+        expected_sidecar,
+        resolved_path,
+        version,
+        ready: error.is_none(),
+        error,
+        stderr_tail,
+        remediation_hint,
+        rpc_port: None,
+        daemon_alive: None,
+        rpc_ready: None,
+        last_stderr_tail: None,
+        expects_internal_dir: None,
+        has_internal_dir: None,
+        has_python_framework: None,
+    }
+}
+
+#[tauri::command]
+async fn get_engine_status(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<EngineStatusResult, String> {
+    let port = state.aria2_port;
+    let secret = state.aria2_secret.clone();
+
+    let (aria2, ytdlp, ffmpeg, deno) = tokio::join!(
+        check_aria2(&app_handle, port, &secret),
+        check_ytdlp(&app_handle),
+        check_ffmpeg(&app_handle),
+        check_deno(&app_handle),
+    );
+
+    Ok(EngineStatusResult {
+        engines: vec![aria2, ytdlp, ffmpeg, deno],
+    })
 }
 
 
@@ -1751,11 +2047,20 @@ pub fn run() {
                             let guard = app.state::<Aria2DaemonGuard>();
                             *guard.child.lock().unwrap() = Some(child);
 
+                            let daemon_app = app.handle().clone();
                             tauri::async_runtime::spawn(async move {
                                 while let Some(event) = rx.recv().await {
                                     match event {
                                         tauri_plugin_shell::process::CommandEvent::Stderr(bytes) => {
                                             let line = String::from_utf8_lossy(&bytes);
+                                            // Store for diagnostics
+                                            if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
+                                                stderr_lock.push_str(&line);
+                                                let excess = stderr_lock.len().saturating_sub(8192);
+                                                if excess > 0 {
+                                                    let _ = stderr_lock.drain(..excess);
+                                                }
+                                            }
                                             let lower = line.to_lowercase();
                                             if lower.contains("error") || lower.contains("critical") {
                                                 log::error!("aria2c stderr: {}", line.trim());
@@ -1962,7 +2267,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
+            get_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
             pause_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,

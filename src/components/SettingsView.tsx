@@ -13,6 +13,7 @@ import {
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import { invokeCommand as invoke } from '../ipc';
+import type { EngineStatusItem } from '../bindings/EngineStatusItem';
 import { WindowDragRegion } from './WindowDragRegion';
 import appIcon from '../assets/app-icon.png';
 
@@ -33,18 +34,10 @@ export default function SettingsView() {
   const { pickDirectory } = useDirectoryPicker();
   const activeTab = settings.activeSettingsTab;
 
-  // Local state for versions
-  const [aria2Version, setAria2Version] = useState<string>('Checking...');
-  const [ytdlpVersion, setYtdlpVersion] = useState<string>('Checking...');
-  const [ffmpegVersion, setFfmpegVersion] = useState<string>('Checking...');
-  const [denoVersion, setDenoVersion] = useState<string>('Checking...');
+  // Local state for engine diagnostics
+  const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
+  const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState('0.7.3');
-
-  const getEngineStatus = (v: string) => {
-    if (v === 'Checking...') return <span className="text-text-muted font-medium">Checking...</span>;
-    if (v.startsWith('Error')) return <span className="text-red-500 font-medium">Error / Missing</span>;
-    return <span className="text-green-500 font-medium">Ready</span>;
-  };
 
   // Local state for adding site login
   const [loginPattern, setLoginPattern] = useState('');
@@ -67,29 +60,65 @@ export default function SettingsView() {
     getVersion().then(setAppVersion).catch(() => undefined);
   }, []);
 
-  // Fetch engine versions when Engine tab is opened
+  // Fetch engine status when Engine tab is opened
   useEffect(() => {
     if (settings.activeView === 'settings' && activeTab === 'engine') {
-      invoke('test_aria2c')
-        .then(v => setAria2Version(v))
-        .catch(e => setAria2Version('Error: ' + e));
-
-      invoke('test_ytdlp')
-        .then(v => setYtdlpVersion(v))
-        .catch(e => setYtdlpVersion('Error: ' + e));
-
-      invoke('test_ffmpeg')
-        .then(v => setFfmpegVersion(v))
-        .catch(e => setFfmpegVersion('Error: ' + e));
-
-      invoke('test_deno')
-        .then(v => setDenoVersion(v))
-        .catch(e => setDenoVersion('Error: ' + e));
+      setEngineStatus(null);
+      setExpandedEngine(null);
+      invoke('get_engine_status')
+        .then(r => setEngineStatus(r.engines))
+        .catch(() => setEngineStatus([]));
     }
   }, [settings.activeView, activeTab]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
+  };
+
+  const findEngine = (kind: string) => engineStatus?.find(e => e.kind === kind) ?? null;
+
+  const renderEngineStatus = (item: EngineStatusItem | null) => {
+    if (!item) return <span className="text-text-muted font-medium">Checking...</span>;
+    if (item.ready) return <span className="text-green-500 font-medium">Ready</span>;
+    return <span className="text-red-500 font-medium">Error / Missing</span>;
+  };
+
+  const renderEngineVersion = (item: EngineStatusItem | null) => {
+    if (!item) return 'Checking...';
+    if (item.version) return item.version;
+    if (item.error) return `Error: ${item.error.length > 80 ? item.error.substring(0, 80) + '…' : item.error}`;
+    return 'Unknown';
+  };
+
+  const renderEngineDetails = (item: EngineStatusItem | null) => {
+    if (!item || item.ready || (!item.error && !item.remediation_hint && !item.stderr_tail)) return null;
+    const isExpanded = expandedEngine === item.kind;
+    return (
+      <>
+        <button
+          onClick={() => setExpandedEngine(isExpanded ? null : item.kind)}
+          className="text-accent text-[11px] font-medium hover:underline mt-1"
+        >
+          {isExpanded ? 'Hide technical details' : 'Show technical details'}
+        </button>
+        {isExpanded && (
+          <div className="mt-2 p-2 bg-bg-modal rounded text-[11px] font-mono text-text-muted space-y-1 leading-relaxed">
+            {item.resolved_path && <p>Binary: {item.resolved_path}</p>}
+            {item.expected_sidecar && <p>Expected: {item.expected_sidecar}</p>}
+            {item.error && <p className="text-red-400">Error: {item.error}</p>}
+            {item.remediation_hint && <p className="text-yellow-500">Tip: {item.remediation_hint}</p>}
+            {item.stderr_tail && <details><summary className="cursor-pointer text-text-muted">stderr</summary><pre className="mt-1 whitespace-pre-wrap">{item.stderr_tail}</pre></details>}
+            {item.daemon_alive != null && <p>Daemon process alive: {String(item.daemon_alive)}</p>}
+            {item.rpc_ready != null && <p>RPC ready: {String(item.rpc_ready)}</p>}
+            {item.rpc_port != null && <p>RPC port: {item.rpc_port}</p>}
+            {item.last_stderr_tail && <details><summary className="cursor-pointer text-text-muted">daemon stderr</summary><pre className="mt-1 whitespace-pre-wrap">{item.last_stderr_tail}</pre></details>}
+            {item.expects_internal_dir != null && <p>Expects _internal layout: {String(item.expects_internal_dir)}</p>}
+            {item.has_internal_dir != null && <p>_internal directory found: {String(item.has_internal_dir)}</p>}
+            {item.has_python_framework != null && <p>Python runtime found: {String(item.has_python_framework)}</p>}
+          </div>
+        )}
+      </>
+    );
   };
 
   const handleCheckForUpdates = async () => {
@@ -741,64 +770,69 @@ export default function SettingsView() {
             <div className="settings-pane space-y-6 max-w-[760px]">
               <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Media Downloader & Engines</h3>
 
-              <div className="space-y-4">
-                <div className="border border-border-modal rounded-lg p-4 space-y-3 bg-item-hover/5">
-                  <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
-                    <Terminal size={14} className="text-accent" /> Core Downloader (Aria2)
-                  </h4>
-                  <div className="grid grid-cols-[120px_1fr] text-[13px]">
-                    <span className="text-text-secondary">Version:</span>
-                    <span className="font-mono text-xs text-text-muted select-all">{aria2Version}</span>
-                  </div>
-                  <div className="grid grid-cols-[120px_1fr] text-[13px] items-center">
-                    <span className="text-text-secondary">Status:</span>
-                    {getEngineStatus(aria2Version)}
-                  </div>
-                </div>
+              {(() => {
+                const a2 = findEngine('aria2'); const yt = findEngine('ytdlp');
+                const ff = findEngine('ffmpeg'); const dn = findEngine('deno');
+                return (
+                  <div className="space-y-4">
+                    {/* aria2 card */}
+                    <div className="border border-border-modal rounded-lg p-4 space-y-2 bg-item-hover/5">
+                      <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
+                        <Terminal size={14} className="text-accent" /> Core Downloader (Aria2)
+                      </h4>
+                      <div className="grid grid-cols-[100px_1fr] text-[13px] items-center gap-x-2">
+                        <span className="text-text-secondary">Version:</span>
+                        <span className="font-mono text-xs text-text-muted select-all truncate">{renderEngineVersion(a2)}</span>
+                      </div>
+                      <div className="grid grid-cols-[100px_1fr] text-[13px] items-center gap-x-2">
+                        <span className="text-text-secondary">Status:</span>
+                        {renderEngineStatus(a2)}
+                      </div>
+                      {renderEngineDetails(a2)}
+                    </div>
 
-                <div className="border border-border-modal rounded-lg p-4 space-y-3 bg-item-hover/5">
-                  <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
-                    <Terminal size={14} className="text-orange-500" /> Media Extractors
-                  </h4>
-                  
-                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
-                    <span className="text-text-secondary font-semibold">yt-dlp:</span>
-                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{ytdlpVersion}</span>
-                    {getEngineStatus(ytdlpVersion)}
-                  </div>
-                  
-                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
-                    <span className="text-text-secondary font-semibold">FFmpeg:</span>
-                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{ffmpegVersion}</span>
-                    {getEngineStatus(ffmpegVersion)}
-                  </div>
-                  
-                  <div className="grid grid-cols-[120px_1fr_80px] text-[13px] pb-1 items-center">
-                    <span className="text-text-secondary font-semibold">Deno:</span>
-                    <span className="font-mono text-xs text-text-muted select-all truncate pr-4">{denoVersion}</span>
-                    {getEngineStatus(denoVersion)}
-                  </div>
+                    {/* yt-dlp / ffmpeg / deno card */}
+                    <div className="border border-border-modal rounded-lg p-4 space-y-2 bg-item-hover/5">
+                      <h4 className="text-[13px] font-bold text-text-primary flex items-center gap-2 border-b border-border-modal pb-1">
+                        <Terminal size={14} className="text-orange-500" /> Media Extractors
+                      </h4>
+                      {[
+                        { key: 'ytdlp', item: yt, label: 'yt-dlp' },
+                        { key: 'ffmpeg', item: ff, label: 'FFmpeg' },
+                        { key: 'deno', item: dn, label: 'Deno' },
+                      ].map(({ key, item, label }) => (
+                        <div key={key}>
+                          <div className="grid grid-cols-[100px_1fr_80px] text-[13px] items-center gap-x-2">
+                            <span className="text-text-secondary font-semibold">{label}:</span>
+                            <span className="font-mono text-xs text-text-muted select-all truncate">{renderEngineVersion(item)}</span>
+                            {renderEngineStatus(item)}
+                          </div>
+                          {renderEngineDetails(item)}
+                        </div>
+                      ))}
 
-                  <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px] border-t border-border-modal/50 pt-3 mt-2">
-                    <label className="text-text-secondary font-semibold">Browser Cookies Source:</label>
-                    <select
-                      value={settings.mediaCookieSource}
-                      onChange={(e) => settings.setMediaCookieSource(
-                        e.target.value as typeof settings.mediaCookieSource
-                      )}
-                      className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent"
-                    >
-                      <option value="none">None</option>
-                      <option value="safari">Safari</option>
-                      <option value="chrome">Chrome</option>
-                      <option value="firefox">Firefox</option>
-                      <option value="edge">Edge</option>
-                      <option value="brave">Brave</option>
-                    </select>
+                      <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px] border-t border-border-modal/50 pt-3 mt-2">
+                        <label className="text-text-secondary font-semibold">Browser Cookies Source:</label>
+                        <select
+                          value={settings.mediaCookieSource}
+                          onChange={(e) => settings.setMediaCookieSource(
+                            e.target.value as typeof settings.mediaCookieSource
+                          )}
+                          className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent"
+                        >
+                          <option value="none">None</option>
+                          <option value="safari">Safari</option>
+                          <option value="chrome">Chrome</option>
+                          <option value="firefox">Firefox</option>
+                          <option value="edge">Edge</option>
+                          <option value="brave">Brave</option>
+                        </select>
+                      </div>
+                      <p className="text-text-muted text-xs mt-1">yt-dlp reads browser cookies to bypass video download limits or access restricted media. Firelink does not save browser cookies.</p>
+                    </div>
                   </div>
-                  <p className="text-text-muted text-xs mt-1">yt-dlp reads browser cookies to bypass video download limits or access restricted media. Firelink does not save browser cookies.</p>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           )}
 

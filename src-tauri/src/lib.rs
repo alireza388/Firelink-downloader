@@ -242,9 +242,24 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 #[tauri::command]
 async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
     println!("fetch_media_metadata called for: {}", url);
+    
+    // Resolve bundled deno and ffmpeg binaries and create a temporary PATH for yt-dlp
+    let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
+    let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
+    
+    let bin_dir = tempfile::tempdir().map_err(|e| format!("failed to create bundling temp dir: {e}"))?;
+    {
+        use std::os::unix::fs::symlink;
+        symlink(&deno_path, bin_dir.path().join("deno")).map_err(|e| format!("failed to symlink deno: {e}"))?;
+        symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg")).map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
+    }
+    let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
+    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
+
     use tauri_plugin_shell::ShellExt;
     let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| format!("Failed to create sidecar yt-dlp: {}", e))?;
-    cmd = cmd.arg("--dump-json")
+    cmd = cmd.env("PATH", &path_env)
+       .arg("--dump-json")
        .arg("--no-warnings")
        .arg("--no-playlist")
        .arg("--socket-timeout").arg("20")
@@ -662,7 +677,11 @@ pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serd
     }
     payload.insert("params".to_string(), serde_json::json!(p));
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+
     let res = client.post(&url)
         .json(&payload)
         .send()
@@ -717,17 +736,16 @@ async fn run_sidecar_version(
     let bin = binary_path.clone();
     let arg_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
-    let result = tokio::task::spawn_blocking(move || {
-        let output = std::process::Command::new(&bin)
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::process::Command::new(&bin)
             .args(&arg_owned)
-            .output()?;
-        Ok::<_, std::io::Error>(output)
+            .output().await
     }).await;
 
     let output = match result {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => return (None, Some(format!("Failed to execute '{}': {}", sidecar_name, e)), None),
-        Err(e) => return (None, Some(format!("'{}' version check panicked: {}", sidecar_name, e)), None),
+        Err(_) => return (None, Some(format!("'{}' version check timed out after 5 seconds", sidecar_name)), None),
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1123,8 +1141,10 @@ pub(crate) async fn start_media_download_internal(
     // Resolve absolute paths to bundled binaries
     let aria2c_path = resolve_bundled_binary_path(&app_handle, "aria2c")?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
+    let deno_path = resolve_bundled_binary_path(&app_handle, "deno")?;
     log::info!("Using bundled aria2c: {:?}", aria2c_path);
     log::info!("Using bundled ffmpeg: {:?}", ffmpeg_path);
+    log::info!("Using bundled deno: {:?}", deno_path);
 
     // Create a temp directory with bare-name symlinks so yt-dlp finds the
     // bundled binaries via PATH when told --downloader aria2c (bare name).
@@ -1135,6 +1155,8 @@ pub(crate) async fn start_media_download_internal(
             .map_err(|e| format!("failed to symlink aria2c: {e}"))?;
         symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg"))
             .map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
+        symlink(&deno_path, bin_dir.path().join("deno"))
+            .map_err(|e| format!("failed to symlink deno: {e}"))?;
     }
     let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
     // Minimal PATH: bundled dir first, then only essential system paths.

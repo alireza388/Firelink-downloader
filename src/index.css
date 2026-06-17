@@ -24,6 +24,12 @@
   --sidebar-panel-bg: 0 0% 95%;
   --workspace-bg: 0 0% 98%;
   --statusbar-bg: 0 0% 96%;
+  --status-completed: 136 62% 48%;
+  --status-paused: 0 0% 56%;
+  --status-downloading: 211 100% 56%;
+  --status-failed: 0 62% 58%;
+  --status-queued: 38 92% 50%;
+  --status-retrying: 50 100% 50%;
   --sidebar-border: 0 0% 0% / 0.12;
   --sidebar-hover: 0 0% 0% / 0.06;
 }
@@ -78,6 +84,8 @@
   --status-paused: 0 0% 56%;
   --status-downloading: 211 100% 56%;
   --status-failed: 0 62% 58%;
+  --status-queued: 38 95% 55%;
+  --status-retrying: 50 100% 60%;
   --sidebar-shell-bg: 0 0% 11%;
   --sidebar-panel-bg: 0 0% 13%;
   --workspace-bg: 0 0% 11%;
@@ -109,6 +117,8 @@
   --status-paused: 65 92% 76%;
   --status-downloading: 191 97% 77%;
   --status-failed: 0 100% 67%;
+  --status-queued: 38 95% 60%;
+  --status-retrying: 50 100% 65%;
   --sidebar-shell-bg: 231 15% 15%;
   --sidebar-panel-bg: 232 14% 23%;
   --workspace-bg: 231 15% 18%;
@@ -140,6 +150,8 @@
   --status-paused: 40 71% 73%;
   --status-downloading: 193 43% 67%;
   --status-failed: 354 42% 56%;
+  --status-queued: 40 71% 60%;
+  --status-retrying: 50 85% 55%;
   --sidebar-shell-bg: 220 18% 18%;
   --sidebar-panel-bg: 220 17% 27%;
   --workspace-bg: 220 16% 22%;
@@ -1069,6 +1081,15 @@
     background: hsl(199 89% 48%);
   }
 
+  .download-progress-fill.queued {
+    background: hsl(var(--status-queued));
+  }
+
+  .download-progress-fill.retrying {
+    background: hsl(var(--status-retrying));
+    animation: pulse-progress 1.5s ease-in-out infinite;
+  }
+
   .download-status {
     font-weight: 500;
   }
@@ -1095,6 +1116,16 @@
 
   .download-status-processing {
     color: hsl(199 89% 48%);
+    font-weight: 600;
+  }
+
+  .download-status-queued {
+    color: hsl(var(--status-queued));
+    font-weight: 600;
+  }
+
+  .download-status-retrying {
+    color: hsl(var(--status-retrying));
     font-weight: 600;
   }
 }
@@ -1141,6 +1172,11 @@
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes pulse-progress {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 @keyframes modal-in {

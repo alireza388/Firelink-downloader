@@ -94,7 +94,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 className={`download-progress-fill ${
                   download.status === 'paused' ? 'paused' : 
                   download.status === 'processing' ? 'processing' :
-                  download.status === 'queued' ? 'queued' : ''
+                  download.status === 'queued' ? 'queued' :
+                  download.status === 'retrying' ? 'retrying' : ''
                 }`}
                 style={{ width: `${(download.fraction || 0) * 100}%` }}
               />
@@ -106,7 +107,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 download.status === 'failed' ? 'download-status-failed' : 
                 download.status === 'processing' ? 'download-status-processing' :
                 download.status === 'downloading' ? 'download-status-downloading' : 
-                download.status === 'queued' ? 'download-status-queued' : ''
+                download.status === 'queued' ? 'download-status-queued' :
+                download.status === 'retrying' ? 'download-status-retrying' : ''
               }`}
             >
               {download.status === 'queued' && queueIndex !== -1 ? (
@@ -127,11 +129,15 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       </div>
       
       <div>
-        <span ref={speedTextRef} className="tabular-nums">{download.status === 'downloading' ? download.speed : '-'}</span>
+        <span ref={speedTextRef} className="tabular-nums">
+          {download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
+        </span>
       </div>
       
       <div>
-        <span ref={etaTextRef} className="tabular-nums">{download.status === 'downloading' ? download.eta : '-'}</span>
+        <span ref={etaTextRef} className="tabular-nums">
+          {download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
+        </span>
       </div>
       
       <div className="download-cell-right">
@@ -160,7 +166,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               </button>
             </>
           )}
-          {(download.status === 'downloading' || download.status === 'processing') && (
+          {(download.status === 'downloading' || download.status === 'processing' || download.status === 'retrying') && (
             <button onClick={() => handlePause(download.id)} className="app-icon-button h-7 w-7" title="Pause">
               <Pause size={14} fill="currentColor" />
             </button>

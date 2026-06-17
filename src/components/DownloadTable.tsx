@@ -281,7 +281,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
           <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
 
-          {(contextItem.status === 'downloading' || contextItem.status === 'queued') && (
+          {(contextItem.status === 'downloading' || contextItem.status === 'queued' || contextItem.status === 'retrying') && (
             <button
               onClick={() => {
                 setContextMenu(null);
@@ -293,7 +293,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </button>
           )}
 
-          {(contextItem.status === 'paused' || contextItem.status === 'failed') && (
+          {(contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
             <button
               onClick={() => {
                 setContextMenu(null);
@@ -305,7 +305,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </button>
           )}
 
-          {['completed', 'failed', 'paused'].includes(contextItem.status) && (
+          {['completed', 'failed', 'paused', 'retrying'].includes(contextItem.status) && (
             <button
               onClick={() => {
                 setContextMenu(null);

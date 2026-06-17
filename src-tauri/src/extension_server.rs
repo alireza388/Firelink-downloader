@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::State,
-    http::{HeaderMap, StatusCode, Method},
+    http::{HeaderMap, Method, StatusCode},
     routing::{get, post},
     Router,
 };
@@ -15,12 +15,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_store::StoreExt;
+use tokio::sync::watch;
 use tower_http::cors::{Any, CorsLayer};
 use ts_rs::TS;
 
 pub const EXTENSION_SERVER_PORT: u16 = 23522;
+pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> =
+    EXTENSION_SERVER_PORT..=23531;
 const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
+const MAIN_QUEUE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -44,6 +49,10 @@ struct ExtensionRequest {
     silent: bool,
     #[serde(default)]
     filename: Option<String>,
+    #[serde(default)]
+    headers: Option<String>,
+    #[serde(default)]
+    cookies: Option<String>,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -53,12 +62,15 @@ pub struct ExtensionDownload {
     referer: Option<String>,
     silent: bool,
     filename: Option<String>,
+    headers: Option<String>,
+    cookies: Option<String>,
 }
 
 pub async fn start_server(
     app_handle: AppHandle,
     pairing_token: SharedExtensionToken,
     frontend_ready: SharedFrontendReady,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let state = ServerState {
         app_handle,
@@ -81,17 +93,39 @@ pub async fn start_server(
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", EXTENSION_SERVER_PORT))
-        .await
-        .map_err(|e| format!("Failed to bind extension server to port {}: {}", EXTENSION_SERVER_PORT, e))?;
-        
-    println!("Browser extension server bound to 127.0.0.1:{}", EXTENSION_SERVER_PORT);
+    let (port, listener) = bind_extension_listener().await?;
+
+    println!("Browser extension server bound to 127.0.0.1:{port}");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            if *shutdown_rx.borrow() {
+                return;
+            }
+            let _ = shutdown_rx.changed().await;
+        })
         .await
         .map_err(|e| format!("Server error: {}", e))?;
 
     Ok(())
+}
+
+async fn bind_extension_listener() -> Result<(u16, tokio::net::TcpListener), String> {
+    let mut errors = Vec::new();
+    for port in EXTENSION_SERVER_PORT_RANGE {
+        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => return Ok((port, listener)),
+            Err(error) => {
+                errors.push(format!("{port}: {error}"));
+            }
+        }
+    }
+    Err(format!(
+        "Failed to bind extension server in port range {}-{} ({})",
+        EXTENSION_SERVER_PORT,
+        *EXTENSION_SERVER_PORT_RANGE.end(),
+        errors.join("; ")
+    ))
 }
 
 async fn ping_handler(
@@ -103,12 +137,18 @@ async fn ping_handler(
         return StatusCode::SERVICE_UNAVAILABLE;
     }
 
-    let signature = match headers.get("x-firelink-signature").and_then(|v| v.to_str().ok()) {
+    let signature = match headers
+        .get("x-firelink-signature")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(v) => v,
         None => return StatusCode::FORBIDDEN,
     };
 
-    let timestamp_str = match headers.get("x-firelink-timestamp").and_then(|v| v.to_str().ok()) {
+    let timestamp_str = match headers
+        .get("x-firelink-timestamp")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(v) => v,
         None => return StatusCode::FORBIDDEN,
     };
@@ -125,16 +165,18 @@ async fn download_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
-    if !state.frontend_ready.load(Ordering::Acquire) {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    let signature = match headers.get("x-firelink-signature").and_then(|v| v.to_str().ok()) {
+    let signature = match headers
+        .get("x-firelink-signature")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(v) => v,
         None => return Err(StatusCode::FORBIDDEN),
     };
 
-    let timestamp_str = match headers.get("x-firelink-timestamp").and_then(|v| v.to_str().ok()) {
+    let timestamp_str = match headers
+        .get("x-firelink-timestamp")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(v) => v,
         None => return Err(StatusCode::FORBIDDEN),
     };
@@ -172,11 +214,134 @@ async fn download_handler(
         }
     }
 
-    if state.app_handle.emit("extension-add-download", download).is_err() {
+    if enqueue_extension_download(&state.app_handle, &download)
+        .await
+        .is_err()
+    {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     Ok(StatusCode::OK)
+}
+
+async fn enqueue_extension_download(
+    app_handle: &AppHandle,
+    download: &ExtensionDownload,
+) -> Result<(), String> {
+    let Some(settings) = read_settings(app_handle) else {
+        return Err("settings unavailable".to_string());
+    };
+    let state = app_handle.state::<crate::AppState>();
+    let mut created_items = Vec::new();
+    let mut tasks = Vec::new();
+
+    for url in &download.urls {
+        let filename = download
+            .filename
+            .as_deref()
+            .filter(|_| download.urls.len() == 1)
+            .map(str::to_string)
+            .unwrap_or_else(|| filename_from_url(url));
+        let category = crate::parity::get_file_category(filename.clone());
+        let category_key = format!("{category:?}");
+        let destination = settings
+            .download_directories
+            .get(&category_key)
+            .cloned()
+            .filter(|path| !path.trim().is_empty())
+            .unwrap_or_else(|| settings.default_download_path.clone());
+        let id = uuid::Uuid::new_v4().to_string();
+        let headers = merge_headers(download.referer.as_deref(), download.headers.as_deref());
+        let item = crate::ipc::DownloadItem {
+            id: id.clone(),
+            url: url.clone(),
+            file_name: filename.clone(),
+            status: crate::ipc::DownloadStatus::Queued,
+            fraction: Some(0.0),
+            speed: Some("-".to_string()),
+            eta: Some("-".to_string()),
+            size: None,
+            category,
+            date_added: chrono::Utc::now().to_rfc3339(),
+            connections: Some(settings.per_server_connections),
+            speed_limit: (!settings.global_speed_limit.trim().is_empty())
+                .then(|| settings.global_speed_limit.clone()),
+            username: None,
+            password: None,
+            headers: headers.clone(),
+            checksum: None,
+            cookies: download.cookies.clone(),
+            mirrors: None,
+            destination: Some(destination.clone()),
+            is_media: Some(false),
+            media_format_selector: None,
+            queue_id: MAIN_QUEUE_ID.to_string(),
+        };
+        let task = crate::queue::EnqueueItem {
+            id,
+            url: url.clone(),
+            destination,
+            filename,
+            connections: Some(settings.per_server_connections),
+            speed_limit: (!settings.global_speed_limit.trim().is_empty())
+                .then(|| settings.global_speed_limit.clone()),
+            username: None,
+            password: None,
+            headers,
+            checksum: None,
+            cookies: download.cookies.clone(),
+            mirrors: None,
+            user_agent: (!settings.custom_user_agent.trim().is_empty())
+                .then(|| settings.custom_user_agent.clone()),
+            max_tries: Some(settings.max_automatic_retries),
+            proxy: None,
+            format_selector: None,
+            cookie_source: None,
+            is_media: Some(false),
+        }
+        .into_task();
+        created_items.push(item);
+        tasks.push(task);
+    }
+
+    state.queue_manager.enqueue_many(tasks).await;
+    let _ = app_handle.emit("extension-downloads-queued", created_items);
+    Ok(())
+}
+
+fn read_settings(app_handle: &AppHandle) -> Option<crate::ipc::PersistedSettings> {
+    let store = app_handle.store("store.bin").ok()?;
+    let settings_value = store.get("settings")?;
+    let settings_text = settings_value.as_str()?;
+    serde_json::from_str(settings_text).ok()
+}
+
+fn merge_headers(referer: Option<&str>, headers: Option<&str>) -> Option<String> {
+    let mut values = Vec::new();
+    if let Some(referer) = referer {
+        values.push(format!("Referer: {referer}"));
+    }
+    if let Some(headers) = headers {
+        values.extend(
+            headers
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string),
+        );
+    }
+    (!values.is_empty()).then(|| values.join("\n"))
+}
+
+fn filename_from_url(raw_url: &str) -> String {
+    Url::parse(raw_url)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()
+                .and_then(Iterator::last)
+                .and_then(|segment| sanitize_filename(segment))
+        })
+        .unwrap_or_else(|| "download".to_string())
 }
 
 fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
@@ -203,6 +368,8 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         referer,
         silent: payload.silent,
         filename,
+        headers: payload.headers.filter(|value| !value.trim().is_empty()),
+        cookies: payload.cookies.filter(|value| !value.trim().is_empty()),
     })
 }
 

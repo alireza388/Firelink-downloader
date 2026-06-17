@@ -494,6 +494,7 @@ pub struct AppState {
     pub download_coordinator: download::DownloadCoordinator,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
+    pub extension_server_shutdown: tokio::sync::watch::Sender<bool>,
     pub aria2_port: u16,
     pub aria2_secret: String,
     pub media_semaphore: Arc<tokio::sync::Semaphore>,
@@ -1444,6 +1445,7 @@ pub fn run() {
     let server_pairing_token = extension_pairing_token.clone();
     let extension_frontend_ready = Arc::new(AtomicBool::new(false));
     let server_frontend_ready = extension_frontend_ready.clone();
+    let (extension_server_shutdown_tx, extension_server_shutdown_rx) = tokio::sync::watch::channel(false);
 
     let aria2_port = std::net::TcpListener::bind("127.0.0.1:0")
         .and_then(|listener| listener.local_addr())
@@ -1535,6 +1537,7 @@ pub fn run() {
                 download_coordinator: download::DownloadCoordinator::spawn(app.handle().clone()),
                 extension_pairing_token,
                 extension_frontend_ready,
+                extension_server_shutdown: extension_server_shutdown_tx.clone(),
                 aria2_port,
                 aria2_secret: aria2_secret.clone(),
                 media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
@@ -1767,6 +1770,7 @@ pub fn run() {
                     ext_app_handle,
                     server_pairing_token.clone(),
                     server_frontend_ready.clone(),
+                    extension_server_shutdown_rx,
                 ).await {
                     eprintln!("Browser extension server unavailable: {error}");
                 }
@@ -1809,8 +1813,14 @@ pub fn run() {
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let state = app_handle.state::<AppState>();
+                let _ = state.extension_server_shutdown.send(true);
+            }
+        });
 }
 mod extension_server;
 mod scheduler;

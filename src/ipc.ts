@@ -2,6 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { error as logError } from '@tauri-apps/plugin-log';
 import { listen as tauriListen, type Event, type EventCallback, type UnlistenFn } from '@tauri-apps/api/event';
 import type { DownloadCategory } from './bindings/DownloadCategory';
+import type { DownloadItem } from './bindings/DownloadItem';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
 import type { DownloadStatus } from './bindings/DownloadStatus';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
@@ -126,6 +127,7 @@ type EventMap = {
   'download-complete': string;
   'download-failed': string;
   'extension-add-download': ExtensionDownload;
+  'extension-downloads-queued': DownloadItem[];
   'deep-link-add-download': string;
 };
 

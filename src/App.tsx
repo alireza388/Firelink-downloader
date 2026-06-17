@@ -238,10 +238,27 @@ function App() {
     const unlistenExtension = listen('extension-add-download', (event) => {
       useDownloadStore.getState().handleExtensionDownload(event.payload);
     });
+    const unlistenExtensionQueued = listen('extension-downloads-queued', (event) => {
+      const store = useDownloadStore.getState();
+      const incoming = event.payload;
+      const existing = new Set(store.downloads.map(download => download.id));
+      const additions = incoming.filter(download => !existing.has(download.id));
+      if (additions.length === 0) return;
+      useDownloadStore.setState(state => ({
+        downloads: [...state.downloads, ...additions],
+        pendingOrder: [
+          ...state.pendingOrder,
+          ...additions
+            .filter(download => download.status === 'queued')
+            .map(download => download.id)
+            .filter(id => !state.pendingOrder.includes(id)),
+        ],
+      }));
+    });
     const unlistenDeepLink = listen('deep-link-add-download', (event) => {
       useDownloadStore.getState().openAddModalWithUrls(event.payload);
     });
-    Promise.all([unlistenExtension, unlistenDeepLink])
+    Promise.all([unlistenExtension, unlistenExtensionQueued, unlistenDeepLink])
       .then(() => invoke('set_extension_frontend_ready', { ready: true }))
       .catch(error => console.error('Failed to activate browser extension integration:', error));
 
@@ -250,6 +267,7 @@ function App() {
       unlistenComplete.then(f => f());
       unlistenFailed.then(f => f());
       unlistenExtension.then(f => f());
+      unlistenExtensionQueued.then(f => f());
       unlistenDeepLink.then(f => f());
     };
   }, []);

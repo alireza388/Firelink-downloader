@@ -1,9 +1,8 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
-import { LazyStore } from '@tauri-apps/plugin-store';
 import { info } from '@tauri-apps/plugin-log';
 
-export const tauriStore = new LazyStore('store.bin');
+import { tauriStore } from './useDownloadStore';
 
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {

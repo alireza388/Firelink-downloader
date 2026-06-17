@@ -533,8 +533,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         downloads: downloads.length > 0 ? downloads : state.downloads
       }));
       
+      // Reset interrupted downloads (crashed while downloading/processing) to queued
+      set((state) => ({
+        downloads: state.downloads.map(d =>
+          d.status === 'downloading' || d.status === 'processing'
+            ? { ...d, status: 'queued' as const }
+            : d
+        )
+      }));
+
       // Auto resume downloads that were active or queued
-      const active = get().downloads.filter(d => d.status === 'downloading' || d.status === 'queued');
+      const active = get().downloads.filter(d => d.status === 'queued');
       if (active.length > 0) {
         try {
           const settings = useSettingsStore.getState();

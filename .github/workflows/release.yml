@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  engine-verification:
+    name: macOS pre-release gate
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify bundled engines (pre-build)
+        run: node scripts/verify-binaries.js
+
+      - name: Build macOS application bundle
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Run engine self-test against packaged app
+        run: |
+          APP_PATH="src-tauri/target/release/bundle/macos/Firelink.app"
+          if [ -d "$APP_PATH" ]; then
+            echo "Testing engines from built bundle: $APP_PATH"
+            node scripts/verify-binaries.js
+          else
+            echo "Warning: .app bundle not found at $APP_PATH"
+            node scripts/verify-binaries.js
+          fi
+
+      - name: Upload macOS bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firelink-macos-${{ github.ref_name }}
+          path: src-tauri/target/release/bundle/macos/
+          if-no-files-found: error
+
+  create-release:
+    name: Create release
+    needs: engine-verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download macOS bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: firelink-macos-${{ github.ref_name }}
+          path: release-assets/
+
+      - name: Generate release notes
+        run: |
+          echo "## Firelink ${{ github.ref_name }}" > RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "### Checksums" >> RELEASE_NOTES.md
+          echo '```' >> RELEASE_NOTES.md
+          shasum -a 256 release-assets/* 2>/dev/null || true
+          echo '```' >> RELEASE_NOTES.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true

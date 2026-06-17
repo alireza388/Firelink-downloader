@@ -32,6 +32,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Verify bundled engines
+        run: node scripts/verify-binaries.js
+
       - name: Test Rust backend
         working-directory: src-tauri
         run: cargo test --all-targets

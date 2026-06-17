@@ -429,9 +429,12 @@ async fn download_file(
     // The legacy `max_tries` payload field is still honored as a cap on
     // attempts, but transient backoff is additionally bounded by
     // `retry::MAX_RETRIES` so a single URL cannot spin forever.
-    let mut strike = 0_usize;
+    let max_attempts = payload.max_tries.max(1) as usize;
     'url: for url in &payload.urls {
+        let mut strike = 0_usize;
+        let mut attempts = 0_usize;
         loop {
+            attempts += 1;
             match download_attempt(&events, &client, &payload, url, &mut control_rx).await {
                 Ok(()) => return DownloadOutcome::Completed,
                 Err(AttemptError::Controlled(DownloadControl::Pause)) => {
@@ -446,34 +449,45 @@ async fn download_file(
                 }
                 Err(AttemptError::Failed(error)) => {
                     last_error = error.clone();
-                    let transient = crate::retry::is_transient_network_error(&error);
-                    let strikes_left = strike < crate::retry::MAX_RETRIES;
-                    if !(transient && strikes_left) {
-                        // Permanent error (e.g. HTTP 404 / disk full) or the
-                        // 3-strike budget is exhausted — advance to the next URL.
-                        strike = 0;
+
+                    if attempts >= max_attempts {
                         continue 'url;
                     }
 
-                    // Transient: announce `Retrying`, back off, then retry.
-                    // The backoff sleep is itself cancelable so a user
-                    // pause/cancel during the wait is honored immediately.
-                    events.emit_retrying(payload.id, strike, error);
-                    let delay = crate::retry::backoff_for(strike);
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        control = control_rx.recv() => {
-                            return match control.unwrap_or(DownloadControl::Cancel) {
-                                DownloadControl::Pause => DownloadOutcome::Paused,
-                                DownloadControl::Cancel => {
-                                    let _ = fs::remove_file(&payload.output_path).await;
-                                    DownloadOutcome::Cancelled
-                                }
-                                DownloadControl::Replace => DownloadOutcome::Cancelled,
-                            };
+                    let transient = crate::retry::is_transient_network_error(&error);
+                    let strikes_left = strike < crate::retry::MAX_RETRIES;
+
+                    if transient && strikes_left {
+                        // Transient: announce `Retrying`, back off, then retry.
+                        // The backoff sleep is itself cancelable so a user
+                        // pause/cancel during the wait is honored immediately.
+                        events.emit_retrying(payload.id, strike, error);
+                        let delay = crate::retry::backoff_for(strike);
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {}
+                            control = control_rx.recv() => {
+                                return match control.unwrap_or(DownloadControl::Cancel) {
+                                    DownloadControl::Pause => DownloadOutcome::Paused,
+                                    DownloadControl::Cancel => {
+                                        let _ = fs::remove_file(&payload.output_path).await;
+                                        DownloadOutcome::Cancelled
+                                    }
+                                    DownloadControl::Replace => DownloadOutcome::Cancelled,
+                                };
+                            }
                         }
+                        strike += 1;
+                        continue;
                     }
-                    strike += 1;
+
+                    if !transient && !crate::retry::is_permanent_network_error(&error) {
+                        // Legacy `max_tries` cap for ambiguous HTTP statuses (e.g.
+                        // 500) that are neither clearly transient nor permanent.
+                        continue;
+                    }
+
+                    // Permanent error or transient strike budget exhausted.
+                    continue 'url;
                 }
             }
         }

@@ -72,12 +72,8 @@ pub fn backoff_for(strike: usize) -> Duration {
 /// 401/403/404/410/451, "not found", permission denied, out-of-disk. The
 /// permanent list is checked first so a composite message (e.g. an HTTP 404
 /// that also mentions "timeout" in a URL) still fails fast.
-pub fn is_transient_network_error(message: &str) -> bool {
+pub fn is_permanent_network_error(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
-
-    // Permanent conditions win — never retry a 404/403/410/401/451, a missing
-    // file, a permission error, or a full disk, even if the message also
-    // contains a transient keyword (e.g. "timeout" inside a URL path).
     const PERMANENT: [&str; 9] = [
         "http 401",
         "http 403",
@@ -89,11 +85,17 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "permission denied",
         "no space left on device",
     ];
-    if PERMANENT.iter().any(|p| m.contains(p)) {
+    PERMANENT.iter().any(|p| m.contains(p))
+}
+
+pub fn is_transient_network_error(message: &str) -> bool {
+    if is_permanent_network_error(message) {
         return false;
     }
 
-    const TRANSIENT: [&str; 18] = [
+    let m = message.to_ascii_lowercase();
+
+    const TRANSIENT: [&str; 20] = [
         // reqwest / hyper / OS socket-layer
         "timed out",
         "timeout",
@@ -112,6 +114,8 @@ pub fn is_transient_network_error(message: &str) -> bool {
         // HTTP-level transient
         "http 408",
         "request timeout",
+        "http 503",
+        "503 service unavailable",
         // aria2c log phrasing
         "connection was closed",
         "timeout.",
@@ -202,6 +206,14 @@ mod tests {
     fn classifies_http_408_as_transient() {
         assert!(is_transient_network_error("HTTP 408 Request Timeout"));
         assert!(is_transient_network_error("request timeout"));
+    }
+
+    #[test]
+    fn classifies_http_503_as_transient() {
+        assert!(is_transient_network_error("HTTP 503 Service Unavailable"));
+        assert!(is_transient_network_error(
+            "http://127.0.0.1/file returned HTTP 503 Service Unavailable"
+        ));
     }
 
     #[test]

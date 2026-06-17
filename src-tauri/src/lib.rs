@@ -460,7 +460,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 struct Aria2DaemonGuard {
-    child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+    child: Mutex<Option<std::process::Child>>,
     startup_error: Mutex<Option<String>>,
     last_stderr: Mutex<String>,
 }
@@ -478,8 +478,9 @@ impl Aria2DaemonGuard {
 impl Drop for Aria2DaemonGuard {
     fn drop(&mut self) {
         if let Ok(mut lock) = self.child.lock() {
-            if let Some(child) = lock.take() {
+            if let Some(mut child) = lock.take() {
                 let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -708,18 +709,25 @@ async fn run_sidecar_version(
     sidecar_name: &str,
     args: &[&str],
 ) -> (Option<String>, Option<String>, Option<String>) {
-    use tauri_plugin_shell::ShellExt;
-
-    let cmd = match app_handle.shell().sidecar(sidecar_name) {
-        Ok(cmd) => cmd,
-        Err(e) => return (None, Some(format!("Cannot create sidecar '{}': {}", sidecar_name, e)), None),
+    let binary_path = match resolve_bundled_binary_path(app_handle, sidecar_name) {
+        Ok(p) => p,
+        Err(e) => return (None, Some(format!("Cannot find '{}': {}", sidecar_name, e)), None),
     };
-    let cmd = args.iter().fold(cmd, |c, arg| c.arg(arg));
 
-    let output = match tokio::time::timeout(std::time::Duration::from_secs(8), cmd.output()).await {
+    let bin = binary_path.clone();
+    let arg_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let output = std::process::Command::new(&bin)
+            .args(&arg_owned)
+            .output()?;
+        Ok::<_, std::io::Error>(output)
+    }).await;
+
+    let output = match result {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => return (None, Some(format!("Failed to execute '{}': {}", sidecar_name, e)), None),
-        Err(_) => return (None, Some(format!("'{}' version check timed out", sidecar_name)), None),
+        Err(e) => return (None, Some(format!("'{}' version check panicked: {}", sidecar_name, e)), None),
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -816,7 +824,7 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
     let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
 
-    let (expects_internal_dir, has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
+    let (has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
         let parent = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
         if let Some(parent) = parent {
             let internal = parent.join("_internal");
@@ -826,12 +834,12 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
             } else {
                 false
             };
-            (true, hi, hp)
+            (hi, hp)
         } else {
-            (true, false, false)
+            (false, false)
         }
     } else {
-        (true, false, false)
+        (false, false)
     };
 
     let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
@@ -840,14 +848,9 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let mut error = run_error;
     let mut remediation_hint = None;
 
-    if error.is_none() {
-        if !has_internal_dir {
-            error = Some("_internal directory was not found beside yt-dlp sidecar".to_string());
-            remediation_hint = Some("The yt-dlp distribution is missing its _internal directory. Reinstall Firelink.".to_string());
-        } else if !has_python_framework {
-            error = Some("_internal/Python.framework was not found beside yt-dlp sidecar".to_string());
-            remediation_hint = Some("The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink.".to_string());
-        }
+    if error.is_none() && has_internal_dir && !has_python_framework {
+        error = Some("_internal/Python.framework was not found beside yt-dlp sidecar".to_string());
+        remediation_hint = Some("The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink.".to_string());
     }
 
     if remediation_hint.is_none() {
@@ -868,7 +871,7 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
         daemon_alive: None,
         rpc_ready: None,
         last_stderr_tail: None,
-        expects_internal_dir: Some(expects_internal_dir),
+        expects_internal_dir: Some(has_internal_dir),
         has_internal_dir: Some(has_internal_dir),
         has_python_framework: Some(has_python_framework),
     }
@@ -1889,7 +1892,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show_i, &pause_all_i, &resume_all_i, &quit_i]).unwrap();
 
             let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")).unwrap();
-            let _tray = TrayIconBuilder::with_id("main_startup")
+            let _tray = TrayIconBuilder::with_id("main")
                 .icon(tray_icon)
                 .icon_as_template(true)
                 .menu(&menu)
@@ -2021,10 +2024,10 @@ pub fn run() {
                 }
             }
 
-            use tauri_plugin_shell::ShellExt;
-            match app.handle().shell().sidecar("aria2c") {
-                Ok(mut cmd) => {
-                    cmd = cmd.arg("--enable-rpc=true")
+            match resolve_bundled_binary_path(app.handle(), "aria2c") {
+                Ok(binary_path) => {
+                    let mut cmd = std::process::Command::new(&binary_path);
+                    cmd.arg("--enable-rpc=true")
                         .arg(format!("--rpc-listen-port={}", aria2_port))
                         .arg(format!("--rpc-secret={}", aria2_secret))
                         .arg("--rpc-listen-all=false")
@@ -2037,49 +2040,43 @@ pub fn run() {
                         .arg("--check-certificate=true");
 
                     if !global_speed_limit.is_empty() {
-                        cmd = cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
+                        cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
                     }
 
+                    cmd.stdout(std::process::Stdio::null());
+                    cmd.stderr(std::process::Stdio::piped());
+
                     match cmd.spawn() {
-                        Ok((mut rx, child)) => {
+                        Ok(mut child) => {
                             log::info!("aria2c spawned successfully on port {}", aria2_port);
 
-                            let guard = app.state::<Aria2DaemonGuard>();
-                            *guard.child.lock().unwrap() = Some(child);
-
                             let daemon_app = app.handle().clone();
-                            tauri::async_runtime::spawn(async move {
-                                while let Some(event) = rx.recv().await {
-                                    match event {
-                                        tauri_plugin_shell::process::CommandEvent::Stderr(bytes) => {
-                                            let line = String::from_utf8_lossy(&bytes);
-                                            // Store for diagnostics
+                            if let Some(stderr) = child.stderr.take() {
+                                std::thread::spawn(move || {
+                                    use std::io::BufRead;
+                                    let reader = std::io::BufReader::new(stderr);
+                                    for line in reader.lines() {
+                                        if let Ok(trimmed) = line {
+                                            let trimmed = trimmed.trim().to_string();
                                             if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
-                                                stderr_lock.push_str(&line);
+                                                stderr_lock.push_str(&trimmed);
+                                                stderr_lock.push('\n');
                                                 let excess = stderr_lock.len().saturating_sub(8192);
                                                 if excess > 0 {
                                                     let _ = stderr_lock.drain(..excess);
                                                 }
                                             }
-                                            let lower = line.to_lowercase();
+                                            let lower = trimmed.to_lowercase();
                                             if lower.contains("error") || lower.contains("critical") {
-                                                log::error!("aria2c stderr: {}", line.trim());
+                                                log::error!("aria2c stderr: {}", trimmed);
                                             }
                                         }
-                                        tauri_plugin_shell::process::CommandEvent::Error(err) => {
-                                            log::error!("aria2c process error: {}", err);
-                                        }
-                                        tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
-                                            if payload.code == Some(0) {
-                                                log::info!("aria2c completed successfully");
-                                            } else {
-                                                log::error!("aria2c exited with non-zero code: {:?}", payload.code);
-                                            }
-                                        }
-                                        _ => {}
                                     }
-                                }
-                            });
+                                });
+                            }
+
+                            let guard = app.state::<Aria2DaemonGuard>();
+                            *guard.child.lock().unwrap() = Some(child);
 
                             let port = aria2_port;
                             let secret = aria2_secret.clone();
@@ -2124,9 +2121,9 @@ pub fn run() {
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to create aria2c sidecar: {}", e);
+                    log::error!("Failed to resolve aria2c binary: {}", e);
                     let guard = app.state::<Aria2DaemonGuard>();
-                    *guard.startup_error.lock().unwrap() = Some(format!("Failed to create aria2c sidecar: {e}"));
+                    *guard.startup_error.lock().unwrap() = Some(format!("Failed to resolve aria2c: {e}"));
                 }
             }
 

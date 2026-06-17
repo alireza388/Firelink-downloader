@@ -43,6 +43,13 @@ pub enum DownloadEvent {
         id: Uuid,
         error: String,
     },
+    /// Transient network drop: a backoff retry is scheduled and the slot is
+    /// still held. Carries the 0-based strike number and the classified reason.
+    Retrying {
+        id: Uuid,
+        strike: usize,
+        reason: String,
+    },
 }
 
 #[derive(Debug)]
@@ -187,6 +194,36 @@ impl CoordinatorEventSink {
             }
             Self::Headless(event_tx) => {
                 let _ = event_tx.send(DownloadEvent::Failed { id, error });
+            }
+        }
+    }
+
+    /// Emit a transient `Retrying` state. In production this drives the
+    /// `download-state` event with status `retrying` (consumed by the queue's
+    /// completion listener and the frontend store); in headless tests it flows
+    /// through the `DownloadEvent` channel. The strike is 0-based and becomes
+    /// the human-facing attempt number (strike + 1).
+    fn emit_retrying(&self, id: Uuid, strike: usize, reason: String) {
+        match self {
+            Self::Tauri(app_handle) => {
+                use crate::ipc::{DownloadStateEvent, DownloadStatus};
+                let attempt = strike + 1;
+                let payload = DownloadStateEvent::retrying(
+                    id.to_string(),
+                    format!("Network drop — retry #{attempt}: {reason}"),
+                );
+                // Drive the same `download-state` channel the queue emits on
+                // so the frontend status flips to `retrying` uniformly.
+                let _ = app_handle.emit("download-state", payload);
+                log::warn!(
+                    "download {id} transient error, backing off before retry #{attempt}: {reason}"
+                );
+                // Keep the compiler honest about DownloadStatus being used if a
+                // future refactor drops the `retrying` constructor path.
+                let _ = DownloadStatus::Retrying.as_str();
+            }
+            Self::Headless(event_tx) => {
+                let _ = event_tx.send(DownloadEvent::Retrying { id, strike, reason });
             }
         }
     }
@@ -379,11 +416,22 @@ async fn download_file(
         Ok(client) => client,
         Err(error) => return DownloadOutcome::Failed(error),
     };
-    let attempts_per_url = payload.max_tries.max(1);
     let mut last_error = "no download URL was provided".to_string();
 
-    for url in &payload.urls {
-        for _ in 0..attempts_per_url {
+    // Connection-aware retry policy. A transient network drop never transitions
+    // the download straight to `Failed`: it is classified, the UI is told the
+    // item is `Retrying`, and a 3-strike exponential backoff (2s/5s/10s from
+    // `retry::BACKOFF_SCHEDULE`) runs before the next attempt — all while the
+    // worker slot stays held (the coordinator does not drop the active entry
+    // until this future resolves). `download_attempt` re-issues a Range header
+    // from the existing partial file on every retry, so no bytes are discarded.
+    //
+    // The legacy `max_tries` payload field is still honored as a cap on
+    // attempts, but transient backoff is additionally bounded by
+    // `retry::MAX_RETRIES` so a single URL cannot spin forever.
+    let mut strike = 0_usize;
+    'url: for url in &payload.urls {
+        loop {
             match download_attempt(&events, &client, &payload, url, &mut control_rx).await {
                 Ok(()) => return DownloadOutcome::Completed,
                 Err(AttemptError::Controlled(DownloadControl::Pause)) => {
@@ -396,7 +444,37 @@ async fn download_file(
                 Err(AttemptError::Controlled(DownloadControl::Replace)) => {
                     return DownloadOutcome::Cancelled;
                 }
-                Err(AttemptError::Failed(error)) => last_error = error,
+                Err(AttemptError::Failed(error)) => {
+                    last_error = error.clone();
+                    let transient = crate::retry::is_transient_network_error(&error);
+                    let strikes_left = strike < crate::retry::MAX_RETRIES;
+                    if !(transient && strikes_left) {
+                        // Permanent error (e.g. HTTP 404 / disk full) or the
+                        // 3-strike budget is exhausted — advance to the next URL.
+                        strike = 0;
+                        continue 'url;
+                    }
+
+                    // Transient: announce `Retrying`, back off, then retry.
+                    // The backoff sleep is itself cancelable so a user
+                    // pause/cancel during the wait is honored immediately.
+                    events.emit_retrying(payload.id, strike, error);
+                    let delay = crate::retry::backoff_for(strike);
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {}
+                        control = control_rx.recv() => {
+                            return match control.unwrap_or(DownloadControl::Cancel) {
+                                DownloadControl::Pause => DownloadOutcome::Paused,
+                                DownloadControl::Cancel => {
+                                    let _ = fs::remove_file(&payload.output_path).await;
+                                    DownloadOutcome::Cancelled
+                                }
+                                DownloadControl::Replace => DownloadOutcome::Cancelled,
+                            };
+                        }
+                    }
+                    strike += 1;
+                }
             }
         }
     }

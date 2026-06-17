@@ -11,6 +11,9 @@ pub enum DownloadStatus {
     Completed,
     Failed,
     Queued,
+    /// Transient state: a connection-aware retry is in progress with
+    /// exponential backoff. The download slot/permit is still held.
+    Retrying,
 }
 
 impl DownloadStatus {
@@ -21,6 +24,7 @@ impl DownloadStatus {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Queued => "queued",
+            Self::Retrying => "retrying",
         }
     }
 }
@@ -262,6 +266,16 @@ impl DownloadStateEvent {
             id: id.into(),
             status: DownloadStatus::Failed.as_str().to_string(),
             error: Some(error.into()),
+        }
+    }
+
+    /// Transient retry state. Carries the human-readable reason so the UI can
+    /// surface "network dropped, retrying in 5s…". The slot is still held.
+    pub fn retrying(id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            status: DownloadStatus::Retrying.as_str().to_string(),
+            error: Some(reason.into()),
         }
     }
 }

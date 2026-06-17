@@ -425,6 +425,7 @@ pub mod ipc;
 mod parity;
 pub mod error;
 pub mod commands;
+pub mod retry;
 pub use error::AppError;
 
 // Retained only for compatibility with the optional aria2 diagnostic monitor.
@@ -643,48 +644,6 @@ pub(crate) async fn start_media_download_internal(
     };
 
     use tauri_plugin_shell::ShellExt;
-    let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
-       .arg("--newline")
-       .arg("--no-check-formats")
-       .arg("--socket-timeout").arg("20")
-       .arg("--retries").arg("3")
-       .arg("--extractor-retries").arg("3")
-       .arg("--downloader").arg("aria2c")
-       .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M")
-       .arg("--concurrent-fragments").arg("4")
-       .arg("--no-warnings")
-       .arg("--continue")
-       .arg("--compat-options").arg("no-youtube-unavailable-videos")
-       .arg("-o").arg(out_path.to_string_lossy().to_string());
-
-    if let Some(limit) = speed_limit {
-        if !limit.is_empty() {
-            cmd = cmd.arg("--limit-rate").arg(limit);
-        }
-    }
-
-    if let Some(p) = proxy {
-        if !p.is_empty() {
-            cmd = cmd.arg("--proxy").arg(p);
-        }
-    }
-
-    if let Some(mut cs) = cookie_source {
-        if !cs.is_empty() && cs != "none" {
-            if cs == "safari" { cs = "safari:".to_string() }
-            cmd = cmd.arg("--cookies-from-browser").arg(cs);
-        }
-    }
-
-    if let Some(ua) = user_agent {
-        if !ua.is_empty() {
-            cmd = cmd.arg("--user-agent").arg(ua);
-        }
-    }
-
-    if let Some(tries) = max_tries {
-        cmd = cmd.arg("--retries").arg(tries.to_string());
-    }
 
     let mut config_file = tempfile::Builder::new().prefix("ytdlp-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
     let mut config_content = String::new();
@@ -706,37 +665,24 @@ pub(crate) async fn start_media_download_internal(
     use std::io::Write;
     config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
-    if !config_content.is_empty() {
-        cmd = cmd.arg("--config-location").arg(config_path.to_string_lossy().to_string());
-    }
 
-    if let Some(format) = format_selector {
-        cmd = cmd.arg("-f").arg(format);
-        // If the filename implies an audio format, use it as audio output
-        if safe_filename.ends_with(".mp3") {
-            cmd = cmd.arg("-x").arg("--audio-format").arg("mp3");
-        } else if safe_filename.ends_with(".m4a") {
-            cmd = cmd.arg("-x").arg("--audio-format").arg("m4a");
-        } else if safe_filename.ends_with(".opus") {
-            cmd = cmd.arg("-x").arg("--audio-format").arg("opus");
-        } else {
-            // Otherwise attempt to merge into mp4 or mkv based on filename
-            if safe_filename.ends_with(".mp4") {
-                cmd = cmd.arg("--merge-output-format").arg("mp4");
-            } else if safe_filename.ends_with(".webm") {
-                cmd = cmd.arg("--merge-output-format").arg("webm");
-            } else {
-                cmd = cmd.arg("--merge-output-format").arg("mkv");
-            }
-        }
-    }
+    use crate::ipc::DownloadStateEvent;
+    use crate::retry::{BackoffOutcome, MAX_RETRIES, backoff_and_emit_cancel, is_transient_network_error};
 
-    cmd = cmd.arg("--").arg(&url);
+    const STDERR_TAIL: usize = 2048;
 
-    let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
-    log::info!("yt-dlp successfully spawned for id: {}", id);
+    let config_location = if !config_content.is_empty() {
+        Some(config_path.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let _keep_alive = config_path;
+    let mut current_track: f64 = 0.0;
+    let mut last_fraction: f64 = 0.0;
+    let mut last_progress_at = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_millis(200))
+        .unwrap_or_else(std::time::Instant::now);
 
-    // yt-dlp parsing regex
     static PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     static SPD_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     static ETA_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -745,91 +691,213 @@ pub(crate) async fn start_media_download_internal(
     let spd_re = SPD_RE.get_or_init(|| Regex::new(r"at\s+([^\s]+)").unwrap());
     let eta_re = ETA_RE.get_or_init(|| Regex::new(r"ETA\s+([^\s]+)").unwrap());
 
-    let _keep_alive = config_path;
-    let mut current_track: f64 = 0.0;
-    let mut last_fraction: f64 = 0.0;
-    let mut last_progress_at = std::time::Instant::now()
-        .checked_sub(std::time::Duration::from_millis(200))
-        .unwrap_or_else(std::time::Instant::now);
+    let mut strike = 0_usize;
+    let mut terminal_failure = false;
 
-    loop {
-        tokio::select! {
-            _ = cancel_rx.changed() => {
-                let _ = child.kill();
-                return Ok(());
+    'retry: while strike <= MAX_RETRIES {
+        let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
+           .arg("--newline")
+           .arg("--no-check-formats")
+           .arg("--socket-timeout").arg("20")
+           .arg("--retries").arg("3")
+           .arg("--extractor-retries").arg("3")
+           .arg("--downloader").arg("aria2c")
+           .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M")
+           .arg("--concurrent-fragments").arg("4")
+           .arg("--no-warnings")
+           .arg("--continue")
+           .arg("--compat-options").arg("no-youtube-unavailable-videos")
+           .arg("-o").arg(out_path.to_string_lossy().to_string());
+
+        if let Some(limit) = speed_limit.as_ref() {
+            if !limit.is_empty() {
+                cmd = cmd.arg("--limit-rate").arg(limit);
             }
-            event = rx.recv() => {
-                match event {
-                    Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
-                        let line = String::from_utf8_lossy(&line_bytes);
-                        if line.contains("[download]") && line.contains("%") {
-                            let fraction = if let Some(cap) = pct_re.captures(&line) {
-                                cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()).unwrap_or(0.0) / 100.0
-                            } else {
-                                0.0
-                            };
+        }
 
-                            if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
-                                current_track += 1.0;
-                            }
-                            last_fraction = fraction;
+        if let Some(p) = proxy.as_ref() {
+            if !p.is_empty() {
+                cmd = cmd.arg("--proxy").arg(p);
+            }
+        }
 
-                            let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
+        if let Some(cs) = cookie_source.as_ref() {
+            let mut cs = cs.clone();
+            if !cs.is_empty() && cs != "none" {
+                if cs == "safari" { cs = "safari:".to_string() }
+                cmd = cmd.arg("--cookies-from-browser").arg(cs);
+            }
+        }
 
-                            let speed = if let Some(cap) = spd_re.captures(&line) {
-                                cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
-                            } else {
-                                "-".to_string()
-                            };
+        if let Some(ua) = user_agent.as_ref() {
+            if !ua.is_empty() {
+                cmd = cmd.arg("--user-agent").arg(ua);
+            }
+        }
 
-                            let eta = if let Some(cap) = eta_re.captures(&line) {
-                                cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
-                            } else {
-                                "-".to_string()
-                            };
+        if let Some(tries) = max_tries {
+            cmd = cmd.arg("--retries").arg(tries.to_string());
+        }
 
-                            let now = std::time::Instant::now();
-                            if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
-                                let _ = app_handle.emit("download-progress", DownloadProgressEvent {
-                                    id: id.to_string(),
-                                    fraction: overall_fraction,
-                                    speed,
-                                    eta,
-                                    size: None,
-                                });
-                                last_progress_at = now;
+        if let Some(loc) = config_location.as_ref() {
+            cmd = cmd.arg("--config-location").arg(loc);
+        }
+
+        if let Some(format) = format_selector.as_ref() {
+            cmd = cmd.arg("-f").arg(format);
+            if safe_filename.ends_with(".mp3") {
+                cmd = cmd.arg("-x").arg("--audio-format").arg("mp3");
+            } else if safe_filename.ends_with(".m4a") {
+                cmd = cmd.arg("-x").arg("--audio-format").arg("m4a");
+            } else if safe_filename.ends_with(".opus") {
+                cmd = cmd.arg("-x").arg("--audio-format").arg("opus");
+            } else if safe_filename.ends_with(".mp4") {
+                cmd = cmd.arg("--merge-output-format").arg("mp4");
+            } else if safe_filename.ends_with(".webm") {
+                cmd = cmd.arg("--merge-output-format").arg("webm");
+            } else {
+                cmd = cmd.arg("--merge-output-format").arg("mkv");
+            }
+        }
+
+        cmd = cmd.arg("--").arg(&url);
+
+        let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
+        log::info!("yt-dlp spawned for id: {} (strike {})", id, strike);
+
+        let mut stderr_tail = String::new();
+        let mut failure_reason: Option<String> = None;
+
+        loop {
+            tokio::select! {
+                _ = cancel_rx.changed() => {
+                    let _ = child.kill();
+                    return Ok(());
+                }
+                event = rx.recv() => {
+                    match event {
+                        Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
+                            let line = String::from_utf8_lossy(&line_bytes);
+                            if line.contains("[download]") && line.contains("%") {
+                                let fraction = if let Some(cap) = pct_re.captures(&line) {
+                                    cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()).unwrap_or(0.0) / 100.0
+                                } else {
+                                    0.0
+                                };
+
+                                if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
+                                    current_track += 1.0;
+                                }
+                                last_fraction = fraction;
+
+                                let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
+
+                                let speed = if let Some(cap) = spd_re.captures(&line) {
+                                    cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
+                                } else {
+                                    "-".to_string()
+                                };
+
+                                let eta = if let Some(cap) = eta_re.captures(&line) {
+                                    cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
+                                } else {
+                                    "-".to_string()
+                                };
+
+                                let now = std::time::Instant::now();
+                                if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
+                                    let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                        id: id.to_string(),
+                                        fraction: overall_fraction,
+                                        speed,
+                                        eta,
+                                        size: None,
+                                    });
+                                    last_progress_at = now;
+                                }
                             }
                         }
-                    }
-                    Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
-                        let line = String::from_utf8_lossy(&line_bytes);
-                        let lower = line.to_lowercase();
-                        if lower.contains("error") || lower.contains("critical") {
-                            log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
+                        Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
+                            let line = String::from_utf8_lossy(&line_bytes);
+                            let lower = line.to_lowercase();
+                            if lower.contains("error") || lower.contains("critical") {
+                                log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
+                            }
+                            stderr_tail.push_str(&line);
+                            if stderr_tail.len() > STDERR_TAIL {
+                                stderr_tail = stderr_tail.split_off(stderr_tail.len() - STDERR_TAIL);
+                            }
                         }
-                    }
-                    Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
-                        log::error!("yt-dlp shell error [{}]: {}", id, err);
-                        let _ = app_handle.emit("download-failed", id.to_string());
-                        break;
-                    }
-                    Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
-                        if payload.code == Some(0) {
-                            log::info!("yt-dlp completed successfully for id: {}", id);
-                            let _ = app_handle.emit("download-complete", id.to_string());
-                            use tauri_plugin_notification::NotificationExt;
-                            let _ = app_handle.notification().builder().title("Download Complete").body(&safe_filename).show();
-                        } else {
+                        Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
+                            log::error!("yt-dlp shell error [{}]: {}", id, err);
+                            failure_reason = Some(err);
+                            break;
+                        }
+                        Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
+                            if payload.code == Some(0) {
+                                log::info!("yt-dlp completed successfully for id: {}", id);
+                                let _ = app_handle.emit("download-complete", id.to_string());
+                                use tauri_plugin_notification::NotificationExt;
+                                let _ = app_handle.notification().builder().title("Download Complete").body(&safe_filename).show();
+                                return Ok(());
+                            }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
-                            let _ = app_handle.emit("download-failed", id.to_string());
+                            failure_reason = Some(if stderr_tail.is_empty() {
+                                format!("yt-dlp exited with code {:?}", payload.code)
+                            } else {
+                                stderr_tail.clone()
+                            });
+                            break;
                         }
-                        break;
+                        Some(_) => {}
+                        None => {
+                            failure_reason = Some(if stderr_tail.is_empty() {
+                                "yt-dlp process ended unexpectedly".to_string()
+                            } else {
+                                stderr_tail.clone()
+                            });
+                            break;
+                        }
                     }
-                    Some(_) => {}
-                    None => break,
                 }
             }
         }
+
+        let failure_reason = match failure_reason {
+            Some(reason) => reason,
+            None => return Ok(()),
+        };
+
+        let transient = is_transient_network_error(&failure_reason);
+        let strikes_left = strike < MAX_RETRIES;
+        if !(transient && strikes_left) {
+            terminal_failure = true;
+            break 'retry;
+        }
+
+        let reason = failure_reason.clone();
+        let outcome = backoff_and_emit_cancel(
+            strike,
+            reason,
+            cancel_rx,
+            |retry_reason| {
+                let _ = app_handle.emit(
+                    "download-state",
+                    DownloadStateEvent::retrying(id, retry_reason),
+                );
+            },
+        )
+        .await;
+
+        if outcome == BackoffOutcome::Aborted {
+            return Ok(());
+        }
+
+        strike += 1;
+    }
+
+    if terminal_failure {
+        let _ = app_handle.emit("download-failed", id.to_string());
     }
 
     Ok(())
@@ -1457,6 +1525,7 @@ pub fn run() {
                         .arg(format!("--rpc-secret={}", aria2_secret))
                         .arg("--rpc-listen-all=false")
                         .arg("--continue=true")
+                        .arg("--retry-wait=2")
                         .arg("--allow-overwrite=false")
                         .arg("--summary-interval=1")
                         .arg("--console-log-level=warn")
@@ -1542,7 +1611,9 @@ pub fn run() {
                                                         _ => None,
                                                     };
                                                     if let Some(outcome) = outcome {
-                                                        state.queue_manager.handle_aria2_event(gid, outcome).await;
+                                                        Arc::clone(&state.queue_manager)
+                                                            .handle_aria2_event(gid, outcome)
+                                                            .await;
                                                     }
                                                 }
                                             }

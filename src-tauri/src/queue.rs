@@ -1,8 +1,10 @@
 use crate::ipc::{DownloadStateEvent, DownloadStatus, QueueDirection};
+use crate::retry::{BackoffOutcome, MAX_RETRIES, backoff_and_emit, is_transient_network_error};
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use serde_json;
@@ -93,6 +95,12 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     /// before the gid was stored. Drained by `remember_gid`.
     pub pending_completion: Arc<Mutex<HashMap<String, (String, PendingOutcome)>>>,
 
+    /// download id -> spawn payload for aria2 transient-error re-addUri retries.
+    aria2_payloads: Mutex<HashMap<String, SpawnPayload>>,
+
+    /// 0-based transient-error strike counter per aria2 download id.
+    aria2_retry_strikes: Mutex<HashMap<String, usize>>,
+
     spawner: Arc<dyn SidecarSpawner>,
     app_handle: AppHandle<R>,
 }
@@ -123,6 +131,8 @@ impl<R: tauri::Runtime> QueueManager<R> {
             notify: Notify::new(),
             aria2_gids: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_completion: Arc::new(Mutex::new(HashMap::new())),
+            aria2_payloads: Mutex::new(HashMap::new()),
+            aria2_retry_strikes: Mutex::new(HashMap::new()),
             spawner,
             app_handle,
         }
@@ -292,9 +302,15 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
         match task.kind {
             TaskKind::Aria2 => {
+                self.aria2_payloads
+                    .lock()
+                    .await
+                    .insert(id.clone(), task.payload.clone());
+                self.aria2_retry_strikes.lock().await.remove(&id);
                 match self.spawner.add_uri(&id, &task.payload).await {
                     Ok(gid) => self.remember_gid(id.clone(), gid).await,
                     Err(error) => {
+                        self.clear_aria2_retry_state(&id).await;
                         self.emit_failed(&id, error);
                         self.release_permit(&id).await;
                     }
@@ -364,31 +380,148 @@ impl<R: tauri::Runtime> QueueManager<R> {
     pub async fn apply_completion(&self, id: &str, outcome: PendingOutcome) {
         match outcome {
             PendingOutcome::Complete => {
+                self.clear_aria2_retry_state(id).await;
                 self.emit_state(id, DownloadStatus::Completed);
             }
             PendingOutcome::Error(error) => {
+                self.clear_aria2_retry_state(id).await;
                 self.emit_failed(id, error);
             }
         }
         self.release_permit(id).await;
     }
 
-    /// Entry point for the aria2 WS poller. Resolves gid -> id; if not yet
-    /// stored, buffers the outcome for reconciliation by remember_gid.
-    pub async fn handle_aria2_event(&self, gid: &str, outcome: PendingOutcome) {
-        let id_opt = {
+    async fn clear_aria2_retry_state(&self, id: &str) {
+        self.aria2_payloads.lock().await.remove(id);
+        self.aria2_retry_strikes.lock().await.remove(id);
+    }
+
+    /// Overwrite a stale aria2 gid with the fresh gid minted by a retry
+    /// `addUri`. Failing to call this after re-add leaks the semaphore permit.
+    pub fn rotate_aria2_gid(&self, id: &str, stale_gid: &str, new_gid: &str) {
+        let mut gids = self.aria2_gids.write().unwrap();
+        gids.remove(stale_gid);
+        gids.insert(new_gid.to_string(), id.to_string());
+    }
+
+    async fn wait_permit_released(self: &Arc<Self>, id: &str) {
+        loop {
+            if !self.active_permits.lock().await.contains_key(id) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Intercept transient `onDownloadError` events: backoff, re-issue
+    /// `addUri`, and rotate the gid mapping. Permanent errors and exhausted
+    /// strikes fall through to a hard `Failed` state.
+    async fn handle_aria2_download_error(self: &Arc<Self>, gid: &str, error: String) {
+        let id = {
             let gids = self.aria2_gids.read().unwrap();
             gids.get(gid).cloned()
         };
-        match id_opt {
-            Some(id) => {
-                self.apply_completion(&id, outcome).await;
-            }
+        let id = match id {
+            Some(id) => id,
             None => {
                 self.pending_completion
                     .lock()
                     .await
-                    .insert(gid.to_string(), (String::new(), outcome));
+                    .insert(gid.to_string(), (String::new(), PendingOutcome::Error(error)));
+                return;
+            }
+        };
+
+        let strike = {
+            let mut strikes = self.aria2_retry_strikes.lock().await;
+            let entry = strikes.entry(id.clone()).or_insert(0);
+            *entry
+        };
+
+        let transient = is_transient_network_error(&error);
+        let strikes_left = strike < MAX_RETRIES;
+        if !(transient && strikes_left) {
+            self.apply_completion(&id, PendingOutcome::Error(error)).await;
+            return;
+        }
+
+        let payload = self.aria2_payloads.lock().await.get(&id).cloned();
+        if payload.is_none() {
+            self.apply_completion(&id, PendingOutcome::Error(error)).await;
+            return;
+        }
+        let payload = payload.unwrap();
+
+        let this = Arc::clone(&self);
+        let stale_gid = gid.to_string();
+        let id_for_task = id.clone();
+        let error_for_emit = error.clone();
+        tauri::async_runtime::spawn(async move {
+            let outcome = backoff_and_emit(
+                strike,
+                error_for_emit,
+                this.wait_permit_released(&id_for_task),
+                |reason| {
+                    use tauri::Emitter;
+                    let _ = this.app_handle.emit(
+                        "download-state",
+                        DownloadStateEvent::retrying(&id_for_task, reason),
+                    );
+                },
+            )
+            .await;
+
+            if outcome == BackoffOutcome::Aborted {
+                return;
+            }
+
+            if !this.active_permits.lock().await.contains_key(&id_for_task) {
+                return;
+            }
+
+            match this.spawner.add_uri(&id_for_task, &payload).await {
+                Ok(new_gid) => {
+                    this.aria2_retry_strikes
+                        .lock()
+                        .await
+                        .insert(id_for_task.clone(), strike + 1);
+                    this.rotate_aria2_gid(&id_for_task, &stale_gid, &new_gid);
+                    this.emit_state(&id_for_task, DownloadStatus::Downloading);
+                }
+                Err(retry_error) => {
+                    this.apply_completion(
+                        &id_for_task,
+                        PendingOutcome::Error(retry_error),
+                    )
+                    .await;
+                }
+            }
+        });
+    }
+
+    /// Entry point for the aria2 WS poller. Resolves gid -> id; if not yet
+    /// stored, buffers the outcome for reconciliation by remember_gid.
+    pub async fn handle_aria2_event(self: &Arc<Self>, gid: &str, outcome: PendingOutcome) {
+        match outcome {
+            PendingOutcome::Error(error) => {
+                self.handle_aria2_download_error(gid, error).await;
+            }
+            other => {
+                let id_opt = {
+                    let gids = self.aria2_gids.read().unwrap();
+                    gids.get(gid).cloned()
+                };
+                match id_opt {
+                    Some(id) => {
+                        self.apply_completion(&id, other).await;
+                    }
+                    None => {
+                        self.pending_completion
+                            .lock()
+                            .await
+                            .insert(gid.to_string(), (String::new(), other));
+                    }
+                }
             }
         }
     }
@@ -487,6 +620,7 @@ impl SidecarSpawner for ProductionSpawner {
         );
         let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
         options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
+        options.insert("retry-wait".to_string(), serde_json::json!("2"));
         options.insert("continue".to_string(), serde_json::json!("true"));
         if let Some(speed) = &payload.speed_limit {
             options.insert("max-download-limit".to_string(), serde_json::json!(speed));

@@ -136,13 +136,14 @@ export const PropertiesModal = () => {
     setSelectedPropertiesDownloadId(null);
   };
 
-  const isLocked = ['downloading', 'completed'].includes(item.status);
-  const isTransferLocked = item.status === 'downloading';
+  const isLocked = ['downloading', 'processing', 'completed'].includes(item.status);
+  const isTransferLocked = item.status === 'downloading' || item.status === 'processing';
 
   let statusColor = 'text-text-secondary';
   let StatusIcon = Info;
   if (item.status === 'completed') { statusColor = 'text-green-500'; StatusIcon = CheckCircle; }
   else if (item.status === 'downloading') { statusColor = 'text-blue-500'; StatusIcon = Play; }
+  else if (item.status === 'processing') { statusColor = 'text-sky-500'; StatusIcon = Play; }
   else if (item.status === 'paused') { statusColor = 'text-orange-500'; StatusIcon = Pause; }
   else if (item.status === 'failed') { statusColor = 'text-red-500'; StatusIcon = AlertCircle; }
 

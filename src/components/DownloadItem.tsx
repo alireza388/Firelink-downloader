@@ -93,6 +93,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 ref={progressBarRef}
                 className={`download-progress-fill ${
                   download.status === 'paused' ? 'paused' : 
+                  download.status === 'processing' ? 'processing' :
                   download.status === 'queued' ? 'queued' : ''
                 }`}
                 style={{ width: `${(download.fraction || 0) * 100}%` }}
@@ -103,6 +104,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               className={`download-status flex items-center gap-1.5 ${
                 download.status === 'paused' ? 'download-status-paused' : 
                 download.status === 'failed' ? 'download-status-failed' : 
+                download.status === 'processing' ? 'download-status-processing' :
                 download.status === 'downloading' ? 'download-status-downloading' : 
                 download.status === 'queued' ? 'download-status-queued' : ''
               }`}
@@ -114,6 +116,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 </>
               ) : download.status === 'downloading' ? (
                 `${((download.fraction || 0) * 100).toFixed(0)}%`
+              ) : download.status === 'processing' ? (
+                'Processing'
               ) : (
                 download.status.charAt(0).toUpperCase() + download.status.slice(1)
               )}
@@ -156,7 +160,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               </button>
             </>
           )}
-          {download.status === 'downloading' && (
+          {(download.status === 'downloading' || download.status === 'processing') && (
             <button onClick={() => handlePause(download.id)} className="app-icon-button h-7 w-7" title="Pause">
               <Pause size={14} fill="currentColor" />
             </button>

@@ -1065,6 +1065,10 @@
     background: hsl(28 95% 56%);
   }
 
+  .download-progress-fill.processing {
+    background: hsl(199 89% 48%);
+  }
+
   .download-status {
     font-weight: 500;
   }
@@ -1086,6 +1090,11 @@
   
   .download-status-downloading {
     color: hsl(var(--status-downloading));
+    font-weight: 600;
+  }
+
+  .download-status-processing {
+    color: hsl(199 89% 48%);
     font-weight: 600;
   }
 }

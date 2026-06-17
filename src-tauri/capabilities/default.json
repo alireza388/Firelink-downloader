@@ -10,25 +10,28 @@
     "dialog:default",
     "notification:default",
     "notification:allow-is-permission-granted",
-    "shell:allow-execute",
     {
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "cmd": "yt-dlp",
-          "args": true
+          "name": "yt-dlp",
+          "sidecar": true,
+          "args": ["--version"]
         },
         {
-          "cmd": "aria2c",
-          "args": true
+          "name": "aria2c",
+          "sidecar": true,
+          "args": ["--version"]
         },
         {
-          "cmd": "ffmpeg",
-          "args": true
+          "name": "ffmpeg",
+          "sidecar": true,
+          "args": ["-version"]
         },
         {
-          "cmd": "deno",
-          "args": true
+          "name": "deno",
+          "sidecar": true,
+          "args": ["--version"]
         }
       ]
     }

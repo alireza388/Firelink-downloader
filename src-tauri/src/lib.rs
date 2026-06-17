@@ -39,6 +39,61 @@ pub struct MediaMetadata {
     pub formats: Vec<MediaFormat>,
 }
 
+fn is_media_processing_line(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    lower.contains("[merger]")
+        || lower.contains("[extractaudio]")
+        || lower.contains("[ffmpeg]")
+        || lower.contains("[videoconvertor]")
+        || lower.contains("[fixup")
+        || lower.contains("merging formats")
+        || lower.contains("post-process")
+}
+
+async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
+    let Some(parent) = out_path.parent() else {
+        return;
+    };
+    let Some(base_name) = out_path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let base_stem = out_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or(base_name);
+
+    let _ = tokio::fs::remove_file(out_path).await;
+
+    let Ok(mut entries) = tokio::fs::read_dir(parent).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path == out_path {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(base_name) && !name.starts_with(base_stem) {
+            continue;
+        }
+        let yt_dlp_format_fragment = name
+            .strip_prefix(base_stem)
+            .and_then(|suffix| suffix.strip_prefix(".f"))
+            .and_then(|suffix| suffix.chars().next())
+            .is_some_and(|ch| ch.is_ascii_digit());
+        let looks_like_media_temp = name.contains(".part")
+            || name.contains(".ytdl")
+            || name.contains(".temp")
+            || name.contains(".tmp")
+            || yt_dlp_format_fragment;
+        if looks_like_media_temp {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+    }
+}
+
 
 
 
@@ -693,6 +748,7 @@ pub(crate) async fn start_media_download_internal(
 
     let mut strike = 0_usize;
     let mut terminal_failure = false;
+    let mut processing_started = false;
 
     'retry: while strike <= MAX_RETRIES {
         let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
@@ -772,7 +828,10 @@ pub(crate) async fn start_media_download_internal(
             tokio::select! {
                 _ = cancel_rx.changed() => {
                     let _ = child.kill();
-                    return Ok(());
+                    if processing_started {
+                        cleanup_media_processing_artifacts(&out_path).await;
+                    }
+                    return Err(crate::queue::MEDIA_RUN_CANCELLED.to_string());
                 }
                 event = rx.recv() => {
                     match event {
@@ -819,6 +878,23 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
+                            if !processing_started && is_media_processing_line(&line) {
+                                processing_started = true;
+                                let _ = app_handle.emit(
+                                    "download-state",
+                                    DownloadStateEvent::new(
+                                        id,
+                                        crate::ipc::DownloadStatus::Processing,
+                                    ),
+                                );
+                                let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                    id: id.to_string(),
+                                    fraction: 1.0,
+                                    speed: "Processing".to_string(),
+                                    eta: "-".to_string(),
+                                    size: None,
+                                });
+                            }
                             let lower = line.to_lowercase();
                             if lower.contains("error") || lower.contains("critical") {
                                 log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
@@ -911,8 +987,7 @@ async fn pause_download(
 ) -> Result<(), String> {
     println!("pause_download called for id: {}", id);
 
-    // Release the concurrency slot FIRST, before signaling the sidecar to die.
-    state.queue_manager.release_permit(&id).await;
+    let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
 
     // Emit the paused state.
@@ -938,7 +1013,11 @@ async fn pause_download(
             .send(download::DownloadCmd::Pause(download_id))
             .await;
     }
-    state.download_coordinator.pause_media(id).await
+    let media_result = state.download_coordinator.pause_media(id.clone()).await;
+    if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+        state.queue_manager.release_permit(&id).await;
+    }
+    media_result
 }
 
 #[tauri::command]
@@ -950,9 +1029,8 @@ async fn remove_download(
 ) -> Result<(), String> {
     println!("remove_download called for id: {}", id);
 
-    // Remove from the queue (pending or active) and free the slot.
+    let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
-    state.queue_manager.release_permit(&id).await;
 
     use tauri::Emitter;
     let _ = app_handle.emit(
@@ -967,6 +1045,9 @@ async fn remove_download(
             .await?;
     }
     state.download_coordinator.pause_media(id.clone()).await?;
+    if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+        state.queue_manager.release_permit(&id).await;
+    }
 
     if let Some(path) = filepath {
         if !path.is_empty() {

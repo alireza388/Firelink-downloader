@@ -7,6 +7,9 @@ use ts_rs::TS;
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum DownloadStatus {
     Downloading,
+    /// Post-download media processing such as yt-dlp/ffmpeg merging or
+    /// extraction. The queue permit is still held.
+    Processing,
     Paused,
     Completed,
     Failed,
@@ -20,6 +23,7 @@ impl DownloadStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Downloading => "downloading",
+            Self::Processing => "processing",
             Self::Paused => "paused",
             Self::Completed => "completed",
             Self::Failed => "failed",

@@ -12,6 +12,7 @@ use log;
 
 /// Default capacity when no setting is read yet.
 pub const DEFAULT_MAX_CONCURRENT: usize = 3;
+pub const MEDIA_RUN_CANCELLED: &str = "__firelink_media_run_cancelled__";
 
 /// Outcome of an aria2 completion that arrived before its gid was stored.
 /// Carries the outcome so the correct state emit survives the race.
@@ -84,6 +85,7 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     pending: Mutex<VecDeque<QueuedTask>>,
     semaphore: Arc<Semaphore>,
     active_permits: Mutex<HashMap<String, OwnedSemaphorePermit>>,
+    active_kinds: Mutex<HashMap<String, TaskKind>>,
     target_capacity: AtomicUsize,
     slots_to_retire: AtomicUsize,
     notify: Notify,
@@ -126,6 +128,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             pending: Mutex::new(VecDeque::new()),
             semaphore: Arc::new(Semaphore::new(capacity)),
             active_permits: Mutex::new(HashMap::new()),
+            active_kinds: Mutex::new(HashMap::new()),
             target_capacity: AtomicUsize::new(capacity),
             slots_to_retire: AtomicUsize::new(0),
             notify: Notify::new(),
@@ -178,10 +181,15 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .insert(id.to_string(), permit);
     }
 
+    pub async fn active_kind(&self, id: &str) -> Option<TaskKind> {
+        self.active_kinds.lock().await.get(id).cloned()
+    }
+
     /// Release the permit parked under `id`, if any. Idempotent. Wakes the
     /// dispatcher so a freed slot is claimed promptly.
     pub async fn release_permit(&self, id: &str) {
         let removed = self.active_permits.lock().await.remove(id).is_some();
+        self.active_kinds.lock().await.remove(id);
         if removed {
             self.notify.notify_one();
         }
@@ -298,6 +306,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         // aria2's RPC returns instantly, so the permit must outlive the
         // dispatch_one call. Media/Native runners release on exit.
         self.park_permit(&id, permit).await;
+        self.active_kinds.lock().await.insert(id.clone(), task.kind.clone());
         self.emit_state(&id, DownloadStatus::Downloading);
 
         match task.kind {
@@ -350,6 +359,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             Ok(()) => {
                 self.emit_state(id, DownloadStatus::Completed);
             }
+            Err(error) if error == MEDIA_RUN_CANCELLED => {}
             Err(error) => {
                 self.emit_failed(id, error);
             }
@@ -703,7 +713,7 @@ impl SidecarSpawner for ProductionSpawner {
             .register_media(id.to_string())
             .await
             .map_err(|e| e)?;
-        crate::start_media_download_internal(
+        let outcome = crate::start_media_download_internal(
             self.app_handle.clone(),
             id,
             payload.url.clone(),
@@ -720,7 +730,9 @@ impl SidecarSpawner for ProductionSpawner {
             payload.max_tries,
             &mut cancel_rx,
         )
-        .await
+        .await;
+        let _ = state.download_coordinator.finish_media(id.to_string()).await;
+        outcome
     }
 
     async fn run_native(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {

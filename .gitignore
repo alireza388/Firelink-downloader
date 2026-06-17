@@ -30,7 +30,6 @@ src-tauri/binaries/aria2c
 src-tauri/binaries/deno
 src-tauri/binaries/ffmpeg
 src-tauri/binaries/yt-dlp
-src-tauri/binaries/_internal/certifi/cacert.pem
 
 # Packaged artifacts
 build/

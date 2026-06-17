@@ -14,6 +14,7 @@ import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
+import DiagnosticsView from "./components/DiagnosticsView";
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -305,6 +306,7 @@ function App() {
           {activeView === 'settings' && <SettingsView />}
           {activeView === 'scheduler' && <SchedulerView />}
           {activeView === 'speedLimiter' && <SpeedLimiterView />}
+          {activeView === 'diagnostics' && <DiagnosticsView />}
         </div>
         
         {/* Status Bar */}

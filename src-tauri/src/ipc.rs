@@ -154,6 +154,7 @@ pub enum ActiveView {
     Scheduler,
     #[serde(rename = "speedLimiter")]
     SpeedLimiter,
+    Diagnostics,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

@@ -100,6 +100,7 @@ type CommandMap = {
   db_save_queue: { args: { id: string; data: string }; result: void };
   db_delete_queue: { args: { id: string }; result: void };
   create_category_directories: { args: { paths: string[] }; result: void };
+  export_logs: { args: { destPath: string }; result: string };
   get_pending_order: { args: undefined; result: string[] };
   enqueue_download: { args: { item: any }; result: string };
   enqueue_many: { args: { items: any[] }; result: void };

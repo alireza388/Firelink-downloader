@@ -1302,6 +1302,29 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
 }
 
 #[tauri::command]
+async fn export_logs(app_handle: tauri::AppHandle, dest_path: String) -> Result<String, String> {
+    use tauri::Manager;
+    let log_dir = app_handle.path().app_log_dir().map_err(|e| e.to_string())?;
+    let log_file = log_dir.join("firelink.log");
+    let src = if log_file.exists() {
+        log_file
+    } else {
+        let mut found = None;
+        if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.path().extension().is_some_and(|e| e == "log") {
+                    found = Some(entry.path());
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| "No log file found in app log directory".to_string())?
+    };
+    tokio::fs::copy(&src, &dest_path).await.map_err(|e| e.to_string())?;
+    Ok(dest_path)
+}
+
+#[tauri::command]
 fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), String> {
     use tauri::tray::TrayIconBuilder;
     use tauri::menu::{Menu, MenuItem};
@@ -1785,6 +1808,15 @@ pub fn run() {
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
                 ])
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+                .max_file_size(10_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
+                .format(move |out, message, _record| {
+                    let msg = message.to_string();
+                    if msg.contains("[download]") && msg.contains('%') {
+                        return;
+                    }
+                    out.finish(format_args!("{}\n", msg));
+                })
                 .build(),
         )
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -1811,7 +1843,8 @@ pub fn run() {
             enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
-            parity::create_category_directories
+            parity::create_category_directories,
+            export_logs
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

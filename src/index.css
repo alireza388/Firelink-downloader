@@ -1169,6 +1169,66 @@
   }
 }
 
+/* Diagnostics Console */
+.diagnostics-toolbar {
+  height: 42px;
+  border-bottom: 1px solid hsl(var(--border-color));
+  background: hsl(var(--statusbar-bg));
+}
+
+.diagnostics-console {
+  background: hsl(0 0% 7%);
+  color: hsl(0 0% 82%);
+  font-family: "SF Mono", Monaco, "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+}
+
+.diagnostics-console .log-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px;
+  min-height: 18px;
+  align-items: baseline;
+  border-radius: 2px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diagnostics-console .log-level-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+  min-width: 52px;
+  font-size: 10px;
+}
+
+.diagnostics-console .log-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.diagnostics-console .log-error .log-level-tag,
+.diagnostics-console .log-error .log-message {
+  color: hsl(0 72% 58%);
+}
+
+.diagnostics-console .log-warn .log-level-tag,
+.diagnostics-console .log-warn .log-message {
+  color: hsl(45 100% 50%);
+}
+
+.diagnostics-console .log-info .log-level-tag,
+.diagnostics-console .log-info .log-message {
+  color: hsl(0 0% 75%);
+}
+
+.diagnostics-console .log-debug .log-level-tag,
+.diagnostics-console .log-debug .log-message {
+  color: hsl(0 0% 45%);
+}
+
+.diagnostics-console .log-line:hover {
+  background: hsl(0 0% 100% / 0.04);
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Inbox, Zap, CheckCircle2, CircleDashed,
   Film, Music, FileText, Box, Image as ImageIcon, Archive, FileQuestion,
-  List, CalendarClock, Gauge, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft,
+  List, CalendarClock, Gauge, Bug, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft,
   type LucideIcon
 } from 'lucide-react';
 import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadStore';
@@ -229,6 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           <div className="sidebar-section-label">Tools</div>
           <ToolItem icon={CalendarClock} label="Scheduler" view="scheduler" />
           <ToolItem icon={Gauge} label="Speed Limiter" view="speedLimiter" />
+          <ToolItem icon={Bug} label="Diagnostics" view="diagnostics" />
         </section>
       </div>
 

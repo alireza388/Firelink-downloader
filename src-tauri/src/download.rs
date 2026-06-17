@@ -189,7 +189,7 @@ impl CoordinatorEventSink {
     fn emit_failed(&self, id: Uuid, error: String) {
         match self {
             Self::Tauri(app_handle) => {
-                eprintln!("download {id} failed: {error}");
+                log::error!("native download {} failed: {}", id, error);
                 let _ = app_handle.emit("download-failed", id.to_string());
             }
             Self::Headless(event_tx) => {

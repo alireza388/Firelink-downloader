@@ -673,6 +673,62 @@ async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppSt
 }
 
 
+fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str) -> Result<std::path::PathBuf, String> {
+    let full_name = format!(
+        "{}-{}-apple-darwin",
+        binary_name,
+        if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" },
+    );
+
+    // Production: sidecar sits next to the main executable inside the .app bundle
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidate = exe_dir.join(&full_name);
+            if candidate.is_file() {
+                log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
+                return Ok(candidate);
+            }
+        }
+    }
+
+    // Dev mode: search relative to CWD
+    if let Ok(cwd) = std::env::current_dir() {
+        let search_dirs = [
+            cwd.join("binaries"),
+            cwd.join("src-tauri").join("binaries"),
+        ];
+        for dir in &search_dirs {
+            let candidate = dir.join(&full_name);
+            if candidate.is_file() {
+                let abs = candidate.canonicalize().map_err(|e| {
+                    format!("Failed to canonicalize '{}': {}", full_name, e)
+                })?;
+                log::info!("Resolved bundled '{}' at: {:?}", binary_name, abs);
+                return Ok(abs);
+            }
+        }
+    }
+
+    // Fallback: Tauri resource directory (some configs place sidecars there)
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let candidate = resource_dir.join(&full_name);
+        if candidate.is_file() {
+            log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
+            return Ok(candidate);
+        }
+        let candidate2 = resource_dir.join("binaries").join(&full_name);
+        if candidate2.is_file() {
+            log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate2);
+            return Ok(candidate2);
+        }
+    }
+
+    Err(format!(
+        "Could not find bundled binary '{}' (expected name: {})",
+        binary_name, full_name
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn start_media_download_internal(
     app_handle: tauri::AppHandle,
@@ -765,6 +821,27 @@ pub(crate) async fn start_media_download_internal(
     let spd_re = SPD_RE.get_or_init(|| Regex::new(r"at\s+([^\s]+)").unwrap());
     let eta_re = ETA_RE.get_or_init(|| Regex::new(r"ETA\s+([^\s]+)").unwrap());
 
+    // Resolve absolute paths to bundled binaries
+    let aria2c_path = resolve_bundled_binary_path(&app_handle, "aria2c")?;
+    let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
+    log::info!("Using bundled aria2c: {:?}", aria2c_path);
+    log::info!("Using bundled ffmpeg: {:?}", ffmpeg_path);
+
+    // Create a temp directory with bare-name symlinks so yt-dlp finds the
+    // bundled binaries via PATH when told --downloader aria2c (bare name).
+    let bin_dir = tempfile::tempdir().map_err(|e| format!("failed to create bundling temp dir: {e}"))?;
+    {
+        use std::os::unix::fs::symlink;
+        symlink(&aria2c_path, bin_dir.path().join("aria2c"))
+            .map_err(|e| format!("failed to symlink aria2c: {e}"))?;
+        symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg"))
+            .map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
+    }
+    let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
+    // Minimal PATH: bundled dir first, then only essential system paths.
+    // No user-writable or Homebrew paths that could shadow our binaries.
+    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
+
     let mut strike = 0_usize;
     let mut terminal_failure = false;
     let mut processing_started = false;
@@ -778,11 +855,13 @@ pub(crate) async fn start_media_download_internal(
            .arg("--extractor-retries").arg("3")
            .arg("--downloader").arg("aria2c")
            .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M")
+           .arg("--ffmpeg-location").arg(&bin_dir_str)
            .arg("--concurrent-fragments").arg("4")
            .arg("--no-warnings")
            .arg("--continue")
            .arg("--compat-options").arg("no-youtube-unavailable-videos")
-           .arg("-o").arg(out_path.to_string_lossy().to_string());
+           .arg("-o").arg(out_path.to_string_lossy().to_string())
+           .env("PATH", &path_env);
 
         if let Some(limit) = speed_limit.as_ref() {
             if !limit.is_empty() {

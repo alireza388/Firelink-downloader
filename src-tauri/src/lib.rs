@@ -459,11 +459,23 @@ async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), Strin
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-struct Aria2DaemonGuard(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
+struct Aria2DaemonGuard {
+    child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+    startup_error: Mutex<Option<String>>,
+}
+
+impl Aria2DaemonGuard {
+    fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+            startup_error: Mutex::new(None),
+        }
+    }
+}
 
 impl Drop for Aria2DaemonGuard {
     fn drop(&mut self) {
-        if let Ok(mut lock) = self.0.lock() {
+        if let Ok(mut lock) = self.child.lock() {
             if let Some(child) = lock.take() {
                 let _ = child.kill();
             }
@@ -637,7 +649,13 @@ pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serd
 }
 
 #[tauri::command]
-async fn test_aria2c(state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let guard = app_handle.state::<Aria2DaemonGuard>();
+    let startup_err = guard.startup_error.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(err) = startup_err {
+        return Err(format!("aria2 daemon unavailable: {err}"));
+    }
+
     let result = rpc_call(
         state.aria2_port,
         &state.aria2_secret,
@@ -1484,7 +1502,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
-        .manage(Aria2DaemonGuard(std::sync::Mutex::new(None)))
+        .manage(Aria2DaemonGuard::new())
         .setup(move |app| {
             use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
             use tauri::menu::{Menu, MenuItem};
@@ -1629,7 +1647,7 @@ pub fn run() {
             }
 
             use tauri_plugin_shell::ShellExt;
-            let aria2_process = match app.handle().shell().sidecar("aria2c") {
+            match app.handle().shell().sidecar("aria2c") {
                 Ok(mut cmd) => {
                     cmd = cmd.arg("--enable-rpc=true")
                         .arg(format!("--rpc-listen-port={}", aria2_port))
@@ -1642,14 +1660,18 @@ pub fn run() {
                         .arg("--console-log-level=warn")
                         .arg("--download-result=hide")
                         .arg("--check-certificate=true");
-                        
+
                     if !global_speed_limit.is_empty() {
                         cmd = cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
                     }
-                    
+
                     match cmd.spawn() {
                         Ok((mut rx, child)) => {
                             log::info!("aria2c spawned successfully on port {}", aria2_port);
+
+                            let guard = app.state::<Aria2DaemonGuard>();
+                            *guard.child.lock().unwrap() = Some(child);
+
                             tauri::async_runtime::spawn(async move {
                                 while let Some(event) = rx.recv().await {
                                     match event {
@@ -1674,26 +1696,54 @@ pub fn run() {
                                     }
                                 }
                             });
-                            Some(child)
+
+                            let port = aria2_port;
+                            let secret = aria2_secret.clone();
+                            let start = std::time::Instant::now();
+                            let ready = tauri::async_runtime::block_on(async {
+                                let mut last_err = String::new();
+                                loop {
+                                    if start.elapsed() > std::time::Duration::from_secs(5) {
+                                        return Err(if last_err.is_empty() {
+                                            "aria2 daemon did not become ready within 5 seconds".to_string()
+                                        } else {
+                                            format!("aria2 did not become ready: {last_err}")
+                                        });
+                                    }
+                                    match rpc_call(port, &secret, "aria2.getVersion", serde_json::json!([])).await {
+                                        Ok(ver) => return Ok(ver),
+                                        Err(e) => {
+                                            last_err = e;
+                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                        }
+                                    }
+                                }
+                            });
+
+                            match ready {
+                                Ok(ver) => {
+                                    let v = ver.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                    log::info!("aria2 daemon ready (version {}) on port {}", v, port);
+                                }
+                                Err(e) => {
+                                    log::error!("aria2 daemon readiness check failed: {}", e);
+                                    let guard = app.state::<Aria2DaemonGuard>();
+                                    *guard.startup_error.lock().unwrap() = Some(e);
+                                }
+                            }
                         }
                         Err(e) => {
                             log::error!("Failed to spawn aria2c: {}", e);
-                            None
+                            let guard = app.state::<Aria2DaemonGuard>();
+                            *guard.startup_error.lock().unwrap() = Some(format!("Failed to spawn aria2c: {e}"));
                         }
                     }
                 }
                 Err(e) => {
                     log::error!("Failed to create aria2c sidecar: {}", e);
-                    None
-                }
-            };
-
-            match aria2_process {
-                Some(process) => {
                     let guard = app.state::<Aria2DaemonGuard>();
-                    *guard.0.lock().unwrap() = Some(process);
+                    *guard.startup_error.lock().unwrap() = Some(format!("Failed to create aria2c sidecar: {e}"));
                 }
-                None => log::error!("Failed to spawn aria2c daemon"),
             }
 
             let app_handle_ws = app.handle().clone();

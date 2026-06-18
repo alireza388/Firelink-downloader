@@ -1,4 +1,5 @@
 import type { DownloadCategory } from '../bindings/DownloadCategory';
+import type { DownloadStatus } from '../bindings/DownloadStatus';
 export type { DownloadCategory } from '../bindings/DownloadCategory';
 
 import { invoke } from '@tauri-apps/api/core';
@@ -18,6 +19,16 @@ let MEDIA_DOMAINS = [
   'facebook.com',
   'fb.watch'
 ];
+
+const ACTIVE_DOWNLOAD_STATUSES: ReadonlySet<DownloadStatus> = new Set([
+  'queued',
+  'downloading',
+  'processing',
+  'retrying',
+]);
+
+export const isActiveDownloadStatus = (status: DownloadStatus): boolean =>
+  ACTIVE_DOWNLOAD_STATUSES.has(status);
 
 export const initMediaDomains = async () => {
   try {

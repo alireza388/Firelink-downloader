@@ -1175,10 +1175,9 @@ pub(crate) async fn start_media_download_internal(
     let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
 
     let mut strike = 0_usize;
-    let mut terminal_failure = false;
     let mut processing_started = false;
 
-    'retry: while strike <= MAX_RETRIES {
+    while strike <= MAX_RETRIES {
         let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
            .arg("--newline")
            .arg("--no-check-formats")
@@ -1252,9 +1251,7 @@ pub(crate) async fn start_media_download_internal(
         log::info!("yt-dlp spawned for id: {} (strike {})", id, strike);
 
         let mut stderr_tail = String::new();
-        let mut failure_reason: Option<String> = None;
-
-        loop {
+        let failure_reason = loop {
             tokio::select! {
                 _ = cancel_rx.changed() => {
                     let _ = child.kill();
@@ -1336,49 +1333,37 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
                             log::error!("yt-dlp shell error [{}]: {}", id, err);
-                            failure_reason = Some(err);
-                            break;
+                            break err;
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
                             if payload.code == Some(0) {
                                 log::info!("yt-dlp completed successfully for id: {}", id);
-                                let _ = app_handle.emit("download-complete", id.to_string());
-                                use tauri_plugin_notification::NotificationExt;
-                                let _ = app_handle.notification().builder().title("Download Complete").body(&safe_filename).show();
                                 return Ok(());
                             }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
-                            failure_reason = Some(if stderr_tail.is_empty() {
+                            break if stderr_tail.is_empty() {
                                 format!("yt-dlp exited with code {:?}", payload.code)
                             } else {
                                 stderr_tail.clone()
-                            });
-                            break;
+                            };
                         }
                         Some(_) => {}
                         None => {
-                            failure_reason = Some(if stderr_tail.is_empty() {
+                            break if stderr_tail.is_empty() {
                                 "yt-dlp process ended unexpectedly".to_string()
                             } else {
                                 stderr_tail.clone()
-                            });
-                            break;
+                            };
                         }
                     }
                 }
             }
-        }
-
-        let failure_reason = match failure_reason {
-            Some(reason) => reason,
-            None => return Ok(()),
         };
 
         let transient = is_transient_network_error(&failure_reason);
         let strikes_left = strike < MAX_RETRIES;
         if !(transient && strikes_left) {
-            terminal_failure = true;
-            break 'retry;
+            return Err(failure_reason);
         }
 
         let reason = failure_reason.clone();
@@ -1396,17 +1381,13 @@ pub(crate) async fn start_media_download_internal(
         .await;
 
         if outcome == BackoffOutcome::Aborted {
-            return Ok(());
+            return Err(crate::queue::MEDIA_RUN_CANCELLED.to_string());
         }
 
         strike += 1;
     }
 
-    if terminal_failure {
-        let _ = app_handle.emit("download-failed", id.to_string());
-    }
-
-    Ok(())
+    Err("yt-dlp retry loop exhausted".to_string())
 }
 
 #[tauri::command]

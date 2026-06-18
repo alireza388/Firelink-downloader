@@ -1,8 +1,11 @@
-use firelink_lib::queue::{QueueManager, SpawnPayload, TaskKind, QueuedTask};
+use firelink_lib::queue::{
+    QueueManager, QueuedTask, SidecarSpawner, SpawnPayload, TaskKind, MEDIA_RUN_CANCELLED,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tauri::test::{mock_builder, mock_context, noop_assets};
+use tauri::Listener;
 use tokio::time::timeout;
 
 /// A fake spawner that records calls and lets tests gate sidecar lifetime.
@@ -209,6 +212,98 @@ fn aria2_task(id: &str) -> QueuedTask {
         kind: TaskKind::Aria2,
         payload: SpawnPayload::default(),
     }
+}
+
+fn media_task(id: &str) -> QueuedTask {
+    QueuedTask {
+        id: id.to_string(),
+        kind: TaskKind::Media,
+        payload: SpawnPayload::default(),
+    }
+}
+
+struct FixedMediaSpawner {
+    outcome: Result<(), String>,
+}
+
+#[async_trait::async_trait]
+impl SidecarSpawner for FixedMediaSpawner {
+    async fn add_uri(&self, _id: &str, _payload: &SpawnPayload) -> Result<String, String> {
+        unreachable!("aria2 is not used by media terminal-state tests")
+    }
+
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+        self.outcome.clone()
+    }
+
+    async fn run_native(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+        unreachable!("native downloads are not used by media terminal-state tests")
+    }
+}
+
+fn make_media_manager(
+    outcome: Result<(), String>,
+) -> (
+    QueueManager<tauri::test::MockRuntime>,
+    std::sync::mpsc::Receiver<String>,
+) {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    app.handle().listen("download-state", move |event| {
+        let _ = event_tx.send(event.payload().to_string());
+    });
+    let spawner: Arc<dyn SidecarSpawner> = Arc::new(FixedMediaSpawner { outcome });
+    let manager = QueueManager::test_new(app.handle().clone(), 1, spawner);
+    (manager, event_rx)
+}
+
+fn emitted_statuses(event_rx: &std::sync::mpsc::Receiver<String>) -> Vec<String> {
+    event_rx
+        .try_iter()
+        .filter_map(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
+        .filter_map(|payload| payload.get("status")?.as_str().map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn media_terminal_error_emits_failed_without_completed() {
+    let (manager, event_rx) = make_media_manager(Err("terminal media failure".to_string()));
+    let manager = Arc::new(manager);
+    manager.push(media_task("media-failed")).await;
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let statuses = emitted_statuses(&event_rx);
+    assert!(statuses.iter().any(|status| status == "failed"));
+    assert!(!statuses.iter().any(|status| status == "completed"));
+    assert_eq!(manager.available_permits(), 1);
+
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn media_cancellation_does_not_emit_completed() {
+    let (manager, event_rx) =
+        make_media_manager(Err(MEDIA_RUN_CANCELLED.to_string()));
+    let manager = Arc::new(manager);
+    manager.push(media_task("media-cancelled")).await;
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let statuses = emitted_statuses(&event_rx);
+    assert!(!statuses.iter().any(|status| status == "failed"));
+    assert!(!statuses.iter().any(|status| status == "completed"));
+    assert_eq!(manager.available_permits(), 1);
+
+    dispatcher.abort();
 }
 
 #[tokio::test]

@@ -10,6 +10,7 @@ import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
+import { isActiveDownloadStatus } from '../utils/downloads';
 
 export type { DownloadCategory } from '../utils/downloads';
 
@@ -533,10 +534,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         downloads: downloads.length > 0 ? downloads : state.downloads
       }));
       
-      // Reset interrupted downloads (crashed while downloading/processing) to queued
+      // Reset interrupted active downloads to queued.
       set((state) => ({
         downloads: state.downloads.map(d =>
-          d.status === 'downloading' || d.status === 'processing'
+          isActiveDownloadStatus(d.status) && d.status !== 'queued'
             ? { ...d, status: 'queued' as const }
             : d
         )

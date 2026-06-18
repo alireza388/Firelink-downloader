@@ -4,6 +4,7 @@ import { listen as tauriListen, type Event, type EventCallback, type UnlistenFn 
 import type { DownloadCategory } from './bindings/DownloadCategory';
 import type { DownloadItem } from './bindings/DownloadItem';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
+import type { DownloadStateEvent } from './bindings/DownloadStateEvent';
 import type { DownloadStatus } from './bindings/DownloadStatus';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
 import type { MediaCookieSource } from './bindings/MediaCookieSource';
@@ -123,6 +124,7 @@ export function invokeCommand<K extends CommandName>(
 type EventMap = {
   'schedule-trigger': 'start' | 'stop';
   'download-progress': DownloadProgressEvent;
+  'download-state': DownloadStateEvent;
   'download-complete': string;
   'download-failed': string;
   'extension-add-download': ExtensionDownload;

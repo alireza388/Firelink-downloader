@@ -1,4 +1,4 @@
-import { initMediaDomains } from './utils/downloads';
+import { initMediaDomains, isActiveDownloadStatus } from './utils/downloads';
 import { useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
@@ -134,7 +134,7 @@ function App() {
   useEffect(() => {
     if (!schedulerRunning) return;
     const hasPendingScheduledWork = downloads.some(download =>
-      download.status === 'queued' || download.status === 'downloading'
+      isActiveDownloadStatus(download.status)
     );
     if (hasPendingScheduledWork) return;
 
@@ -209,26 +209,20 @@ function App() {
   useEffect(() => {
     initDownloadListener();
 
-    const unlistenComplete = listen('download-complete', (event) => {
+    const unlistenTerminalState = listen('download-state', (event) => {
+      if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
       const settings = useSettingsStore.getState();
-      if (settings.showNotifications) {
-        const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
-        const fileName = item?.fileName || 'A file';
-        
+      if (!settings.showNotifications) return;
+
+      const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload.id);
+      const fileName = item?.fileName || 'A file';
+      if (event.payload.status === 'completed') {
         sendNotification({
           title: 'Download Complete',
           body: `${fileName} has finished downloading.`,
           sound: settings.playCompletionSound ? 'default' : undefined
         });
-      }
-    });
-
-    const unlistenFailed = listen('download-failed', (event) => {
-      const settings = useSettingsStore.getState();
-      if (settings.showNotifications) {
-        const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload);
-        const fileName = item?.fileName || 'A file';
-        
+      } else {
         sendNotification({
           title: 'Download Failed',
           body: `${fileName} failed to download.`,
@@ -265,8 +259,7 @@ function App() {
 
     return () => {
       invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
-      unlistenComplete.then(f => f());
-      unlistenFailed.then(f => f());
+      unlistenTerminalState.then(f => f());
       unlistenExtension.then(f => f());
       unlistenExtensionQueued.then(f => f());
       unlistenDeepLink.then(f => f());

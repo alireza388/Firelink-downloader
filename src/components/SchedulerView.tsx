@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import {
-  CheckCircle2, Clock3, List, Moon, LockKeyhole,
+  AlertCircle, CheckCircle2, Clock3, List, Moon, LockKeyhole,
   Pause, Play, Power, RotateCcw, Save
 } from 'lucide-react';
 import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/useSettingsStore';
@@ -57,6 +57,7 @@ export default function SchedulerView() {
   const [draft, setDraft] = useState<SchedulerSettings>(savedSettings);
   const [toast, setToast] = useState('');
   const [permissionMessage, setPermissionMessage] = useState('');
+  const [automationPermissionGranted, setAutomationPermissionGranted] = useState<boolean | null>(null);
   const isMac = navigator.userAgent.includes('Mac');
 
   useEffect(() => {
@@ -112,13 +113,69 @@ export default function SchedulerView() {
     setToast(count > 0 ? `Paused ${count} active download${count === 1 ? '' : 's'}` : 'No active downloads');
   };
 
-  const requestPermission = async () => {
-    setPermissionMessage('Requesting permission...');
+  const refreshPermissionStatus = useCallback(async (showMessage = false) => {
+    if (!isMac) return;
+
     try {
       await invoke('request_automation_permission');
-      setPermissionMessage('Automation permission is available.');
+      setAutomationPermissionGranted(true);
+      if (showMessage) {
+        setPermissionMessage('Automation permission is available.');
+      }
+    } catch {
+      setAutomationPermissionGranted(false);
+      if (showMessage) {
+        setPermissionMessage('Automation permission is missing. Enable Firelink under Automation for Finder in System Settings.');
+      }
+    }
+  }, [isMac]);
+
+  useEffect(() => {
+    if (!isMac) return;
+
+    void refreshPermissionStatus();
+
+    const refreshOnFocus = () => {
+      void refreshPermissionStatus();
+    };
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshPermissionStatus();
+      }
+    };
+
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+    };
+  }, [isMac, refreshPermissionStatus]);
+
+  const openAutomationSettings = async (message: string) => {
+    setPermissionMessage(message);
+    try {
+      await invoke('open_automation_settings');
     } catch (error) {
       setPermissionMessage(String(error));
+    }
+  };
+
+  const handlePermissionAction = async () => {
+    if (automationPermissionGranted) {
+      await openAutomationSettings('macOS does not allow Firelink to revoke Automation permission directly. Revoke it in System Settings, then return to Firelink.');
+      return;
+    }
+
+    setPermissionMessage('Requesting Automation permission...');
+    try {
+      await invoke('request_automation_permission');
+      setAutomationPermissionGranted(true);
+      setPermissionMessage('Automation permission is available.');
+    } catch {
+      setAutomationPermissionGranted(false);
+      await openAutomationSettings('Enable Firelink under Automation for Finder in System Settings, then return to Firelink.');
     }
   };
 
@@ -242,11 +299,27 @@ export default function SchedulerView() {
             <div className="mb-2 flex items-center gap-2 font-semibold text-text-primary">
               <LockKeyhole size={17} className="text-accent" /> System Permissions
             </div>
-            <p className="mb-4 text-[12px] text-text-muted">Sleep, restart, and shut down require macOS Automation permission for Finder.</p>
-            <div className="flex gap-2">
-              <button onClick={requestPermission} className="app-button app-button-primary px-3 text-[11px]">Grant Permission</button>
-              <button onClick={() => invoke('open_automation_settings')} className="app-button px-3 text-[11px]">Open Settings</button>
-            </div>
+          <p className="mb-4 text-[12px] text-text-muted">Sleep, restart, and shut down require macOS Automation permission for Finder.</p>
+          <div className="mb-4 flex items-center gap-2 text-[12px]">
+            {automationPermissionGranted ? (
+              <>
+                <CheckCircle2 size={16} className="text-green-500" />
+                <span className="font-medium text-green-500">Automation permission granted</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle size={16} className="text-orange-400" />
+                <span className="font-medium text-orange-400">
+                  {automationPermissionGranted === null ? 'Checking Automation permission...' : 'Automation permission missing'}
+                </span>
+              </>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handlePermissionAction} className="app-button app-button-primary px-3 text-[11px]">
+              {automationPermissionGranted ? 'Revoke permission' : 'Grant permission'}
+            </button>
+          </div>
             {permissionMessage && <p className="mt-3 text-[11px] text-text-muted">{permissionMessage}</p>}
           </section>
         )}

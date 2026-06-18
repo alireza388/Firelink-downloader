@@ -379,13 +379,14 @@ export const AddDownloadsModal = () => {
               password: keychainPassword
             });
             if (mediaData && mediaData.formats.length > 0) {
-              const mappedFormats = mediaData.formats.map(f => {
-                const quality = f.resolution || 'Best';
-                const bytes = f.filesize || 0;
-                return {
-                  name: quality,
-                  ext: f.ext,
-                  bytes,
+                  const mappedFormats = mediaData.formats.map(f => {
+                    const quality = f.resolution || 'Best';
+                    const container = f.ext.toUpperCase();
+                    const bytes = f.filesize || 0;
+                    return {
+                      name: `${quality} ${container}`,
+                      ext: f.ext,
+                      bytes,
                   formatLabel: f.format_label || f.ext.toUpperCase(),
                   detail: bytes ? formatBytes(bytes) : 'Unknown size',
                   selector: f.format_id,

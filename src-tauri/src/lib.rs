@@ -281,6 +281,18 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
             .collect();
 
         for height in available_heights {
+            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height)) {
+                let audio = best_audio_format(&clean_formats, None);
+                options.push(MediaFormat {
+                    format_id: format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    resolution: format!("{height}p"),
+                    ext: "mkv".to_string(),
+                    format_label: joined_format_label("mkv", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
+                    fps: json_f64(video, "fps"),
+                    filesize: estimated_merged_size(Some(video), audio),
+                });
+            }
+
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "mp4") {
                 let audio = best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None));
                 options.push(MediaFormat {
@@ -357,6 +369,7 @@ struct MediaProgress {
     speed: String,
     eta: String,
     size: Option<String>,
+    downloaded_bytes: Option<f64>,
 }
 
 fn progress_json_number(progress: &serde_json::Value, key: &str) -> Option<f64> {
@@ -422,6 +435,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             speed,
             eta,
             size,
+            downloaded_bytes: (downloaded > 0.0).then_some(downloaded),
         });
     }
 
@@ -452,6 +466,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             speed,
             eta,
             size,
+            downloaded_bytes: None,
         });
     }
 
@@ -477,7 +492,37 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             .map(|value| value.as_str().to_string())
             .unwrap_or_else(|| "-".to_string()),
         size: None,
+        downloaded_bytes: None,
     })
+}
+
+fn media_progress_speed(progress: &MediaProgress, now: Instant, last_sample: &mut Option<(Instant, f64)>) -> String {
+    let Some(downloaded_bytes) = progress.downloaded_bytes else {
+        return progress.speed.clone();
+    };
+
+    let Some((last_at, last_bytes)) = *last_sample else {
+        *last_sample = Some((now, downloaded_bytes));
+        return progress.speed.clone();
+    };
+
+    *last_sample = Some((now, downloaded_bytes));
+
+    if downloaded_bytes < last_bytes {
+        return progress.speed.clone();
+    }
+
+    let elapsed = now.duration_since(last_at).as_secs_f64();
+    if elapsed <= 0.05 {
+        return progress.speed.clone();
+    }
+
+    let bytes_per_second = (downloaded_bytes - last_bytes) / elapsed;
+    if bytes_per_second > 0.0 {
+        crate::download::format_speed(bytes_per_second)
+    } else {
+        progress.speed.clone()
+    }
 }
 
 async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
@@ -1845,6 +1890,7 @@ pub(crate) async fn start_media_download_internal(
     let _keep_alive = config_path;
     let mut current_track: f64 = 0.0;
     let mut last_fraction: f64 = 0.0;
+    let mut last_speed_sample: Option<(Instant, f64)> = None;
     let mut last_progress_at = std::time::Instant::now()
         .checked_sub(std::time::Duration::from_millis(200))
         .unwrap_or_else(std::time::Instant::now);
@@ -1969,19 +2015,21 @@ pub(crate) async fn start_media_download_internal(
                         Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
                             if let Some(progress) = parse_media_progress_line(&line) {
-                                if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
-                                    current_track += 1.0;
-                                }
-                                last_fraction = progress.fraction;
+                            if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
+                                current_track += 1.0;
+                                last_speed_sample = None;
+                            }
+                            last_fraction = progress.fraction;
+                            let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
 
-                                let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
+                            let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
 
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                         id: id.to_string(),
                                         fraction: overall_fraction,
-                                        speed: progress.speed,
+                                        speed,
                                         eta: progress.eta,
                                         size: progress.size,
                                     });
@@ -1994,19 +2042,21 @@ pub(crate) async fn start_media_download_internal(
                             if let Some(progress) = parse_media_progress_line(&line) {
                                 if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
                                     current_track += 1.0;
+                                    last_speed_sample = None;
                                 }
                                 last_fraction = progress.fraction;
+                                let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
 
                                 let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
-                                        id: id.to_string(),
-                                        fraction: overall_fraction,
-                                        speed: progress.speed,
-                                        eta: progress.eta,
-                                        size: progress.size,
-                                    });
+                                            id: id.to_string(),
+                                            fraction: overall_fraction,
+                                            speed,
+                                            eta: progress.eta,
+                                            size: progress.size,
+                                        });
                                     last_progress_at = now;
                                 }
                             }
@@ -2740,9 +2790,11 @@ fn set_extension_frontend_ready(
 mod tests {
     use super::{
         build_media_format_options, collect_download_uris, is_excluded_yt_dlp_format, json_lower,
-        parse_firelink_urls, parse_media_progress_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        media_progress_speed, parse_firelink_urls, parse_media_progress_line, MediaProgress,
+        MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn collects_primary_url_and_unique_mirrors_in_order() {
@@ -2837,12 +2889,18 @@ mod tests {
 
         let options = build_media_format_options(&formats);
 
-        assert!(!options.iter().any(|format| format.ext == "mhtml"));
-        assert!(options.iter().any(|format| {
-            format.resolution == "1080p"
-                && format.ext == "mp4"
-                && format.format_label == "MP4 • H.264 + AAC"
-                && format.filesize == Some(110_000_000)
+    assert!(!options.iter().any(|format| format.ext == "mhtml"));
+    assert!(options.iter().any(|format| {
+        format.resolution == "1080p"
+            && format.ext == "mkv"
+            && format.format_label == "MKV • H.264 + AAC"
+            && format.filesize == Some(110_000_000)
+    }));
+    assert!(options.iter().any(|format| {
+        format.resolution == "1080p"
+            && format.ext == "mp4"
+            && format.format_label == "MP4 • H.264 + AAC"
+            && format.filesize == Some(110_000_000)
         }));
         assert!(options.iter().any(|format| {
             format.resolution == "Audio only" && format.format_label == "M4A • AAC"
@@ -2917,7 +2975,34 @@ mod tests {
                 speed: "1.00MiB/s".to_string(),
                 eta: "00:05".to_string(),
                 size: Some("10.00MiB".to_string()),
+                downloaded_bytes: Some(5242880.0),
             })
+        );
+    }
+
+    #[test]
+    fn derives_main_window_speed_from_downloaded_byte_delta() {
+        let first = MediaProgress {
+            fraction: 0.25,
+            speed: "fallback".to_string(),
+            eta: "-".to_string(),
+            size: None,
+            downloaded_bytes: Some(1_000_000.0),
+        };
+        let second = MediaProgress {
+            fraction: 0.5,
+            speed: "fallback".to_string(),
+            eta: "-".to_string(),
+            size: None,
+            downloaded_bytes: Some(3_097_152.0),
+        };
+        let start = Instant::now();
+        let mut sample = None;
+
+        assert_eq!(media_progress_speed(&first, start, &mut sample), "fallback");
+        assert_eq!(
+            media_progress_speed(&second, start + Duration::from_secs(1), &mut sample),
+            "2.0 MB/s"
         );
     }
 
@@ -2932,6 +3017,7 @@ mod tests {
                 speed: "910KiB/s".to_string(),
                 eta: "25s".to_string(),
                 size: Some("34MiB".to_string()),
+                downloaded_bytes: None,
             })
         );
     }
@@ -2947,6 +3033,7 @@ mod tests {
                 speed: "2.00MiB/s".to_string(),
                 eta: "00:03".to_string(),
                 size: None,
+                downloaded_bytes: None,
             })
         );
     }

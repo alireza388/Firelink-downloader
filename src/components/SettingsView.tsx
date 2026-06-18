@@ -112,8 +112,8 @@ export default function SettingsView() {
             {item.rpc_ready != null && <p>RPC ready: {String(item.rpc_ready)}</p>}
             {item.rpc_port != null && <p>RPC port: {item.rpc_port}</p>}
             {item.last_stderr_tail && <details><summary className="cursor-pointer text-text-muted">daemon stderr</summary><pre className="mt-1 whitespace-pre-wrap">{item.last_stderr_tail}</pre></details>}
-            {item.expects_internal_dir != null && <p>Expects _internal layout: {String(item.expects_internal_dir)}</p>}
-            {item.has_internal_dir != null && <p>_internal directory found: {String(item.has_internal_dir)}</p>}
+            {item.expects_internal_dir === true && <p>Packaging: PyInstaller onedir (_internal required)</p>}
+            {item.has_internal_dir === true && <p>_internal directory found: true</p>}
             {item.has_python_framework != null && <p>Python runtime found: {String(item.has_python_framework)}</p>}
           </div>
         )}

@@ -257,7 +257,9 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
     let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
 
     use tauri_plugin_shell::ShellExt;
-    let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| format!("Failed to create sidecar yt-dlp: {}", e))?;
+    let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")
+        .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))?;
+    let mut cmd = app_handle.shell().command(&ytdlp_path);
     cmd = cmd.env("PATH", &path_env)
        .arg("--dump-json")
        .arg("--no-warnings")
@@ -330,27 +332,11 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
 #[tauri::command]
 async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ytdlp called!");
-    use tauri_plugin_shell::ShellExt;
-    
-    let output = app_handle.shell().sidecar("yt-dlp")
-        .map_err(|e| e.to_string())?
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|e| {
-            println!("Failed to execute: {}", e);
-            format!("Failed to execute yt-dlp: {}", e)
-        })?;
-
-    println!("yt-dlp execution finished with status: {:?}", output.status);
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        println!("yt-dlp output: {}", text);
-        Ok(text)
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        println!("yt-dlp error output: {}", err);
-        Err(format!("yt-dlp error: {}", err))
+    let (version, error, _) = run_sidecar_version(&app_handle, "yt-dlp", &["--version"]).await;
+    match (version, error) {
+        (Some(version), None) => Ok(version),
+        (_, Some(error)) => Err(error),
+        _ => Err("yt-dlp returned no version output".to_string()),
     }
 }
 
@@ -359,8 +345,8 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_ffmpeg called!");
     use tauri_plugin_shell::ShellExt;
 
-    let output = app_handle.shell().sidecar("ffmpeg")
-        .map_err(|e| e.to_string())?
+    let binary_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
+    let output = app_handle.shell().command(&binary_path)
         .arg("-version")
         .output()
         .await
@@ -395,8 +381,8 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("test_deno called!");
     use tauri_plugin_shell::ShellExt;
 
-    let output = app_handle.shell().sidecar("deno")
-        .map_err(|e| e.to_string())?
+    let binary_path = resolve_bundled_binary_path(&app_handle, "deno")?;
+    let output = app_handle.shell().command(&binary_path)
         .arg("--version")
         .output()
         .await
@@ -737,28 +723,64 @@ async fn run_sidecar_version(
 ) -> (Option<String>, Option<String>, Option<String>) {
     let binary_path = match resolve_bundled_binary_path(app_handle, sidecar_name) {
         Ok(p) => p,
-        Err(e) => return (None, Some(format!("Cannot find '{}': {}", sidecar_name, e)), None),
+        Err(e) => return (None, Some(format!("Missing bundled binary '{}': {}", sidecar_name, e)), None),
     };
 
-    let bin = binary_path.clone();
-    let arg_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    if let Err(error) = validate_bundled_binary(&binary_path) {
+        return (None, Some(error), None);
+    }
 
-    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        tokio::process::Command::new(&bin)
-            .args(&arg_owned)
-            .output().await
-    }).await;
+    let cache_key = version_cache_key(&binary_path, args);
+    if let Ok(cache) = version_check_cache().lock() {
+        if let Some(cached) = cache.get(&cache_key) {
+            return cached.clone();
+        }
+    }
+
+    let mut command = tokio::process::Command::new(&binary_path);
+    command.args(args).kill_on_drop(true);
+    let output_future = command.output();
+    tokio::pin!(output_future);
+
+    const NORMAL_VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const YTDLP_FIRST_RUN_GRACE: std::time::Duration = std::time::Duration::from_secs(40);
+
+    let result = match tokio::time::timeout(NORMAL_VERSION_TIMEOUT, &mut output_future).await {
+        Ok(result) => Ok(result),
+        Err(_) if sidecar_name == "yt-dlp" && !ytdlp_expects_internal_dir(&binary_path) => {
+            log::info!(
+                "Bundled yt-dlp version check exceeded {} seconds; allowing {} seconds for standalone first-run initialization",
+                NORMAL_VERSION_TIMEOUT.as_secs(),
+                YTDLP_FIRST_RUN_GRACE.as_secs()
+            );
+            tokio::time::timeout(YTDLP_FIRST_RUN_GRACE, &mut output_future)
+                .await
+                .map_err(|_| NORMAL_VERSION_TIMEOUT + YTDLP_FIRST_RUN_GRACE)
+        }
+        Err(_) => Err(NORMAL_VERSION_TIMEOUT),
+    };
 
     let output = match result {
-        Ok(Ok(o)) => o,
+        Ok(Ok(output)) => output,
         Ok(Err(e)) => return (None, Some(format!("Failed to execute '{}': {}", sidecar_name, e)), None),
-        Err(_) => return (None, Some(format!("'{}' version check timed out after 5 seconds", sidecar_name)), None),
+        Err(timeout) => {
+            return (
+                None,
+                Some(format!(
+                    "'{}' version check timed out after {} seconds at '{}'",
+                    sidecar_name,
+                    timeout.as_secs(),
+                    binary_path.display()
+                )),
+                None,
+            )
+        }
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stderr_tail = if stderr.is_empty() { None } else { Some(stderr.clone()) };
 
-    if output.status.success() {
+    let result = if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         (Some(stdout), None, stderr_tail)
     } else {
@@ -769,7 +791,95 @@ async fn run_sidecar_version(
             format!("Exited with code {:?}", output.status.code())
         };
         (if stdout.is_empty() { None } else { Some(stdout) }, Some(err), stderr_tail)
+    };
+
+    if result.1.is_none() {
+        if let Ok(mut cache) = version_check_cache().lock() {
+            cache.insert(cache_key, result.clone());
+        }
     }
+
+    result
+}
+
+type VersionCheckResult = (Option<String>, Option<String>, Option<String>);
+
+fn version_check_cache(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, VersionCheckResult>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, VersionCheckResult>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn version_cache_key(binary_path: &std::path::Path, args: &[&str]) -> String {
+    let modified = std::fs::metadata(binary_path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}:{modified}:{}", binary_path.display(), args.join("\u{1f}"))
+}
+
+fn ytdlp_expects_internal_dir(binary_path: &std::path::Path) -> bool {
+    binary_path
+        .parent()
+        .is_some_and(|parent| parent.join("_internal").is_dir())
+}
+
+fn validate_bundled_binary(binary_path: &std::path::Path) -> Result<(), String> {
+    let metadata = std::fs::metadata(binary_path).map_err(|error| {
+        format!(
+            "Missing bundled binary at '{}': {error}",
+            binary_path.display()
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "Bundled binary path is not a file: '{}'",
+            binary_path.display()
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return Err(format!(
+                "Bundled binary is not executable: '{}'",
+                binary_path.display()
+            ));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let expected_arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "x86_64"
+        };
+        if let Ok(output) = std::process::Command::new("/usr/bin/lipo")
+            .arg("-archs")
+            .arg(binary_path)
+            .output()
+        {
+            if output.status.success() {
+                let archs = String::from_utf8_lossy(&output.stdout);
+                if !archs.split_whitespace().any(|arch| arch == expected_arch) {
+                    return Err(format!(
+                        "Wrong architecture for '{}': expected {}, found {}",
+                        binary_path.display(),
+                        expected_arch,
+                        archs.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn generate_remediation_hint(error: &str, _kind: &str) -> Option<String> {
@@ -896,9 +1006,9 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
         daemon_alive: None,
         rpc_ready: None,
         last_stderr_tail: None,
-        expects_internal_dir: Some(has_internal_dir),
-        has_internal_dir: Some(has_internal_dir),
-        has_python_framework: Some(has_python_framework),
+        expects_internal_dir: has_internal_dir.then_some(true),
+        has_internal_dir: has_internal_dir.then_some(true),
+        has_python_framework: has_internal_dir.then_some(has_python_framework),
     }
 }
 
@@ -1009,10 +1119,12 @@ fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str)
         if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" },
     );
 
-    // Production: sidecar sits next to the main executable inside the .app bundle
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidate = exe_dir.join(&full_name);
+    // Production: use the resource copy as the canonical engine location.
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        for candidate in [
+            resource_dir.join("binaries").join(&full_name),
+            resource_dir.join(&full_name),
+        ] {
             if candidate.is_file() {
                 log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
                 return Ok(candidate);
@@ -1038,17 +1150,14 @@ fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str)
         }
     }
 
-    // Fallback: Tauri resource directory (some configs place sidecars there)
-    if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let candidate = resource_dir.join(&full_name);
-        if candidate.is_file() {
-            log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
-            return Ok(candidate);
-        }
-        let candidate2 = resource_dir.join("binaries").join(&full_name);
-        if candidate2.is_file() {
-            log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate2);
-            return Ok(candidate2);
+    // Compatibility fallback for older bundles produced with externalBin.
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let candidate = exe_dir.join(binary_name);
+            if candidate.is_file() {
+                log::info!("Resolved legacy bundled '{}' at: {:?}", binary_name, candidate);
+                return Ok(candidate);
+            }
         }
     }
 
@@ -1179,7 +1288,8 @@ pub(crate) async fn start_media_download_internal(
     let mut processing_started = false;
 
     while strike <= MAX_RETRIES {
-        let mut cmd = app_handle.shell().sidecar("yt-dlp").map_err(|e| e.to_string())?
+        let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
+        let mut cmd = app_handle.shell().command(&ytdlp_path)
            .arg("--newline")
            .arg("--no-check-formats")
            .arg("--socket-timeout").arg("20")

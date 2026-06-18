@@ -179,7 +179,7 @@ console.log('\n─── 6. yt-dlp packaging ───');
 // ───── Check 7, 8 & 9: Engine version self-tests ─────
 console.log('\n─── 7 & 8 & 9. Engine version self-tests ───');
 
-function runEngine(label, engine, args) {
+function runEngine(label, engine, args, timeout = 30000) {
   const p = binPath(engine);
   if (!fs.existsSync(p)) {
     fail(`${label} binary not found at ${p}`);
@@ -189,7 +189,7 @@ function runEngine(label, engine, args) {
   try {
     const stdout = execFileSync(p, args, {
       encoding: 'utf-8',
-      timeout: 30000,
+      timeout,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const firstLine = stdout.trim().split('\n')[0];
@@ -209,7 +209,7 @@ function runEngine(label, engine, args) {
   }
 }
 
-runEngine('yt-dlp', 'yt-dlp', ['--version']);
+runEngine('yt-dlp', 'yt-dlp', ['--version'], 45000);
 runEngine('ffmpeg', 'ffmpeg', ['-version']);
 runEngine('deno', 'deno', ['--version']);
 runEngine('aria2c', 'aria2c', ['--version']);

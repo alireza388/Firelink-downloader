@@ -66,6 +66,7 @@ type CommandMap = {
   start_download: { args: StartDownloadArgs; result: void };
   start_media_download: { args: StartMediaDownloadArgs; result: void };
   pause_download: { args: { id: string }; result: void };
+  resume_download: { args: { id: string }; result: boolean };
   remove_download: { args: { id: string; filepath: string | null }; result: void };
   update_dock_badge: { args: { count: number }; result: void };
   set_prevent_sleep: { args: { prevent: boolean }; result: void };

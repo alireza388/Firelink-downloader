@@ -270,6 +270,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         await invoke('remove_download', { id, filepath: null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
+        return;
       }
     } 
     
@@ -359,19 +360,24 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     info(`Download ${id} redownload requested (queued)`);
   },
   resumeDownload: async (id) => {
-    let targetItem = get().downloads.find(d => d.id === id);
+    const targetItem = get().downloads.find(d => d.id === id);
     if (!targetItem) return;
-    
-    set((state) => ({
-      downloads: state.downloads.map(d => {
-        if (d.id === id) {
-          return { ...d, status: 'queued', speed: '-', eta: '-' };
-        }
-        return d;
-      })
-    }));
 
     try {
+      const resumedExisting = await invoke('resume_download', { id });
+      if (resumedExisting) {
+        return;
+      }
+
+      set((state) => ({
+        downloads: state.downloads.map(d => {
+          if (d.id === id) {
+            return { ...d, status: 'queued', speed: '-', eta: '-' };
+          }
+          return d;
+        })
+      }));
+
       const settings = useSettingsStore.getState();
       const login = getSiteLogin(targetItem.url, settings);
       let keychainPassword = null;
@@ -419,18 +425,23 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     if (runnable.length === 0) return 0;
 
+    const paused = runnable.filter(item => item.status === 'paused');
+    const toEnqueue = runnable.filter(item => item.status !== 'paused');
+
     set((state) => ({
       downloads: state.downloads.map(item =>
-        runnable.some(r => r.id === item.id)
+        toEnqueue.some(r => r.id === item.id)
           ? { ...item, status: 'queued', speed: '-', eta: '-' }
           : item
       )
     }));
 
     try {
+      await Promise.all(paused.map(item => get().resumeDownload(item.id)));
+
       const settings = useSettingsStore.getState();
       const itemsToEnqueue = [];
-      for (const item of runnable) {
+      for (const item of toEnqueue) {
         const login = getSiteLogin(item.url, settings);
         let keychainPassword = null;
         if (login) {
@@ -466,7 +477,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           is_media: item.isMedia || false
         });
       }
-      await invoke('enqueue_many', { items: itemsToEnqueue });
+      if (itemsToEnqueue.length > 0) {
+        await invoke('enqueue_many', { items: itemsToEnqueue });
+      }
       const order = await invoke('get_pending_order');
       set({ pendingOrder: order });
     } catch (e) {
@@ -483,18 +496,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     if (activeIds.length === 0) return 0;
 
-    set((state) => ({
-      downloads: state.downloads.map(item =>
-        activeIds.includes(item.id)
-          ? { ...item, status: 'paused', speed: '-', eta: '-' }
-          : item
-      )
-    }));
-
-    info(`Queue ${queueId} paused, ${activeIds.length} items paused`);
-    await Promise.all(activeIds.map(id => invoke('pause_download', { id }).catch(() => {})));
+    const results = await Promise.allSettled(
+      activeIds.map(id => invoke('pause_download', { id }))
+    );
+    const pausedCount = results.filter(result => result.status === 'fulfilled').length;
+    const failedCount = activeIds.length - pausedCount;
+    if (failedCount > 0) {
+      console.error(`Failed to pause ${failedCount} downloads in queue ${queueId}`);
+    }
+    info(`Queue ${queueId} paused, ${pausedCount} items paused`);
     syncSystemIntegrations();
-    return activeIds.length;
+    return pausedCount;
   },
   addQueue: (name) => {
     const id = crypto.randomUUID();

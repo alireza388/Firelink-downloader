@@ -1396,27 +1396,59 @@ async fn pause_download(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    println!("pause_download called for id: {}", id);
+    log::info!("pause_download called for id: {}", id);
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
 
-    // Emit the paused state.
+    let gid = state.queue_manager.aria2_gid_for_download(&id);
+    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+        let status = aria2_download_status(
+            state.aria2_port,
+            &state.aria2_secret,
+            gid,
+        )
+        .await?;
+        match status.as_str() {
+            "paused" => {
+                log::info!("aria2 pause [{}]: gid {} was already paused", id, gid);
+            }
+            "active" | "waiting" => {
+                let result = rpc_call(
+                    state.aria2_port,
+                    &state.aria2_secret,
+                    "aria2.forcePause",
+                    serde_json::json!([gid]),
+                )
+                .await
+                .map_err(|error| format!("failed to pause aria2 gid {gid}: {error}"))?;
+                ensure_aria2_gid_result("forcePause", gid, &result)?;
+                log::info!("aria2 pause [{}]: gid {} paused", id, gid);
+            }
+            terminal => {
+                state.queue_manager.clear_aria2_retry_state(&id).await;
+                state.queue_manager.forget_aria2_gid(&id).await;
+                state.queue_manager.release_permit(&id).await;
+                return Err(format!(
+                    "cannot pause aria2 gid {gid} in terminal state {terminal}"
+                ));
+            }
+        }
+
+        state.queue_manager.release_permit(&id).await;
+        use tauri::Emitter;
+        let _ = app_handle.emit(
+            "download-state",
+            crate::ipc::DownloadStateEvent::new(id, crate::ipc::DownloadStatus::Paused),
+        );
+        return Ok(());
+    }
+
     use tauri::Emitter;
     let _ = app_handle.emit(
         "download-state",
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
-
-    let gid = state.queue_manager.aria2_gids.read().unwrap()
-        .iter()
-        .find(|(_, v)| **v == id)
-        .map(|(k, _)| k.clone());
-    if let Some(g) = gid {
-        if !g.starts_with("native:") {
-            let _ = rpc_call(state.aria2_port, &state.aria2_secret, "aria2.pause", serde_json::json!([g])).await;
-        }
-    }
 
     if let Ok(download_id) = Uuid::parse_str(&id) {
         let _ = state
@@ -1432,33 +1464,133 @@ async fn pause_download(
 }
 
 #[tauri::command]
+async fn resume_download(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let Some(gid) = state.queue_manager.aria2_gid_for_download(&id) else {
+        log::info!("aria2 resume [{}]: no mapped gid; re-enqueue is permitted", id);
+        return Ok(false);
+    };
+    if gid.starts_with("native:") {
+        state.queue_manager.forget_aria2_gid(&id).await;
+        log::info!("aria2 resume [{}]: native fallback has no aria2 gid", id);
+        return Ok(false);
+    }
+
+    let status = aria2_download_status(state.aria2_port, &state.aria2_secret, &gid).await?;
+    match status.as_str() {
+        "paused" => {
+            let acquired = state.queue_manager.ensure_aria2_permit(&id).await;
+            let result = match rpc_call(
+                state.aria2_port,
+                &state.aria2_secret,
+                "aria2.unpause",
+                serde_json::json!([gid]),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    if acquired {
+                        state.queue_manager.release_permit(&id).await;
+                    }
+                    return Err(format!("failed to resume aria2 gid {gid}: {error}"));
+                }
+            };
+            if let Err(error) = ensure_aria2_gid_result("unpause", &gid, &result) {
+                if acquired {
+                    state.queue_manager.release_permit(&id).await;
+                }
+                return Err(error);
+            }
+            log::info!("aria2 resume [{}]: unpaused gid {}", id, gid);
+        }
+        "active" | "waiting" => {
+            state.queue_manager.ensure_aria2_permit(&id).await;
+            log::info!(
+                "aria2 resume [{}]: gid {} already {}; no duplicate job created",
+                id,
+                gid,
+                status
+            );
+        }
+        "complete" | "error" | "removed" => {
+            state.queue_manager.clear_aria2_retry_state(&id).await;
+            state.queue_manager.forget_aria2_gid(&id).await;
+            state.queue_manager.release_permit(&id).await;
+            log::info!(
+                "aria2 resume [{}]: gid {} is {}; re-enqueue is permitted",
+                id,
+                gid,
+                status
+            );
+            return Ok(false);
+        }
+        other => {
+            return Err(format!("aria2 gid {gid} returned unknown status {other}"));
+        }
+    }
+
+    use tauri::Emitter;
+    let _ = app_handle.emit(
+        "download-state",
+        crate::ipc::DownloadStateEvent::new(id, crate::ipc::DownloadStatus::Downloading),
+    );
+    Ok(true)
+}
+
+#[tauri::command]
 async fn remove_download(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
     filepath: Option<String>,
 ) -> Result<(), String> {
-    println!("remove_download called for id: {}", id);
+    log::info!("remove_download called for id: {}", id);
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
+
+    state.queue_manager.cancel_aria2_retries(&id).await;
+    let retry_add_guard = state.queue_manager.lock_aria2_retry_add().await;
+    let gid = state.queue_manager.aria2_gid_for_download(&id);
+    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+        let removal_result = async {
+            force_remove_aria2_gid(state.aria2_port, &state.aria2_secret, gid).await?;
+            wait_for_aria2_stopped(state.aria2_port, &state.aria2_secret, gid).await
+        }
+        .await;
+        if let Err(error) = removal_result {
+            state.queue_manager.allow_aria2_retries(&id).await;
+            return Err(error);
+        }
+        state.queue_manager.clear_aria2_retry_state(&id).await;
+        state.queue_manager.forget_aria2_gid(&id).await;
+        state.queue_manager.release_permit(&id).await;
+        log::info!("aria2 remove [{}]: gid {} stopped and forgotten", id, gid);
+    } else {
+        drop(retry_add_guard);
+        if let Ok(download_id) = Uuid::parse_str(&id) {
+            state
+                .download_coordinator
+                .send(download::DownloadCmd::Cancel(download_id))
+                .await?;
+        }
+        state.download_coordinator.pause_media(id.clone()).await?;
+        if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+            state.queue_manager.release_permit(&id).await;
+        }
+        state.queue_manager.clear_aria2_retry_state(&id).await;
+        state.queue_manager.forget_aria2_gid(&id).await;
+    }
 
     use tauri::Emitter;
     let _ = app_handle.emit(
         "download-state",
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
-
-    if let Ok(download_id) = Uuid::parse_str(&id) {
-        state
-            .download_coordinator
-            .send(download::DownloadCmd::Cancel(download_id))
-            .await?;
-    }
-    state.download_coordinator.pause_media(id.clone()).await?;
-    if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-        state.queue_manager.release_permit(&id).await;
-    }
 
     if let Some(path) = filepath {
         if !path.is_empty() {
@@ -1477,6 +1609,86 @@ async fn remove_download(
     }
 
     Ok(())
+}
+
+fn ensure_aria2_gid_result(
+    method: &str,
+    expected_gid: &str,
+    result: &serde_json::Value,
+) -> Result<(), String> {
+    match result.as_str() {
+        Some(returned_gid) if returned_gid == expected_gid => Ok(()),
+        Some(returned_gid) => Err(format!(
+            "aria2.{method} returned unexpected gid {returned_gid}, expected {expected_gid}"
+        )),
+        None => Err(format!("aria2.{method} returned a non-string result")),
+    }
+}
+
+async fn aria2_download_status(port: u16, secret: &str, gid: &str) -> Result<String, String> {
+    let result = rpc_call(
+        port,
+        secret,
+        "aria2.tellStatus",
+        serde_json::json!([gid, ["status"]]),
+    )
+    .await
+    .map_err(|error| format!("failed to query aria2 gid {gid}: {error}"))?;
+    result
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| format!("aria2.tellStatus returned no status for gid {gid}"))
+}
+
+fn aria2_gid_not_found(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("gid") && lower.contains("not found")
+}
+
+async fn force_remove_aria2_gid(port: u16, secret: &str, gid: &str) -> Result<(), String> {
+    match rpc_call(
+        port,
+        secret,
+        "aria2.forceRemove",
+        serde_json::json!([gid]),
+    )
+    .await
+    {
+        Ok(result) => ensure_aria2_gid_result("forceRemove", gid, &result),
+        Err(error) if aria2_gid_not_found(&error) => {
+            log::info!("aria2 forceRemove: gid {} was already absent", gid);
+            Ok(())
+        }
+        Err(error) => match aria2_download_status(port, secret, gid).await {
+            Ok(status) if matches!(status.as_str(), "complete" | "error" | "removed") => {
+                log::info!(
+                    "aria2 forceRemove: gid {} raced to terminal state {}",
+                    gid,
+                    status
+                );
+                Ok(())
+            }
+            _ => Err(format!("failed to remove aria2 gid {gid}: {error}")),
+        },
+    }
+}
+
+async fn wait_for_aria2_stopped(port: u16, secret: &str, gid: &str) -> Result<(), String> {
+    for _ in 0..30 {
+        match aria2_download_status(port, secret, gid).await {
+            Ok(status) if matches!(status.as_str(), "complete" | "error" | "removed") => {
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(error) if aria2_gid_not_found(&error) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err(format!(
+        "aria2 gid {gid} did not stop within 3 seconds after forceRemove"
+    ))
 }
 
 #[tauri::command]
@@ -2279,7 +2491,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
-            pause_download, fetch_metadata, fetch_media_metadata,
+            pause_download, resume_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,

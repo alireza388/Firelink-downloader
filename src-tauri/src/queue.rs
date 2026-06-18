@@ -1,7 +1,7 @@
 use crate::ipc::{DownloadStateEvent, DownloadStatus, QueueDirection};
 use crate::retry::{BackoffOutcome, MAX_RETRIES, backoff_and_emit, is_transient_network_error};
 use serde::Deserialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -72,6 +72,10 @@ pub trait SidecarSpawner: Send + Sync + 'static {
     /// permit is already parked before this is called).
     async fn add_uri(&self, id: &str, payload: &SpawnPayload) -> Result<String, String>;
 
+    /// Force-remove an aria2 gid created by a retry that raced with user
+    /// cancellation.
+    async fn remove_uri(&self, gid: &str) -> Result<(), String>;
+
     /// Run a media download to completion. The permit is parked for the full
     /// duration; release is handled by QueueManager on the runner's exit.
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
@@ -102,6 +106,13 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
 
     /// 0-based transient-error strike counter per aria2 download id.
     aria2_retry_strikes: Mutex<HashMap<String, usize>>,
+
+    /// Download ids whose aria2 retry loop must not create another job.
+    aria2_retry_cancelled: Mutex<HashSet<String>>,
+
+    /// Serializes retry addUri with remove so a late retry cannot escape
+    /// cancellation and continue writing after deletion.
+    aria2_retry_add_lock: Mutex<()>,
 
     spawner: Arc<dyn SidecarSpawner>,
     app_handle: AppHandle<R>,
@@ -136,6 +147,8 @@ impl<R: tauri::Runtime> QueueManager<R> {
             pending_completion: Arc::new(Mutex::new(HashMap::new())),
             aria2_payloads: Mutex::new(HashMap::new()),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
+            aria2_retry_cancelled: Mutex::new(HashSet::new()),
+            aria2_retry_add_lock: Mutex::new(()),
             spawner,
             app_handle,
         }
@@ -183,6 +196,30 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn active_kind(&self, id: &str) -> Option<TaskKind> {
         self.active_kinds.lock().await.get(id).cloned()
+    }
+
+    /// Ensure an aria2 transfer owns exactly one queue permit. Returns true
+    /// when this call acquired and parked the permit, false when one was
+    /// already parked.
+    pub async fn ensure_aria2_permit(&self, id: &str) -> bool {
+        if self.active_permits.lock().await.contains_key(id) {
+            return false;
+        }
+
+        let permit = self.acquire_permit().await;
+        let mut permits = self.active_permits.lock().await;
+        if permits.contains_key(id) {
+            drop(permits);
+            drop(permit);
+            return false;
+        }
+        permits.insert(id.to_string(), permit);
+        drop(permits);
+        self.active_kinds
+            .lock()
+            .await
+            .insert(id.to_string(), TaskKind::Aria2);
+        true
     }
 
     /// Release the permit parked under `id`, if any. Idempotent. Wakes the
@@ -311,6 +348,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
         match task.kind {
             TaskKind::Aria2 => {
+                self.aria2_retry_cancelled.lock().await.remove(&id);
                 self.aria2_payloads
                     .lock()
                     .await
@@ -378,8 +416,21 @@ impl<R: tauri::Runtime> QueueManager<R> {
     pub async fn remember_gid(&self, id: String, gid: String) {
         {
             let mut gids = self.aria2_gids.write().unwrap();
+            gids.retain(|existing_gid, existing_id| {
+                let keep = existing_id != &id || existing_gid == &gid;
+                if !keep {
+                    log::warn!(
+                        "aria2 gid transition [{}]: dropping stale mapping {} before storing {}",
+                        id,
+                        existing_gid,
+                        gid
+                    );
+                }
+                keep
+            });
             gids.insert(gid.clone(), id.clone());
         }
+        log::info!("aria2 gid transition [{}]: mapped {}", id, gid);
         let buffered = self.pending_completion.lock().await.remove(&gid);
         if let Some((_buf_id, outcome)) = buffered {
             self.apply_completion(&id, outcome).await;
@@ -391,19 +442,72 @@ impl<R: tauri::Runtime> QueueManager<R> {
         match outcome {
             PendingOutcome::Complete => {
                 self.clear_aria2_retry_state(id).await;
+                self.forget_aria2_gid(id).await;
                 self.emit_state(id, DownloadStatus::Completed);
             }
             PendingOutcome::Error(error) => {
                 self.clear_aria2_retry_state(id).await;
+                self.forget_aria2_gid(id).await;
                 self.emit_failed(id, error);
             }
         }
         self.release_permit(id).await;
     }
 
-    async fn clear_aria2_retry_state(&self, id: &str) {
+    pub async fn clear_aria2_retry_state(&self, id: &str) {
         self.aria2_payloads.lock().await.remove(id);
         self.aria2_retry_strikes.lock().await.remove(id);
+    }
+
+    pub async fn cancel_aria2_retries(&self, id: &str) {
+        self.aria2_retry_cancelled
+            .lock()
+            .await
+            .insert(id.to_string());
+    }
+
+    pub async fn allow_aria2_retries(&self, id: &str) {
+        self.aria2_retry_cancelled.lock().await.remove(id);
+    }
+
+    pub async fn lock_aria2_retry_add(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.aria2_retry_add_lock.lock().await
+    }
+
+    pub fn aria2_gid_for_download(&self, id: &str) -> Option<String> {
+        self.aria2_gids
+            .read()
+            .unwrap()
+            .iter()
+            .find_map(|(gid, download_id)| (download_id == id).then(|| gid.clone()))
+    }
+
+    /// Remove every gid mapping for a download and discard buffered terminal
+    /// events for those gids. Returns the most recently encountered gid.
+    pub async fn forget_aria2_gid(&self, id: &str) -> Option<String> {
+        let removed = {
+            let mut gids = self.aria2_gids.write().unwrap();
+            let removed: Vec<String> = gids
+                .iter()
+                .filter(|(_, download_id)| *download_id == id)
+                .map(|(gid, _)| gid.clone())
+                .collect();
+            for gid in &removed {
+                gids.remove(gid);
+            }
+            removed
+        };
+
+        if removed.is_empty() {
+            return None;
+        }
+
+        let mut buffered = self.pending_completion.lock().await;
+        for gid in &removed {
+            buffered.remove(gid);
+            log::info!("aria2 gid transition [{}]: forgot {}", id, gid);
+        }
+        removed.last().cloned()
     }
 
     /// Overwrite a stale aria2 gid with the fresh gid minted by a retry
@@ -412,6 +516,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let mut gids = self.aria2_gids.write().unwrap();
         gids.remove(stale_gid);
         gids.insert(new_gid.to_string(), id.to_string());
+        log::info!(
+            "aria2 gid transition [{}]: rotated {} -> {}",
+            id,
+            stale_gid,
+            new_gid
+        );
     }
 
     async fn wait_permit_released(self: &Arc<Self>, id: &str) {
@@ -441,6 +551,14 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 return;
             }
         };
+        if self.aria2_retry_cancelled.lock().await.contains(&id) {
+            log::info!(
+                "aria2 retry cancellation [{}]: ignoring error for gid {} during removal",
+                id,
+                gid
+            );
+            return;
+        }
 
         let strike = {
             let mut strikes = self.aria2_retry_strikes.lock().await;
@@ -485,12 +603,50 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 return;
             }
 
+            let _retry_add_guard = this.aria2_retry_add_lock.lock().await;
             if !this.active_permits.lock().await.contains_key(&id_for_task) {
+                return;
+            }
+            if this
+                .aria2_retry_cancelled
+                .lock()
+                .await
+                .contains(&id_for_task)
+            {
                 return;
             }
 
             match this.spawner.add_uri(&id_for_task, &payload).await {
                 Ok(new_gid) => {
+                    if this
+                        .aria2_retry_cancelled
+                        .lock()
+                        .await
+                        .contains(&id_for_task)
+                    {
+                        if let Err(error) = this.spawner.remove_uri(&new_gid).await {
+                            log::error!(
+                                "aria2 retry cancellation [{}]: failed to remove late gid {}: {}",
+                                id_for_task,
+                                new_gid,
+                                error
+                            );
+                        } else {
+                            log::info!(
+                                "aria2 retry cancellation [{}]: removed late gid {}",
+                                id_for_task,
+                                new_gid
+                            );
+                            return;
+                        }
+                        this.rotate_aria2_gid(&id_for_task, &stale_gid, &new_gid);
+                        log::warn!(
+                            "aria2 retry cancellation [{}]: retained late gid {} mapping for remove retry",
+                            id_for_task,
+                            new_gid
+                        );
+                        return;
+                    }
                     this.aria2_retry_strikes
                         .lock()
                         .await
@@ -670,7 +826,12 @@ impl SidecarSpawner for ProductionSpawner {
         match crate::rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params).await {
             Ok(result) => {
                 let gid = result.as_str().unwrap_or("").to_string();
-                Ok(gid)
+                if gid.is_empty() {
+                    Err("aria2.addUri returned an empty gid".to_string())
+                } else {
+                    log::info!("aria2 addUri [{}]: created gid {}", id, gid);
+                    Ok(gid)
+                }
             }
             Err(e) => {
                 // aria2 unavailable — fall back to native coordinator.
@@ -703,6 +864,24 @@ impl SidecarSpawner for ProductionSpawner {
                     .map_err(|e| e.to_string())?;
                 Ok(format!("native:{id}"))
             }
+        }
+    }
+
+    async fn remove_uri(&self, gid: &str) -> Result<(), String> {
+        let state = self.app_handle.state::<crate::AppState>();
+        let result = crate::rpc_call(
+            state.aria2_port,
+            &state.aria2_secret,
+            "aria2.forceRemove",
+            serde_json::json!([gid]),
+        )
+        .await?;
+        match result.as_str() {
+            Some(returned_gid) if returned_gid == gid => Ok(()),
+            Some(returned_gid) => Err(format!(
+                "aria2.forceRemove returned unexpected gid {returned_gid}, expected {gid}"
+            )),
+            None => Err("aria2.forceRemove returned a non-string result".to_string()),
         }
     }
 

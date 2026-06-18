@@ -31,6 +31,9 @@ impl firelink_lib::queue::SidecarSpawner for CountingSpawner {
         self.add_uri_calls.fetch_add(1, Ordering::SeqCst);
         Ok(format!("gid-{}", self.add_uri_calls.load(Ordering::SeqCst)))
     }
+    async fn remove_uri(&self, _gid: &str) -> Result<(), String> {
+        Ok(())
+    }
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         self.media_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
@@ -81,6 +84,33 @@ async fn release_permit_is_idempotent() {
     let avail_after_second = mgr.available_permits();
     assert_eq!(avail_after_first - avail_before, 1);
     assert_eq!(avail_after_second, avail_after_first, "second release must not free another slot");
+}
+
+#[tokio::test]
+async fn ensure_aria2_permit_does_not_double_acquire() {
+    let (mgr, _spawner) = make_manager(2);
+    assert!(mgr.ensure_aria2_permit("a").await);
+    assert!(!mgr.ensure_aria2_permit("a").await);
+    assert_eq!(mgr.available_permits(), 1);
+
+    mgr.release_permit("a").await;
+    assert_eq!(mgr.available_permits(), 2);
+}
+
+#[tokio::test]
+async fn forgetting_aria2_gid_clears_mapping_without_releasing_twice() {
+    let (mgr, _spawner) = make_manager(1);
+    let permit = mgr.acquire_permit().await;
+    mgr.park_permit("a", permit).await;
+    mgr.remember_gid("a".to_string(), "gid-a".to_string()).await;
+
+    assert_eq!(mgr.forget_aria2_gid("a").await.as_deref(), Some("gid-a"));
+    assert!(mgr.aria2_gid_for_download("a").is_none());
+    assert_eq!(mgr.available_permits(), 0);
+
+    mgr.release_permit("a").await;
+    mgr.release_permit("a").await;
+    assert_eq!(mgr.available_permits(), 1);
 }
 
 #[tokio::test]
@@ -232,6 +262,10 @@ impl SidecarSpawner for FixedMediaSpawner {
         unreachable!("aria2 is not used by media terminal-state tests")
     }
 
+    async fn remove_uri(&self, _gid: &str) -> Result<(), String> {
+        unreachable!("aria2 is not used by media terminal-state tests")
+    }
+
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         self.outcome.clone()
     }
@@ -368,6 +402,21 @@ async fn gid_completion_before_store_buffers_and_reconciles() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn aria2_completion_forgets_gid_and_releases_permit() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, _spawner) = make_manager(1);
+    let permit = mgr.acquire_permit().await;
+    mgr.park_permit("a", permit).await;
+    mgr.remember_gid("a".to_string(), "gid-a".to_string()).await;
+
+    mgr.apply_completion("a", PendingOutcome::Complete).await;
+
+    assert!(mgr.aria2_gid_for_download("a").is_none());
+    assert_eq!(mgr.available_permits(), 1);
 }
 
 #[tokio::test]

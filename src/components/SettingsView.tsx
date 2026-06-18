@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import {
   type AppFontSize,
   type ListRowDensity,
@@ -29,15 +29,83 @@ const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[
   { type: 'about', label: 'About', icon: Info },
 ];
 
+const engineChecks = [
+  { kind: 'aria2', name: 'Aria2', command: 'get_aria2_engine_status' },
+  { kind: 'ytdlp', name: 'yt-dlp', command: 'get_ytdlp_engine_status' },
+  { kind: 'ffmpeg', name: 'FFmpeg', command: 'get_ffmpeg_engine_status' },
+  { kind: 'deno', name: 'Deno', command: 'get_deno_engine_status' },
+] as const;
+
+type EngineCheck = typeof engineChecks[number];
+
+const engineStatusCache = new Map<string, EngineStatusItem>();
+const engineStatusInFlight = new Map<string, Promise<EngineStatusItem>>();
+
+const upsertEngineStatus = (items: EngineStatusItem[], item: EngineStatusItem) => {
+  const next = items.filter(existing => existing.kind !== item.kind);
+  next.push(item);
+  return next;
+};
+
+const buildEngineStatusError = (check: EngineCheck, error: unknown): EngineStatusItem => ({
+  name: check.name,
+  kind: check.kind,
+  expected_sidecar: '',
+  resolved_path: null,
+  version: null,
+  ready: false,
+  error: String(error),
+  stderr_tail: null,
+  remediation_hint: null,
+  rpc_port: null,
+  daemon_alive: null,
+  rpc_ready: null,
+  last_stderr_tail: null,
+  expects_internal_dir: null,
+  has_internal_dir: null,
+  has_python_framework: null,
+});
+
+const runEngineStatusCheck = (check: EngineCheck, force: boolean) => {
+  if (!force) {
+    const cached = engineStatusCache.get(check.kind);
+    if (cached) return Promise.resolve(cached);
+  }
+
+  if (!force) {
+    const inFlight = engineStatusInFlight.get(check.kind);
+    if (inFlight) return inFlight;
+  }
+
+  if (force) engineStatusCache.delete(check.kind);
+
+  const promise = invoke(check.command)
+    .then(item => {
+      if (item.ready) engineStatusCache.set(item.kind, item);
+      return item;
+    })
+    .catch(error => buildEngineStatusError(check, error))
+    .finally(() => {
+      if (engineStatusInFlight.get(check.kind) === promise) {
+        engineStatusInFlight.delete(check.kind);
+      }
+    });
+
+  engineStatusInFlight.set(check.kind, promise);
+  return promise;
+};
+
 export default function SettingsView() {
   const settings = useSettingsStore();
   const { pickDirectory } = useDirectoryPicker();
   const activeTab = settings.activeSettingsTab;
 
   // Local state for engine diagnostics
-  const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
-  const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
-  const [appVersion, setAppVersion] = useState('0.7.3');
+const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
+const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
+const [isRecheckingEngines, setIsRecheckingEngines] = useState(false);
+const engineRunId = useRef(0);
+const [appVersion, setAppVersion] = useState('0.7.3');
 
   // Local state for adding site login
   const [loginPattern, setLoginPattern] = useState('');
@@ -56,20 +124,52 @@ export default function SettingsView() {
     }
   }, [toastMessage]);
 
-  useEffect(() => {
-    getVersion().then(setAppVersion).catch(() => undefined);
-  }, []);
+useEffect(() => {
+getVersion().then(setAppVersion).catch(() => undefined);
+}, []);
 
-  // Fetch engine status when Engine tab is opened
-  useEffect(() => {
-    if (settings.activeView === 'settings' && activeTab === 'engine') {
-      setEngineStatus(null);
-      setExpandedEngine(null);
-      invoke('get_engine_status')
-        .then(r => setEngineStatus(r.engines))
-        .catch(() => setEngineStatus([]));
-    }
-  }, [settings.activeView, activeTab]);
+const runEngineChecks = useCallback((force = false) => {
+const runId = ++engineRunId.current;
+const cached = engineChecks
+.map(check => engineStatusCache.get(check.kind))
+.filter((item): item is EngineStatusItem => Boolean(item));
+setEngineStatus(force ? [] : cached);
+setExpandedEngine(null);
+
+const checksToRun = force
+? engineChecks
+: engineChecks.filter(check => !engineStatusCache.has(check.kind));
+
+if (checksToRun.length === 0) {
+setIsRecheckingEngines(false);
+return;
+}
+
+setIsRecheckingEngines(true);
+let remaining = checksToRun.length;
+
+checksToRun.forEach(check => {
+runEngineStatusCheck(check, force)
+.then(item => {
+if (engineRunId.current === runId) {
+setEngineStatus(current => upsertEngineStatus(current ?? [], item));
+}
+})
+.finally(() => {
+remaining -= 1;
+if (remaining === 0 && engineRunId.current === runId) {
+setIsRecheckingEngines(false);
+}
+});
+});
+}, []);
+
+// Fetch engine status when Engine tab is opened
+useEffect(() => {
+if (settings.activeView === 'settings' && activeTab === 'engine') {
+runEngineChecks(false);
+}
+}, [settings.activeView, activeTab, runEngineChecks]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -767,10 +867,24 @@ export default function SettingsView() {
 
           {/* Engine Pane */}
           {activeTab === 'engine' && (
-            <div className="settings-pane space-y-6 max-w-[760px]">
-              <h3 className="text-base font-bold text-text-primary border-b border-border-color/30 pb-2">Media Downloader & Engines</h3>
+<div className="settings-pane space-y-6 max-w-[760px]">
+<div className="flex items-center justify-between gap-3 border-b border-border-color/30 pb-2">
+<div>
+<h3 className="text-base font-bold text-text-primary">Media Downloader & Engines</h3>
+<p className="text-[11px] text-text-muted mt-0.5">Successful results are reused for this app session. Recheck runs real validation again.</p>
+</div>
+<button
+type="button"
+onClick={() => runEngineChecks(true)}
+disabled={isRecheckingEngines}
+className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-bg-modal hover:bg-item-hover disabled:opacity-60 text-[12px] text-text-primary"
+>
+<RefreshCw size={13} className={isRecheckingEngines ? 'animate-spin' : ''} />
+{isRecheckingEngines ? 'Checking…' : 'Recheck engines'}
+</button>
+</div>
 
-              {(() => {
+{(() => {
                 const a2 = findEngine('aria2'); const yt = findEngine('ytdlp');
                 const ff = findEngine('ffmpeg'); const dn = findEngine('deno');
                 return (

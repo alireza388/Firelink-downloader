@@ -1754,6 +1754,29 @@ async fn get_engine_status(
     })
 }
 
+#[tauri::command]
+async fn get_aria2_engine_status(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<EngineStatusItem, String> {
+    Ok(check_aria2(&app_handle, state.aria2_port, &state.aria2_secret).await)
+}
+
+#[tauri::command]
+async fn get_ytdlp_engine_status(app_handle: tauri::AppHandle) -> Result<EngineStatusItem, String> {
+    Ok(check_ytdlp(&app_handle).await)
+}
+
+#[tauri::command]
+async fn get_ffmpeg_engine_status(app_handle: tauri::AppHandle) -> Result<EngineStatusItem, String> {
+    Ok(check_ffmpeg(&app_handle).await)
+}
+
+#[tauri::command]
+async fn get_deno_engine_status(app_handle: tauri::AppHandle) -> Result<EngineStatusItem, String> {
+    Ok(check_deno(&app_handle).await)
+}
+
 
 fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str) -> Result<std::path::PathBuf, String> {
     let full_name = format!(
@@ -3419,9 +3442,10 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            get_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
-            pause_download, resume_download, fetch_metadata, fetch_media_metadata,
+.invoke_handler(tauri::generate_handler![
+ get_engine_status, get_aria2_engine_status, get_ytdlp_engine_status, get_ffmpeg_engine_status,
+ get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
+ pause_download, resume_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,

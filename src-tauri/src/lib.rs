@@ -50,6 +50,137 @@ fn is_media_processing_line(line: &str) -> bool {
         || lower.contains("post-process")
 }
 
+const MEDIA_PROGRESS_PREFIX: &str = "__FIRELINK_PROGRESS__";
+
+#[derive(Debug, PartialEq)]
+struct MediaProgress {
+    fraction: f64,
+    speed: String,
+    eta: String,
+    size: Option<String>,
+}
+
+fn progress_json_number(progress: &serde_json::Value, key: &str) -> Option<f64> {
+    progress.get(key).and_then(|value| {
+        value
+            .as_f64()
+            .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
+    })
+}
+
+fn progress_json_string(progress: &serde_json::Value, key: &str) -> Option<String> {
+    progress
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "N/A")
+        .map(ToOwned::to_owned)
+}
+
+fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
+    if let Some(prefix_index) = line.find(MEDIA_PROGRESS_PREFIX) {
+        let progress: serde_json::Value =
+            serde_json::from_str(line[prefix_index + MEDIA_PROGRESS_PREFIX.len()..].trim()).ok()?;
+        let downloaded = progress_json_number(&progress, "downloaded_bytes").unwrap_or(0.0);
+        let total = progress_json_number(&progress, "total_bytes")
+            .or_else(|| progress_json_number(&progress, "total_bytes_estimate"))
+            .unwrap_or(0.0);
+        let fraction = if total > 0.0 {
+            downloaded / total
+        } else {
+            progress_json_string(&progress, "_percent_str")
+                .and_then(|percent| {
+                    percent
+                        .trim_end_matches('%')
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                })
+                .unwrap_or(0.0)
+                / 100.0
+        };
+        let speed = progress_json_string(&progress, "_speed_str")
+            .or_else(|| {
+                progress_json_number(&progress, "speed")
+                    .filter(|speed| *speed > 0.0)
+                    .map(|speed| format!("{}/s", crate::download::format_size(speed)))
+            })
+            .unwrap_or_else(|| "-".to_string());
+        let eta = progress_json_string(&progress, "_eta_str")
+            .or_else(|| {
+                progress_json_number(&progress, "eta")
+                    .map(|seconds| format!("{}s", seconds.round() as u64))
+            })
+            .unwrap_or_else(|| "-".to_string());
+        let size = progress_json_string(&progress, "_total_bytes_str")
+            .or_else(|| progress_json_string(&progress, "_total_bytes_estimate_str"))
+            .or_else(|| {
+                (total > 0.0).then(|| crate::download::format_size(total))
+            });
+
+        return Some(MediaProgress {
+            fraction: fraction.clamp(0.0, 1.0),
+            speed,
+            eta,
+            size,
+        });
+    }
+
+    static ARIA2_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static YTDLP_PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static YTDLP_SPD_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static YTDLP_ETA_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+
+    let aria2_re = ARIA2_RE.get_or_init(|| {
+        Regex::new(
+            r"\[#[^\s]+\s+([^/\s]+)/([^\s(]+)\((\d+(?:\.\d+)?)%\).*?\bDL:([^\s\]]+)(?:\s+ETA:([^\s\]]+))?",
+        )
+        .unwrap()
+    });
+    if let Some(captures) = aria2_re.captures(line) {
+        let fraction = captures.get(3)?.as_str().parse::<f64>().ok()? / 100.0;
+        let speed = captures
+            .get(4)
+            .map(|value| format!("{}/s", value.as_str()))
+            .unwrap_or_else(|| "-".to_string());
+        let eta = captures
+            .get(5)
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let size = captures.get(2).map(|value| value.as_str().to_string());
+        return Some(MediaProgress {
+            fraction: fraction.clamp(0.0, 1.0),
+            speed,
+            eta,
+            size,
+        });
+    }
+
+    let percent_re = YTDLP_PCT_RE
+        .get_or_init(|| Regex::new(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%").unwrap());
+    let captures = percent_re.captures(line)?;
+    let fraction = captures.get(1)?.as_str().parse::<f64>().ok()? / 100.0;
+    let speed_re =
+        YTDLP_SPD_RE.get_or_init(|| Regex::new(r"\bat\s+([^\s]+)").unwrap());
+    let eta_re =
+        YTDLP_ETA_RE.get_or_init(|| Regex::new(r"\bETA\s+([^\s]+)").unwrap());
+
+    Some(MediaProgress {
+        fraction: fraction.clamp(0.0, 1.0),
+        speed: speed_re
+            .captures(line)
+            .and_then(|capture| capture.get(1))
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        eta: eta_re
+            .captures(line)
+            .and_then(|capture| capture.get(1))
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        size: None,
+    })
+}
+
 async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
     let Some(parent) = out_path.parent() else {
         return;
@@ -1251,14 +1382,6 @@ pub(crate) async fn start_media_download_internal(
         .checked_sub(std::time::Duration::from_millis(200))
         .unwrap_or_else(std::time::Instant::now);
 
-    static PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    static SPD_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    static ETA_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-
-    let pct_re = PCT_RE.get_or_init(|| Regex::new(r"\[download\]\s+(\d+(?:\.\d+)?)%").unwrap());
-    let spd_re = SPD_RE.get_or_init(|| Regex::new(r"at\s+([^\s]+)").unwrap());
-    let eta_re = ETA_RE.get_or_init(|| Regex::new(r"ETA\s+([^\s]+)").unwrap());
-
     // Resolve absolute paths to bundled binaries
     let aria2c_path = resolve_bundled_binary_path(&app_handle, "aria2c")?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
@@ -1291,12 +1414,15 @@ pub(crate) async fn start_media_download_internal(
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
         let mut cmd = app_handle.shell().command(&ytdlp_path)
            .arg("--newline")
+           .arg("--progress-delta").arg("0.2")
+           .arg("--progress-template")
+           .arg(format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"))
            .arg("--no-check-formats")
            .arg("--socket-timeout").arg("20")
            .arg("--retries").arg("3")
            .arg("--extractor-retries").arg("3")
            .arg("--downloader").arg("aria2c")
-           .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M")
+           .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M --summary-interval=1")
            .arg("--ffmpeg-location").arg(&bin_dir_str)
            .arg("--concurrent-fragments").arg("4")
            .arg("--no-warnings")
@@ -1375,40 +1501,22 @@ pub(crate) async fn start_media_download_internal(
                     match event {
                         Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
-                            if line.contains("[download]") && line.contains("%") {
-                                let fraction = if let Some(cap) = pct_re.captures(&line) {
-                                    cap.get(1).and_then(|m| m.as_str().parse::<f64>().ok()).unwrap_or(0.0) / 100.0
-                                } else {
-                                    0.0
-                                };
-
-                                if fraction < last_fraction && (last_fraction - fraction) > 0.5 {
+                            if let Some(progress) = parse_media_progress_line(&line) {
+                                if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
                                     current_track += 1.0;
                                 }
-                                last_fraction = fraction;
+                                last_fraction = progress.fraction;
 
-                                let overall_fraction = ((current_track + fraction) / total_tracks).min(1.0);
-
-                                let speed = if let Some(cap) = spd_re.captures(&line) {
-                                    cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
-                                } else {
-                                    "-".to_string()
-                                };
-
-                                let eta = if let Some(cap) = eta_re.captures(&line) {
-                                    cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "-".to_string())
-                                } else {
-                                    "-".to_string()
-                                };
+                                let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
 
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                         id: id.to_string(),
                                         fraction: overall_fraction,
-                                        speed,
-                                        eta,
-                                        size: None,
+                                        speed: progress.speed,
+                                        eta: progress.eta,
+                                        size: progress.size,
                                     });
                                     last_progress_at = now;
                                 }
@@ -1416,6 +1524,25 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
+                            if let Some(progress) = parse_media_progress_line(&line) {
+                                if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
+                                    current_track += 1.0;
+                                }
+                                last_fraction = progress.fraction;
+
+                                let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
+                                let now = std::time::Instant::now();
+                                if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
+                                    let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                        id: id.to_string(),
+                                        fraction: overall_fraction,
+                                        speed: progress.speed,
+                                        eta: progress.eta,
+                                        size: progress.size,
+                                    });
+                                    last_progress_at = now;
+                                }
+                            }
                             if !processing_started && is_media_processing_line(&line) {
                                 processing_started = true;
                                 let _ = app_handle.emit(
@@ -2144,7 +2271,10 @@ fn set_extension_frontend_ready(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_download_uris, parse_firelink_urls};
+    use super::{
+        collect_download_uris, parse_firelink_urls, parse_media_progress_line, MediaProgress,
+        MEDIA_PROGRESS_PREFIX,
+    };
 
     #[test]
     fn collects_primary_url_and_unique_mirrors_in_order() {
@@ -2192,6 +2322,53 @@ mod tests {
         ];
 
         assert!(parse_firelink_urls(links).is_empty());
+    }
+
+    #[test]
+    fn parses_structured_ytdlp_progress() {
+        let line = format!(
+            "{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":5242880,\"total_bytes\":10485760,\"speed\":1048576,\"eta\":5,\"_speed_str\":\"1.00MiB/s\",\"_eta_str\":\"00:05\",\"_total_bytes_str\":\"10.00MiB\"}}"
+        );
+
+        assert_eq!(
+            parse_media_progress_line(&line),
+            Some(MediaProgress {
+                fraction: 0.5,
+                speed: "1.00MiB/s".to_string(),
+                eta: "00:05".to_string(),
+                size: Some("10.00MiB".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_aria2_external_downloader_progress() {
+        let line = "[#2d2636 12MiB/34MiB(34%) CN:1 DL:910KiB ETA:25s]";
+
+        assert_eq!(
+            parse_media_progress_line(line),
+            Some(MediaProgress {
+                fraction: 0.34,
+                speed: "910KiB/s".to_string(),
+                eta: "25s".to_string(),
+                size: Some("34MiB".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn retains_legacy_ytdlp_progress_fallback() {
+        let line = "[download]  42.5% of 10.00MiB at 2.00MiB/s ETA 00:03";
+
+        assert_eq!(
+            parse_media_progress_line(line),
+            Some(MediaProgress {
+                fraction: 0.425,
+                speed: "2.00MiB/s".to_string(),
+                eta: "00:03".to_string(),
+                size: None,
+            })
+        );
     }
 }
 

@@ -18,6 +18,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const isMac = navigator.userAgent.includes('Mac');
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [interactionError, setInteractionError] = useState('');
   const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
   const columnMinimums = [0, 58, 92, 58, 48, 112];
   const tableGridTemplate = columnWidths.map((width, index) => `minmax(${columnMinimums[index]}px, ${width}fr)`).join(' ');
@@ -50,6 +51,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     return () => window.removeEventListener('click', handleCloseMenu);
   }, []);
 
+  useEffect(() => {
+    if (!interactionError) return;
+    const timeout = window.setTimeout(() => setInteractionError(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [interactionError]);
+
   const resolvePath = async (dir: string, file: string) => {
     let resolvedDir = dir;
     if (dir.startsWith('~/')) {
@@ -60,6 +67,60 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
     const separator = resolvedDir.endsWith('/') ? '' : '/';
     return resolvedDir + separator + file;
+  };
+
+  const showInteractionError = (message: string, error: unknown) => {
+    const detail = typeof error === 'string' ? error : error instanceof Error ? error.message : String(error);
+    setInteractionError(`${message}: ${detail}`);
+  };
+
+  const getDownloadPath = async (item: DownloadItem) => {
+    const fileName = item.fileName?.trim();
+    if (!fileName) return null;
+    return resolvePath(item.destination || '~/Downloads', fileName);
+  };
+
+  const openProperties = (id: string) => {
+    useDownloadStore.getState().setSelectedPropertiesDownloadId(id);
+  };
+
+  const openDownloadFile = async (item: DownloadItem) => {
+    const fullPath = await getDownloadPath(item);
+    if (!fullPath) {
+      openProperties(item.id);
+      return;
+    }
+
+    try {
+      await invoke('open_downloaded_file', { path: fullPath });
+    } catch (error) {
+      console.error("Failed to open file:", error);
+      showInteractionError('Could not open downloaded file', error);
+    }
+  };
+
+  const revealDownloadFile = async (item: DownloadItem) => {
+    const fullPath = await getDownloadPath(item);
+    if (!fullPath) {
+      openProperties(item.id);
+      return;
+    }
+
+    try {
+      await invoke('reveal_in_file_manager', { path: fullPath });
+    } catch (error) {
+      console.error("Failed to show in Finder:", error);
+      showInteractionError('Could not show download in Finder', error);
+    }
+  };
+
+  const handleDownloadDoubleClick = (item: DownloadItem) => {
+    if (item.status === 'completed') {
+      void openDownloadFile(item);
+      return;
+    }
+
+    openProperties(item.id);
   };
 
   const filteredDownloads = downloads.filter((d: DownloadItem) => {
@@ -217,6 +278,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   setContextMenu={setContextMenu}
                   handlePause={handlePause}
                   handleResume={handleResume}
+                  handleDoubleClick={handleDownloadDoubleClick}
                   getCategoryIcon={getCategoryIcon}
                 />
               ))}
@@ -251,28 +313,18 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             <button
               onClick={async () => {
                 setContextMenu(null);
-                try {
-                  const fullPath = await resolvePath(contextItem.destination || '~/Downloads', contextItem.fileName);
-                  await invoke('open_downloaded_file', { path: fullPath });
-                } catch (e) {
-                  console.error("Failed to open file:", e);
-                }
+                await openDownloadFile(contextItem);
               }}
               className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
             >
-              Open File
+              Open
             </button>
           )}
 
           <button
             onClick={async () => {
               setContextMenu(null);
-              try {
-                const fullPath = await resolvePath(contextItem.destination || '~/Downloads', contextItem.fileName);
-                await invoke('reveal_in_file_manager', { path: fullPath });
-              } catch (e) {
-                console.error("Failed to show in folder:", e);
-              }
+              await revealDownloadFile(contextItem);
             }}
             className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
           >
@@ -357,14 +409,20 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
 
           <button
-            onClick={() => {
-              setContextMenu(null);
-              useDownloadStore.getState().setSelectedPropertiesDownloadId(contextItem.id);
-            }}
+              onClick={() => {
+                setContextMenu(null);
+                openProperties(contextItem.id);
+              }}
             className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
           >
             Properties
           </button>
+        </div>
+      )}
+
+      {interactionError && (
+        <div className="app-toast fixed bottom-5 left-1/2 z-50 -translate-x-1/2 px-4 py-2 text-[12px]">
+          {interactionError}
         </div>
       )}
 

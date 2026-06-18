@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
 
 #[tauri::command]
@@ -8,35 +8,18 @@ pub async fn reveal_in_file_manager(
     app_handle: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
-    let path = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+    let primary = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+    let path = existing_download_asset(&primary).ok_or_else(|| {
+        format!(
+            "Downloaded file or partial file is missing: {}",
+            primary.display()
+        )
+    })?;
 
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg("-R")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to reveal file: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer.exe")
-            .arg(format!("/select,\"{}\"", path.display()))
-            .spawn()
-            .map_err(|e| format!("Failed to reveal file: {}", e))?;
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let parent = path
-            .parent()
-            .ok_or("Download path has no parent directory")?;
-        Command::new("xdg-open")
-            .arg(parent)
-            .spawn()
-            .map_err(|e| format!("Failed to reveal file: {}", e))?;
-    }
+    app_handle
+        .opener()
+        .reveal_item_in_dir(path.to_string_lossy().as_ref())
+        .map_err(|e| format!("Failed to reveal file: {}", e))?;
 
     Ok(())
 }
@@ -47,31 +30,14 @@ pub async fn open_downloaded_file(
     path: String,
 ) -> Result<(), String> {
     let path = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+    if !path.exists() {
+        return Err(format!("Downloaded file is missing: {}", path.display()));
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/c", "start", ""])
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-    }
+    app_handle
+        .opener()
+        .open_path(path.to_string_lossy().as_ref(), None::<String>)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
 
     Ok(())
 }
@@ -203,6 +169,19 @@ fn canonicalize_with_missing_leaf(path: &Path) -> Result<PathBuf, String> {
         canonical.push(component);
     }
     Ok(canonical)
+}
+
+fn existing_download_asset(primary: &Path) -> Option<PathBuf> {
+    [
+        primary.to_path_buf(),
+        append_suffix(primary, ".aria2"),
+        append_suffix(primary, ".part"),
+    ]
+    .into_iter()
+    .find(|candidate| {
+        std::fs::symlink_metadata(candidate)
+            .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+    })
 }
 
 fn append_suffix(path: &Path, suffix: &str) -> PathBuf {

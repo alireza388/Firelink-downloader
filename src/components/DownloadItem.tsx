@@ -11,6 +11,7 @@ interface DownloadItemProps {
   setContextMenu: (menu: { x: number; y: number; id: string }) => void;
   handlePause: (id: string) => void;
   handleResume: (item: DownloadItemType) => void;
+  handleDoubleClick: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
 }
 
@@ -21,6 +22,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   setContextMenu,
   handlePause,
   handleResume,
+  handleDoubleClick,
   getCategoryIcon,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
@@ -70,6 +72,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, id: download.id });
       }}
+      onDoubleClick={() => handleDoubleClick(download)}
     >
       <div className="download-file-cell">
         <span className="shrink-0 text-text-muted">
@@ -168,7 +171,10 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           {download.dateAdded ? new Date(download.dateAdded).toLocaleDateString() : '-'}
         </span>
         
-        <div className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto">
+        <div
+          className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
           {download.status === 'queued' && queueIndex !== -1 && (
             <>
               <button 

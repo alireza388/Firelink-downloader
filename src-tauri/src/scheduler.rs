@@ -1,8 +1,6 @@
-use tauri::Emitter;
-use chrono::{Local, Datelike};
+use chrono::{Datelike, Local};
 use std::time::Duration;
-
-
+use tauri::Emitter;
 
 pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -10,68 +8,48 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
         loop {
             interval.tick().await;
 
-            let settings_opt = {
-                use tauri_plugin_store::StoreExt;
-                let store = app_handle.store("store.bin");
-                if let Ok(store) = store {
-                    store.get("settings").and_then(|v| v.as_str().map(|s| s.to_string()))
-                } else {
-                    None
+            if let Ok(settings) = crate::settings::load_settings(&app_handle) {
+                let scheduler = settings.scheduler;
+                if !scheduler.enabled {
+                    continue;
                 }
-            };
 
-            if let Some(settings_str) = settings_opt {
-                if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&settings_str) {
-                    if let Ok(scheduler) = serde_json::from_value::<crate::ipc::SchedulerSettings>(settings.get("scheduler").unwrap_or(&serde_json::json!({})).clone()) {
-                        if !scheduler.enabled {
-                            continue;
-                        }
+                let now = Local::now();
+                let current_time = now.format("%H:%M").to_string();
+                let current_day = now.weekday().num_days_from_sunday();
 
-                        let now = Local::now();
-                        let current_time = now.format("%H:%M").to_string();
-                        let current_day = now.weekday().num_days_from_sunday();
+                let allowed_today =
+                    scheduler.everyday || scheduler.selected_days.contains(&current_day);
+                if !allowed_today {
+                    continue;
+                }
 
-                        let allowed_today = scheduler.everyday || scheduler.selected_days.contains(&current_day);
-                        if !allowed_today {
-                            continue;
-                        }
+                let date_key = now.format("%Y-%m-%d").to_string();
+                let trigger_key = format!("{}-{}", date_key, current_time);
 
-                        let date_key = now.format("%Y-%m-%d").to_string();
-                        let trigger_key = format!("{}-{}", date_key, current_time);
+                if scheduler.start_time == current_time
+                    && settings.scheduler_last_start_key != trigger_key
+                {
+                    let key = trigger_key.clone();
+                    let _ = crate::settings::update_settings_state(&app_handle, |state| {
+                        state.insert("schedulerLastStartKey".to_string(), serde_json::json!(key));
+                        state.insert("schedulerRunning".to_string(), serde_json::json!(true));
+                    });
 
-                        let last_start_key = settings.get("schedulerLastStartKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let last_stop_key = settings.get("schedulerLastStopKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let _ = app_handle.emit("schedule-trigger", "start");
+                }
 
-                        if scheduler.start_time == current_time && last_start_key != trigger_key {
-                            settings["schedulerLastStartKey"] = serde_json::json!(trigger_key.clone());
-                            settings["schedulerRunning"] = serde_json::json!(true);
-                            
-                            let _ = app_handle.emit("schedule-trigger", "start");
-                            
-                            if let Ok(updated) = serde_json::to_string(&settings) {
-                                use tauri_plugin_store::StoreExt;
-                                if let Ok(store) = app_handle.store("store.bin") {
-                                    store.set("settings", serde_json::json!(updated));
-                                    let _ = store.save();
-                                }
-                            }
-                        }
+                if scheduler.stop_time_enabled
+                    && scheduler.stop_time == current_time
+                    && settings.scheduler_last_stop_key != trigger_key
+                {
+                    let key = trigger_key.clone();
+                    let _ = crate::settings::update_settings_state(&app_handle, |state| {
+                        state.insert("schedulerLastStopKey".to_string(), serde_json::json!(key));
+                        state.insert("schedulerRunning".to_string(), serde_json::json!(false));
+                    });
 
-                        if scheduler.stop_time_enabled && scheduler.stop_time == current_time && last_stop_key != trigger_key {
-                            settings["schedulerLastStopKey"] = serde_json::json!(trigger_key.clone());
-                            settings["schedulerRunning"] = serde_json::json!(false);
-                            
-                            let _ = app_handle.emit("schedule-trigger", "stop");
-
-                            if let Ok(updated) = serde_json::to_string(&settings) {
-                                use tauri_plugin_store::StoreExt;
-                                if let Ok(store) = app_handle.store("store.bin") {
-                                    store.set("settings", serde_json::json!(updated));
-                                    let _ = store.save();
-                                }
-                            }
-                        }
-                    }
+                    let _ = app_handle.emit("schedule-trigger", "stop");
                 }
             }
         }

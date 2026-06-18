@@ -517,6 +517,7 @@ mod parity;
 pub mod error;
 pub mod commands;
 pub mod retry;
+mod settings;
 pub use error::AppError;
 
 // Retained only for compatibility with the optional aria2 diagnostic monitor.
@@ -2153,20 +2154,9 @@ pub fn run() {
 
             
             let max_concurrent = {
-                use tauri_plugin_store::StoreExt;
-                let mut capacity = crate::queue::DEFAULT_MAX_CONCURRENT;
-                if let Ok(store) = app.handle().store("store.bin") {
-                    if let Some(settings_val) = store.get("settings") {
-                        if let Some(settings_str) = settings_val.as_str() {
-                            if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(settings_str) {
-                                if let Some(n) = settings_json.get("maxConcurrentDownloads").and_then(|v| v.as_u64()) {
-                                    capacity = n as usize;
-                                }
-                            }
-                        }
-                    }
-                }
-                capacity
+                crate::settings::load_settings(app.handle())
+                    .map(|settings| settings.max_concurrent_downloads)
+                    .unwrap_or(crate::queue::DEFAULT_MAX_CONCURRENT)
             };
 
             let queue_manager = Arc::new(queue::QueueManager::new(app.handle().clone(), max_concurrent));
@@ -2234,21 +2224,9 @@ pub fn run() {
             }
             crate::scheduler::spawn_scheduler(app.handle().clone());
 
-            let mut global_speed_limit = String::new();
-            {
-                use tauri_plugin_store::StoreExt;
-                if let Ok(store) = app.handle().store("store.bin") {
-                    if let Some(settings_val) = store.get("settings") {
-                        if let Some(settings_str) = settings_val.as_str() {
-                            if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(settings_str) {
-                                if let Some(limit) = settings_json.get("globalSpeedLimit").and_then(|v| v.as_str()) {
-                                    global_speed_limit = limit.to_string();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let global_speed_limit = crate::settings::load_settings(app.handle())
+                .map(|settings| settings.global_speed_limit)
+                .unwrap_or_default();
 
             match resolve_bundled_binary_path(app.handle(), "aria2c") {
                 Ok(binary_path) => {
@@ -2281,21 +2259,19 @@ pub fn run() {
                                 std::thread::spawn(move || {
                                     use std::io::BufRead;
                                     let reader = std::io::BufReader::new(stderr);
-                                    for line in reader.lines() {
-                                        if let Ok(trimmed) = line {
-                                            let trimmed = trimmed.trim().to_string();
-                                            if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
-                                                stderr_lock.push_str(&trimmed);
-                                                stderr_lock.push('\n');
-                                                let excess = stderr_lock.len().saturating_sub(8192);
-                                                if excess > 0 {
-                                                    let _ = stderr_lock.drain(..excess);
-                                                }
+                                    for line in reader.lines().map_while(Result::ok) {
+                                        let trimmed = line.trim().to_string();
+                                        if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
+                                            stderr_lock.push_str(&trimmed);
+                                            stderr_lock.push('\n');
+                                            let excess = stderr_lock.len().saturating_sub(8192);
+                                            if excess > 0 {
+                                                let _ = stderr_lock.drain(..excess);
                                             }
-                                            let lower = trimmed.to_lowercase();
-                                            if lower.contains("error") || lower.contains("critical") {
-                                                log::error!("aria2c stderr: {}", trimmed);
-                                            }
+                                        }
+                                        let lower = trimmed.to_lowercase();
+                                        if lower.contains("error") || lower.contains("critical") {
+                                            log::error!("aria2c stderr: {}", trimmed);
                                         }
                                     }
                                 });

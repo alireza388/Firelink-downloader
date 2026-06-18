@@ -257,17 +257,18 @@ impl<R: tauri::Runtime> QueueManager<R> {
             loop {
                 let debt = self.slots_to_retire.load(Ordering::Relaxed);
                 let to_deduct = std::cmp::min(debt, delta);
-                match self.slots_to_retire.compare_exchange_weak(
-                    debt,
-                    debt - to_deduct,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        delta -= to_deduct;
-                        break;
-                    }
-                    Err(_) => {}
+                if self
+                    .slots_to_retire
+                    .compare_exchange_weak(
+                        debt,
+                        debt - to_deduct,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    delta -= to_deduct;
+                    break;
                 }
             }
             if delta > 0 {
@@ -580,7 +581,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         }
         let payload = payload.unwrap();
 
-        let this = Arc::clone(&self);
+        let this = Arc::clone(self);
         let stale_gid = gid.to_string();
         let id_for_task = id.clone();
         let error_for_emit = error.clone();
@@ -890,8 +891,7 @@ impl SidecarSpawner for ProductionSpawner {
         let mut cancel_rx = state
             .download_coordinator
             .register_media(id.to_string())
-            .await
-            .map_err(|e| e)?;
+            .await?;
         let outcome = crate::start_media_download_internal(
             self.app_handle.clone(),
             id,
@@ -941,8 +941,7 @@ impl SidecarSpawner for ProductionSpawner {
                     proxy: payload.proxy.clone(),
                 },
             )))
-            .await
-            .map_err(|e| e)?;
+            .await?;
         Ok(())
     }
 }

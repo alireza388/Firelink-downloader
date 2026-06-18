@@ -15,14 +15,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_store::StoreExt;
 use tokio::sync::watch;
 use tower_http::cors::{Any, CorsLayer};
 use ts_rs::TS;
 
-pub const EXTENSION_SERVER_PORT: u16 = 23522;
-pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> =
-    EXTENSION_SERVER_PORT..=23531;
+pub const EXTENSION_SERVER_PORT: u16 = 6412;
+pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> = EXTENSION_SERVER_PORT..=6422;
 const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
 const MAIN_QUEUE_ID: &str = "00000000-0000-0000-0000-000000000001";
@@ -228,7 +226,7 @@ async fn enqueue_extension_download(
     app_handle: &AppHandle,
     download: &ExtensionDownload,
 ) -> Result<(), String> {
-    let Some(settings) = read_settings(app_handle) else {
+    let Ok(settings) = crate::settings::load_settings(app_handle) else {
         return Err("settings unavailable".to_string());
     };
     let state = app_handle.state::<crate::AppState>();
@@ -309,13 +307,6 @@ async fn enqueue_extension_download(
     Ok(())
 }
 
-fn read_settings(app_handle: &AppHandle) -> Option<crate::ipc::PersistedSettings> {
-    let store = app_handle.store("store.bin").ok()?;
-    let settings_value = store.get("settings")?;
-    let settings_text = settings_value.as_str()?;
-    serde_json::from_str(settings_text).ok()
-}
-
 fn merge_headers(referer: Option<&str>, headers: Option<&str>) -> Option<String> {
     let mut values = Vec::new();
     if let Some(referer) = referer {
@@ -339,7 +330,7 @@ fn filename_from_url(raw_url: &str) -> String {
         .and_then(|url| {
             url.path_segments()
                 .and_then(Iterator::last)
-                .and_then(|segment| sanitize_filename(segment))
+                .and_then(sanitize_filename)
         })
         .unwrap_or_else(|| "download".to_string())
 }

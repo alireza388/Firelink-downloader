@@ -372,9 +372,15 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     println!("ffmpeg execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let first_line = text.lines().next().unwrap_or("").to_string();
-        let parts: Vec<&str> = first_line.split_whitespace().collect();
-        let clean = parts.get(2).unwrap_or(&first_line.as_str()).split('-').next().unwrap_or("").to_string();
+        let first_line = text.lines().next().unwrap_or("");
+        let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
+        let clean = re.captures(first_line)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_else(|| {
+                let parts: Vec<&str> = first_line.split_whitespace().collect();
+                parts.get(2).unwrap_or(&first_line).split('-').next().unwrap_or("").to_string()
+            });
         println!("ffmpeg output: {}", clean);
         Ok(clean)
     } else {
@@ -905,8 +911,13 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
     let version = version_raw.as_ref().and_then(|text| {
         text.lines().next().and_then(|first| {
-            let parts: Vec<&str> = first.split_whitespace().collect();
-            parts.get(2).map(|v| v.split('-').next().unwrap_or(v).to_string())
+            let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
+            if let Some(caps) = re.captures(first) {
+                caps.get(1).map(|m| m.as_str().to_string())
+            } else {
+                let parts: Vec<&str> = first.split_whitespace().collect();
+                parts.get(2).map(|v| v.split('-').next().unwrap_or(v).to_string())
+            }
         })
     });
 

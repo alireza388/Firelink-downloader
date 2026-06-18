@@ -45,12 +45,15 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       }
       if (statusTextRef.current) {
         statusTextRef.current.innerText = `${(progress.fraction * 100).toFixed(0)}%`;
+        statusTextRef.current.title = `${(progress.fraction * 100).toFixed(0)}%`;
       }
       if (speedTextRef.current) {
         speedTextRef.current.innerText = progress.speed;
+        speedTextRef.current.title = progress.speed;
       }
       if (etaTextRef.current) {
         etaTextRef.current.innerText = progress.eta;
+        etaTextRef.current.title = progress.eta;
       }
     });
 
@@ -78,14 +81,14 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       </div>
       
       <div className="download-cell-truncate">
-        <span className="tabular-nums">
+        <span className="tabular-nums" title={download.size && download.size !== '-' ? download.size : 'Unknown'}>
           {download.size && download.size !== '-' ? download.size : 'Unknown'}
         </span>
       </div>
       
       <div className="download-status-cell">
         {download.status === 'completed' ? (
-          <span className="download-status download-status-completed">Completed</span>
+          <span className="download-status download-status-completed" title="Completed">Completed</span>
         ) : (
           <>
             <div className="download-progress-track">
@@ -101,10 +104,19 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               />
             </div>
             <span 
-              ref={statusTextRef}
-              className={`download-status flex items-center gap-1.5 ${
-                download.status === 'paused' ? 'download-status-paused' : 
-                download.status === 'failed' ? 'download-status-failed' : 
+            ref={statusTextRef}
+            title={
+              download.status === 'queued' && queueIndex !== -1
+                ? `Queued #${queueIndex + 1}`
+                : download.status === 'downloading'
+                  ? `${((download.fraction || 0) * 100).toFixed(0)}%`
+                  : download.status === 'processing'
+                    ? 'Processing'
+                    : download.status.charAt(0).toUpperCase() + download.status.slice(1)
+            }
+            className={`download-status flex items-center gap-1.5 ${
+              download.status === 'paused' ? 'download-status-paused' : 
+              download.status === 'failed' ? 'download-status-failed' :
                 download.status === 'processing' ? 'download-status-processing' :
                 download.status === 'downloading' ? 'download-status-downloading' : 
                 download.status === 'queued' ? 'download-status-queued' :
@@ -129,19 +141,30 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       </div>
       
       <div className="download-cell-truncate">
-        <span ref={speedTextRef} className="tabular-nums">
+        <span
+          ref={speedTextRef}
+          className="tabular-nums"
+          title={download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
+        >
           {download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
         </span>
       </div>
 
       <div className="download-cell-truncate">
-        <span ref={etaTextRef} className="tabular-nums">
+        <span
+          ref={etaTextRef}
+          className="tabular-nums"
+          title={download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
+        >
           {download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
         </span>
       </div>
-      
+
       <div className="download-cell-right">
-        <span className="truncate group-hover:hidden tabular-nums ml-auto">
+        <span
+          className="truncate group-hover:hidden tabular-nums ml-auto"
+          title={download.dateAdded ? new Date(download.dateAdded).toLocaleDateString() : '-'}
+        >
           {download.dateAdded ? new Date(download.dateAdded).toLocaleDateString() : '-'}
         </span>
         

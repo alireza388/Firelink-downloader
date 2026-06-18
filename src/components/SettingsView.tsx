@@ -922,7 +922,7 @@ export default function SettingsView() {
               <div className="border border-border-modal/70 rounded-lg p-3 bg-item-hover/10 flex justify-between items-center text-[12px]">
                 <span className="text-text-secondary font-medium">Extension Server Status:</span>
                 <span className="text-green-500 font-semibold flex items-center gap-1">
-                  ● Listening on 127.0.0.1:23522 (Active)
+                  ● Listening on 127.0.0.1:6412-6422 (Active)
                 </span>
               </div>
             </div>

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -34,7 +34,6 @@ type ReplayCache = Arc<Mutex<HashMap<String, u64>>>;
 pub struct ServerState {
     pub app_handle: AppHandle,
     pub pairing_token: SharedExtensionToken,
-    pub frontend_ready: SharedFrontendReady,
     pub replay_cache: ReplayCache,
 }
 
@@ -67,13 +66,12 @@ pub struct ExtensionDownload {
 pub async fn start_server(
     app_handle: AppHandle,
     pairing_token: SharedExtensionToken,
-    frontend_ready: SharedFrontendReady,
+    _frontend_ready: SharedFrontendReady,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let state = ServerState {
         app_handle,
         pairing_token,
-        frontend_ready,
         replay_cache: Arc::new(Mutex::new(HashMap::new())),
     };
 
@@ -131,10 +129,6 @@ async fn ping_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> StatusCode {
-    if !state.frontend_ready.load(Ordering::Acquire) {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    }
-
     let signature = match headers
         .get("x-firelink-signature")
         .and_then(|v| v.to_str().ok())

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { LazyStore } from '@tauri-apps/plugin-store';
 import { info } from '@tauri-apps/plugin-log';
+import { homeDir } from '@tauri-apps/api/path';
 import { invokeCommand as invoke } from '../ipc';
 
 export const tauriStore = new LazyStore('store.bin');
@@ -59,6 +60,17 @@ const syncSystemIntegrations = () => {
   } else {
     invoke('set_prevent_sleep', { prevent: false }).catch(() => {});
   }
+};
+
+const resolveDownloadPath = async (destination: string, fileName: string) => {
+  let resolvedDestination = destination;
+  if (destination.startsWith('~/')) {
+    resolvedDestination = `${await homeDir()}/${destination.slice(2)}`;
+  } else if (destination === '~') {
+    resolvedDestination = await homeDir();
+  }
+  const separator = resolvedDestination.endsWith('/') ? '' : '/';
+  return `${resolvedDestination}${separator}${fileName}`;
 };
 
 export type { DownloadStatus };
@@ -276,11 +288,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     
     if (item && deleteFile) {
       try {
-        const filepath = item.destination ? `${item.destination}/${item.fileName}` : null;
-        if (filepath) {
-          const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
-          await invoke('trash_download_assets', { path: filepath, partialPaths });
-        }
+        const filepath = await resolveDownloadPath(item.destination || '~/Downloads', item.fileName);
+        const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
+        await invoke('trash_download_assets', { path: filepath, partialPaths });
       } catch (e) {
         console.error("Failed to trash file from disk:", e);
       }

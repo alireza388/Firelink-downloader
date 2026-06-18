@@ -1,8 +1,15 @@
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::path::Path;
+use tauri_plugin_store::StoreExt;
 
 #[tauri::command]
-pub async fn reveal_in_file_manager(path: String) -> Result<(), String> {
+pub async fn reveal_in_file_manager(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let path = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -11,29 +18,36 @@ pub async fn reveal_in_file_manager(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to reveal file: {}", e))?;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer.exe")
-            .arg(format!("/select,\"{}\"", path))
+            .arg(format!("/select,\"{}\"", path.display()))
             .spawn()
             .map_err(|e| format!("Failed to reveal file: {}", e))?;
     }
-    
+
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let parent = Path::new(&path).parent().unwrap_or(Path::new(""));
+        let parent = path
+            .parent()
+            .ok_or("Download path has no parent directory")?;
         Command::new("xdg-open")
             .arg(parent)
             .spawn()
             .map_err(|e| format!("Failed to reveal file: {}", e))?;
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub async fn open_downloaded_file(path: String) -> Result<(), String> {
+pub async fn open_downloaded_file(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> Result<(), String> {
+    let path = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -41,11 +55,12 @@ pub async fn open_downloaded_file(path: String) -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Command::new("cmd")
-            .args(["/c", "start", "", &path])
+            .args(["/c", "start", ""])
+            .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open file: {}", e))?;
     }
@@ -62,22 +77,200 @@ pub async fn open_downloaded_file(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn trash_download_assets(path: String, partial_paths: Vec<String>) -> Result<(), String> {
-    let p = Path::new(&path);
-    if p.exists() {
-        if let Err(e) = trash::delete(p) {
-            return Err(format!("Failed to trash primary file: {}", e));
-        }
+pub async fn trash_download_assets(
+    app_handle: tauri::AppHandle,
+    path: String,
+    partial_paths: Vec<String>,
+) -> Result<(), String> {
+    let primary = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+    let partials = partial_paths
+        .iter()
+        .map(|partial| authorize_download_path(&app_handle, partial, DownloadAsset::Partial))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if primary.exists() {
+        trash::delete(&primary).map_err(|e| format!("Failed to trash primary file: {}", e))?;
     }
 
-    for partial in partial_paths {
-        let p_partial = Path::new(&partial);
-        if p_partial.exists() {
-            if let Err(e) = trash::delete(p_partial) {
-                return Err(format!("Failed to trash partial file: {}", e));
-            }
+    for partial in partials {
+        if partial.exists() {
+            trash::delete(&partial).map_err(|e| format!("Failed to trash partial file: {}", e))?;
         }
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum DownloadAsset {
+    Primary,
+    Partial,
+}
+
+fn authorize_download_path(
+    app_handle: &tauri::AppHandle,
+    requested: &str,
+    asset: DownloadAsset,
+) -> Result<PathBuf, String> {
+    let known_paths = known_download_paths(app_handle)?;
+    let allowed_paths = match asset {
+        DownloadAsset::Primary => known_paths,
+        DownloadAsset::Partial => known_paths
+            .iter()
+            .flat_map(|path| [append_suffix(path, ".aria2"), append_suffix(path, ".part")])
+            .collect(),
+    };
+
+    authorize_exact_path(Path::new(requested), &allowed_paths)
+}
+
+fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+    let store = app_handle
+        .store("store.bin")
+        .map_err(|e| format!("Failed to load download ownership data: {e}"))?;
+    let downloads = store
+        .get("download_queue")
+        .map(|value| serde_json::from_value::<Vec<crate::ipc::DownloadItem>>(value.clone()))
+        .transpose()
+        .map_err(|e| format!("Invalid download ownership data: {e}"))?
+        .unwrap_or_default();
+
+    Ok(downloads
+        .into_iter()
+        .filter_map(|download| {
+            let destination = download
+                .destination
+                .unwrap_or_else(|| "~/Downloads".to_string());
+            let filename = Path::new(&download.file_name.replace('\\', "/"))
+                .file_name()?
+                .to_owned();
+            Some(crate::resolve_path(&destination, app_handle).join(filename))
+        })
+        .collect())
+}
+
+fn authorize_exact_path(requested: &Path, allowed_paths: &[PathBuf]) -> Result<PathBuf, String> {
+    if std::fs::symlink_metadata(requested).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err("Download path may not be a symlink".to_string());
+    }
+
+    let requested = canonicalize_with_missing_leaf(requested)?;
+    if let Ok(metadata) = std::fs::metadata(&requested) {
+        if !metadata.is_file() {
+            return Err("Download path is not a file".to_string());
+        }
+    }
+
+    let authorized = allowed_paths.iter().any(|allowed| {
+        canonicalize_with_missing_leaf(allowed)
+            .is_ok_and(|canonical_allowed| canonical_allowed == requested)
+    });
+
+    if authorized {
+        Ok(requested)
+    } else {
+        Err("Path is not owned by a known download".to_string())
+    }
+}
+
+fn canonicalize_with_missing_leaf(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("Download path must be absolute".to_string());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err("Download path traversal is not allowed".to_string());
+    }
+
+    let mut existing = path;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        let name = existing
+            .file_name()
+            .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
+        missing.push(name.to_owned());
+        existing = existing
+            .parent()
+            .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
+    }
+
+    let mut canonical = std::fs::canonicalize(existing)
+        .map_err(|e| format!("Failed to canonicalize download path: {e}"))?;
+    for component in missing.iter().rev() {
+        canonical.push(component);
+    }
+    Ok(canonical)
+}
+
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut value: OsString = path.as_os_str().to_owned();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{append_suffix, authorize_exact_path};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn authorizes_only_known_download_files_and_partials() {
+        let root = tempfile::tempdir().unwrap();
+        let owned = root.path().join("owned.bin");
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(&owned, b"download").unwrap();
+
+        assert_eq!(
+            authorize_exact_path(&owned, std::slice::from_ref(&owned)).unwrap(),
+            fs::canonicalize(&owned).unwrap()
+        );
+        assert!(authorize_exact_path(outside.path(), std::slice::from_ref(&owned)).is_err());
+
+        let partial = append_suffix(&owned, ".part");
+        fs::write(&partial, b"partial").unwrap();
+        assert!(authorize_exact_path(&partial, std::slice::from_ref(&partial)).is_ok());
+    }
+
+    #[test]
+    fn rejects_relative_traversal_and_sensitive_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let owned = root.path().join("owned.bin");
+        fs::write(&owned, b"download").unwrap();
+
+        assert!(
+            authorize_exact_path(Path::new("owned.bin"), std::slice::from_ref(&owned)).is_err()
+        );
+        assert!(authorize_exact_path(
+            &root.path().join("sub/../owned.bin"),
+            std::slice::from_ref(&owned)
+        )
+        .is_err());
+        assert!(
+            authorize_exact_path(Path::new("/etc/hosts"), std::slice::from_ref(&owned)).is_err()
+        );
+        if let Some(home) = std::env::var_os("HOME") {
+            assert!(authorize_exact_path(
+                &PathBuf::from(home).join(".ssh"),
+                std::slice::from_ref(&owned)
+            )
+            .is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlink_escape_from_download_location() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let escaped = root.path().join("owned.bin");
+        symlink(outside.path().join("outside.bin"), &escaped).unwrap();
+
+        assert!(authorize_exact_path(&escaped, std::slice::from_ref(&escaped)).is_err());
+    }
 }

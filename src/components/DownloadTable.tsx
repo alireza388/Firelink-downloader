@@ -19,8 +19,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
-  const columnMinimums = [200, 80, 170, 80, 70, 120];
-  const tableGridTemplate = columnWidths.map(width => `${width}px`).join(' ');
+  const columnMinimums = [0, 58, 92, 58, 48, 112];
+  const tableGridTemplate = columnWidths.map((width, index) => `minmax(${columnMinimums[index]}px, ${width}fr)`).join(' ');
 
   const startColumnResize = (index: number, event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();

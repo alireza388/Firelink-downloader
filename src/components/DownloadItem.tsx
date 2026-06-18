@@ -72,12 +72,12 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         <span className="shrink-0 text-text-muted">
           {getCategoryIcon(download.category)}
         </span>
-        <span className="download-file-name">
+        <span className="download-file-name" title={download.fileName}>
           {download.fileName}
         </span>
       </div>
       
-      <div>
+      <div className="download-cell-truncate">
         <span className="tabular-nums">
           {download.size && download.size !== '-' ? download.size : 'Unknown'}
         </span>
@@ -128,13 +128,13 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         )}
       </div>
       
-      <div>
+      <div className="download-cell-truncate">
         <span ref={speedTextRef} className="tabular-nums">
           {download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
         </span>
       </div>
-      
-      <div>
+
+      <div className="download-cell-truncate">
         <span ref={etaTextRef} className="tabular-nums">
           {download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
         </span>

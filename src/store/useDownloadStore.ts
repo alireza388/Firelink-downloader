@@ -12,6 +12,7 @@ import type { Queue } from '../bindings/Queue';
 import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
 import { isActiveDownloadStatus, redactDownloadForPersistence } from '../utils/downloads';
+import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 
 export type { DownloadCategory } from '../utils/downloads';
 
@@ -190,7 +191,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     set({ isParsing: true, parsingError: null, activeMetadata: null, activeMetadataUrl: url });
     try {
       const settings = useSettingsStore.getState();
-      const metadata = await invoke('fetch_media_metadata', { 
+      const metadata = await fetchMediaMetadataDeduped({
         url,
         cookieBrowser: settings.mediaCookieSource === 'none' ? null : settings.mediaCookieSource,
         username: null,

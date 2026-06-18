@@ -6,6 +6,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
 import { categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
+import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 
 interface RawMediaFormat {
   format_id?: string;
@@ -371,8 +372,8 @@ export const AddDownloadsModal = () => {
               }
             }
 
-            const mediaData = await invoke('fetch_media_metadata', {
-              url, 
+            const mediaData = await fetchMediaMetadataDeduped({
+              url,
               cookieBrowser: browserArg,
               username: login?.username || null,
               password: keychainPassword

@@ -7,6 +7,11 @@ use serde::Serialize;
 use ts_rs::TS;
 use uuid::Uuid;
 use tauri_plugin_deep_link::DeepLinkExt;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -664,10 +669,155 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
     Ok(MetadataResponse { filename, size: size_str, size_bytes })
 }
 
+const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);
+const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
+
+static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> = OnceLock::new();
+static MEDIA_METADATA_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<u64, std::sync::Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+
+fn media_metadata_cache_key(
+    url: &str,
+    cookie_browser: &Option<String>,
+    username: &Option<String>,
+    password: &Option<String>,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    cookie_browser.hash(&mut hasher);
+    username.hash(&mut hasher);
+    password.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn executable_exists(path: &std::path::Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        path.metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn find_yt_dlp_on_path() -> Option<PathBuf> {
+    if let Ok(override_path) = std::env::var("FIRELINK_YTDLP_PATH") {
+        let path = PathBuf::from(override_path);
+        if executable_exists(&path) {
+            return Some(path);
+        }
+    }
+
+    if let Some(path) = std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("yt-dlp"))
+            .find(|candidate| executable_exists(candidate))
+    }) {
+        return Some(path);
+    }
+
+    ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|candidate| executable_exists(candidate))
+}
+
+fn resolve_metadata_ytdlp_path(app_handle: &tauri::AppHandle) -> Result<(PathBuf, &'static str), String> {
+    if let Some(path) = find_yt_dlp_on_path() {
+        return Ok((path, "system"));
+    }
+
+    resolve_bundled_binary_path(app_handle, "yt-dlp")
+        .map(|path| (path, "bundled"))
+        .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))
+}
+
 #[tauri::command]
-async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
-    println!("fetch_media_metadata called for: {}", url);
-    
+async fn fetch_media_metadata(
+    app_handle: tauri::AppHandle,
+    url: String,
+    cookie_browser: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<MediaMetadata, String> {
+    let total_started = Instant::now();
+    let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password);
+    println!("media_metadata[{cache_key:x}] start url={url}");
+
+    let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+    if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
+        if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
+            println!(
+                "media_metadata[{cache_key:x}] cache_hit age_ms={} total_ms={}",
+                cached_at.elapsed().as_millis(),
+                total_started.elapsed().as_millis()
+            );
+            return Ok(metadata);
+        }
+    }
+
+    let request_lock = {
+        let locks = MEDIA_METADATA_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+        let mut locks = locks.lock().await;
+        locks
+            .entry(cache_key)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+
+    let wait_started = Instant::now();
+    let _request_guard = request_lock.lock().await;
+    let wait_ms = wait_started.elapsed().as_millis();
+
+    if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
+        if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
+            println!(
+                "media_metadata[{cache_key:x}] dedup_cache_hit wait_ms={wait_ms} age_ms={} total_ms={}",
+                cached_at.elapsed().as_millis(),
+                total_started.elapsed().as_millis()
+            );
+            return Ok(metadata);
+        }
+    }
+
+    let metadata = fetch_media_metadata_uncached(
+        app_handle,
+        url,
+        cookie_browser,
+        username,
+        password,
+    )
+    .await?;
+
+    if metadata.formats.is_empty() {
+        return Err("yt-dlp returned no usable media formats for this URL".to_string());
+    }
+
+    let format_count = metadata.formats.len();
+    cache
+        .lock()
+        .await
+        .insert(cache_key, (Instant::now(), metadata.clone()));
+    println!(
+        "media_metadata[{cache_key:x}] stored formats={format_count} total_ms={}",
+        total_started.elapsed().as_millis()
+    );
+
+    Ok(metadata)
+}
+
+async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
+    let setup_started = Instant::now();
+    println!("fetch_media_metadata_uncached called for: {}", url);
+
     // Resolve bundled deno and ffmpeg binaries and create a temporary PATH for yt-dlp
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
@@ -679,20 +829,27 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
         symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg")).map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
     }
     let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
-    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
+    let original_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+    let path_env = format!("{}:{}", bin_dir_str, original_path);
 
     use tauri_plugin_shell::ShellExt;
-    let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")
-        .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))?;
-    let mut cmd = app_handle.shell().command(&ytdlp_path);
+    let (ytdlp_path, ytdlp_source) = resolve_metadata_ytdlp_path(&app_handle)?;
+    println!(
+        "fetch_media_metadata setup_ms={} ytdlp_source={} ytdlp_path={}",
+        setup_started.elapsed().as_millis(),
+        ytdlp_source,
+        ytdlp_path.display()
+    );
+    let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
     cmd = cmd.env("PATH", &path_env)
-       .arg("--dump-json")
-       .arg("--no-warnings")
-       .arg("--no-playlist")
-       .arg("--socket-timeout").arg("20")
-       .arg("--retries").arg("3")
-       .arg("--extractor-retries").arg("3")
-       .arg("--compat-options").arg("no-youtube-unavailable-videos");
+        .arg("--no-warnings")
+        .arg("--no-playlist")
+        .arg("--skip-download")
+        .arg("--socket-timeout").arg("20")
+        .arg("--retries").arg("3")
+        .arg("--extractor-retries").arg("3")
+        .arg("--compat-options").arg("no-youtube-unavailable-videos")
+        .arg("--print").arg("%(.{title,duration,thumbnail,formats})j");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
@@ -721,11 +878,26 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
 
     cmd = cmd.arg("--").arg(&url);
 
-    let output = cmd.output()
+    let command_started = Instant::now();
+    let output = tokio::time::timeout(MEDIA_METADATA_TIMEOUT, cmd.output())
         .await
+        .map_err(|_| {
+            format!(
+                "yt-dlp timed out after {}s while fetching media metadata",
+                MEDIA_METADATA_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+    println!(
+        "fetch_media_metadata ytdlp_ms={} status_success={} stdout_bytes={} stderr_bytes={}",
+        command_started.elapsed().as_millis(),
+        output.status.success(),
+        output.stdout.len(),
+        output.stderr.len()
+    );
 
     if output.status.success() {
+        let parse_started = Instant::now();
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
         
         let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown Title").to_string();
@@ -737,11 +909,21 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
             .and_then(|v| v.as_array())
             .map(|formats_arr| build_media_format_options(formats_arr))
             .unwrap_or_default();
-        
+
+        println!(
+            "fetch_media_metadata parse_ms={} formats={}",
+            parse_started.elapsed().as_millis(),
+            formats.len()
+        );
+
         Ok(MediaMetadata { title, duration, thumbnail, formats })
     } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("yt-dlp error: {}", err))
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if err.is_empty() {
+            Err(format!("yt-dlp failed while fetching media metadata (exit status: {:?})", output.status.code()))
+        } else {
+            Err(format!("yt-dlp failed while fetching media metadata: {}", err))
+        }
     }
 }
 

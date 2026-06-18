@@ -237,7 +237,10 @@ pub struct PersistedSettings {
     pub media_cookie_source: MediaCookieSource,
     pub download_directories: HashMap<String, String>,
     pub site_logins: Vec<SiteLogin>,
-    pub extension_pairing_token: String,
+    // Note: `extension_pairing_token` is intentionally NOT persisted here. It
+    // is an HMAC shared secret and is stored in the OS keychain by the
+    // frontend. The field is kept on legacy persisted JSON only; serde ignores
+    // unknown fields when decoding, so existing installs migrate cleanly.
     pub auto_check_updates: bool,
 }
 

@@ -67,6 +67,13 @@ function App() {
 
   useEffect(() => {
     useDownloadStore.getState().initDB();
+    // Hydrate the browser-extension pairing token from the OS keychain before
+    // the reactive push to the backend. If no token exists (fresh install or
+    // upgrade from a plaintext-persisting version) a new one is minted and
+    // stored, effectively rotating it away from any leaked plaintext.
+    useSettingsStore.getState().hydratePairingToken().catch(error => {
+      console.error('Failed to hydrate extension pairing token:', error);
+    });
   }, []);
 
   useEffect(() => {

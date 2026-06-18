@@ -1,5 +1,6 @@
 import type { DownloadCategory } from '../bindings/DownloadCategory';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
+import type { DownloadItem } from '../bindings/DownloadItem';
 export type { DownloadCategory } from '../bindings/DownloadCategory';
 
 import { invoke } from '@tauri-apps/api/core';
@@ -77,4 +78,34 @@ export const isMediaUrl = (rawUrl: string): boolean => {
   } catch {
     return false;
   }
+};
+
+/**
+ * Fields that may carry secrets and therefore must never reach the persisted
+ * `download_queue` document. These are supplied in-memory for the active
+ * session (see `enqueue_download` payloads) but are stripped at the
+ * persistence boundary so `store.bin` contains no plaintext credentials.
+ */
+const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
+
+/**
+ * Returns a shallow copy of `item` with secret fields removed. Volatile
+ * progress fields (`fraction`, `speed`, `eta`) are also dropped as in the
+ * existing persistence path.
+ *
+ * Note: `url` is intentionally retained even though it may contain signed
+ * query parameters — redacting it would break resume/retry since the URL is
+ * the download source. Ad-hoc credentials entered in the Add Downloads modal
+ * are therefore session-scoped; site-login passwords (Keychain-backed) are
+ * unaffected by this redaction.
+ */
+export const redactDownloadForPersistence = (item: DownloadItem): DownloadItem => {
+  const copy: DownloadItem = { ...item };
+  delete copy.fraction;
+  delete copy.speed;
+  delete copy.eta;
+  for (const field of DOWNLOAD_SECRET_FIELDS) {
+    delete copy[field];
+  }
+  return copy;
 };

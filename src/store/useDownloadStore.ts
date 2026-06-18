@@ -11,7 +11,7 @@ import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
-import { isActiveDownloadStatus } from '../utils/downloads';
+import { isActiveDownloadStatus, redactDownloadForPersistence } from '../utils/downloads';
 
 export type { DownloadCategory } from '../utils/downloads';
 
@@ -628,13 +628,10 @@ useDownloadStore.subscribe(async (state, prevState) => {
   }
 
   if (state.downloads !== prevState.downloads) {
-    const staticDownloads = state.downloads.map(d => {
-      const copy = { ...d };
-      delete copy.fraction;
-      delete copy.speed;
-      delete copy.eta;
-      return copy;
-    });
+    // Strip secret fields (password/cookies/headers) and volatile progress
+    // before writing to disk. Secrets remain on the in-memory item for the
+    // active session only.
+    const staticDownloads = state.downloads.map(redactDownloadForPersistence);
     
     const currentSerialized = JSON.stringify(staticDownloads);
     if (currentSerialized !== lastSavedDownloads) {

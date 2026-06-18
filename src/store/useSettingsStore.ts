@@ -44,6 +44,15 @@ const tauriStorage: StateStorage = {
   },
 };
 
+/**
+ * Keychain identifier for the browser-extension pairing token. The token is an
+ * HMAC shared secret and is therefore persisted via the OS keychain rather
+ * than the plaintext `store.bin` settings document. A fresh token is minted
+ * when no prior entry exists (also covering upgrades from versions that
+ * stored the token as plaintext, effectively rotating it on upgrade).
+ */
+const PAIRING_TOKEN_KEYCHAIN_ID = 'extension-pairing-token';
+
 export type {
   ActiveView,
   AppFontSize,
@@ -126,6 +135,7 @@ export interface SettingsState {
   removeSiteLogin: (id: string) => void;
   regeneratePairingToken: () => void;
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
+  hydratePairingToken: () => Promise<void>;
 }
 
 const defaultDirectories = {
@@ -287,7 +297,33 @@ export const useSettingsStore = create<SettingsState>()(
       removeSiteLogin: (id) => set((state) => ({
         siteLogins: state.siteLogins.filter((login) => login.id !== id)
       })),
-      regeneratePairingToken: () => set({ extensionPairingToken: generateSecureToken() }),
+      regeneratePairingToken: () => {
+        const token = generateSecureToken();
+        set({ extensionPairingToken: token });
+        invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token }).catch(e => {
+          console.error('Failed to persist regenerated extension pairing token to keychain:', e);
+        });
+      },
+      hydratePairingToken: async () => {
+        const existing = useSettingsStore.getState().extensionPairingToken;
+        try {
+          const stored = await invoke('get_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID });
+          if (stored) {
+            set({ extensionPairingToken: stored });
+            return;
+          }
+        } catch {
+          // No prior token in the keychain (fresh install or upgrade from a
+          // version that stored plaintext). Fall through to mint + store.
+        }
+        const token = existing || generateSecureToken();
+        set({ extensionPairingToken: token });
+        try {
+          await invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token });
+        } catch (e) {
+          console.error('Failed to persist extension pairing token to keychain:', e);
+        }
+      },
       setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
     }),
     {
@@ -322,7 +358,6 @@ export const useSettingsStore = create<SettingsState>()(
         mediaCookieSource: state.mediaCookieSource,
         downloadDirectories: state.downloadDirectories,
         siteLogins: state.siteLogins,
-        extensionPairingToken: state.extensionPairingToken,
         autoCheckUpdates: state.autoCheckUpdates
       }),
       merge: (persistedState: unknown, currentState) => {

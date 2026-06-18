@@ -168,7 +168,6 @@ fn default_settings() -> PersistedSettings {
         media_cookie_source: MediaCookieSource::None,
         download_directories,
         site_logins: Vec::new(),
-        extension_pairing_token: String::new(),
         auto_check_updates: true,
     }
 }
@@ -228,5 +227,25 @@ mod tests {
         let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
 
         assert_eq!(settings.max_concurrent_downloads, 3);
+    }
+
+    #[test]
+    fn ignores_legacy_extension_pairing_token_field() {
+        // Older versions persisted `extensionPairingToken` as plaintext inside
+        // the settings document. It now lives in the OS keychain and is no
+        // longer part of PersistedSettings. serde ignores the unknown field so
+        // existing installs decode without error; the plaintext value is
+        // simply dropped and a fresh token is minted by the frontend.
+        let stored = json!({
+            "state": {
+                "extensionPairingToken": "plaintext-leaked-secret",
+                "maxConcurrentDownloads": 5
+            },
+            "version": 0
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert_eq!(settings.max_concurrent_downloads, 5);
     }
 }

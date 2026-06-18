@@ -23,6 +23,7 @@ interface MediaFormat {
   name: string;
   selector: string;
   ext: string;
+  formatLabel: string;
   detail: string;
   type: string;
   bytes: number;
@@ -198,6 +199,7 @@ const parseMediaFormats = (jsonStr: string) => {
           name: `${q.name} ${c.name}`,
           selector,
           ext: c.ext,
+          formatLabel: `${c.name.toUpperCase()} • Video + audio`,
           detail: est ? `~${formatBytes(est)}` : '',
           type: 'Video',
           bytes: est || 0
@@ -211,6 +213,7 @@ const parseMediaFormats = (jsonStr: string) => {
         name: "Audio MP3",
         selector: "bestaudio/best",
         ext: "mp3",
+        formatLabel: "MP3 • Best audio",
         detail: est ? `~${formatBytes(est)}` : '',
         type: 'Audio',
         bytes: est || 0
@@ -223,6 +226,7 @@ const parseMediaFormats = (jsonStr: string) => {
         name: "Audio M4A",
         selector: "bestaudio[ext=m4a]/bestaudio/best",
         ext: "m4a",
+        formatLabel: "M4A • AAC",
         detail: est ? `~${formatBytes(est)}` : '',
         type: 'Audio',
         bytes: est || 0
@@ -235,6 +239,7 @@ const parseMediaFormats = (jsonStr: string) => {
         name: "Audio Opus",
         selector: "bestaudio[ext=webm]/bestaudio/best",
         ext: "opus",
+        formatLabel: "OPUS • Opus",
         detail: est ? `~${formatBytes(est)}` : '',
         type: 'Audio',
         bytes: est || 0
@@ -373,15 +378,19 @@ export const AddDownloadsModal = () => {
               password: keychainPassword
             });
             if (mediaData && mediaData.formats.length > 0) {
-              const mappedFormats = mediaData.formats.map(f => ({
-                id: f.format_id,
-                name: f.resolution,
-                ext: f.ext,
-                bytes: f.filesize || 0,
-                detail: `${f.resolution} • ${f.ext} • ${f.fps ? f.fps + 'fps' : ''} • ${f.filesize ? formatBytes(f.filesize) : 'Unknown size'}`,
-                selector: f.format_id,
-                type: 'video'
-              }));
+              const mappedFormats = mediaData.formats.map(f => {
+                const quality = f.resolution || 'Best';
+                const bytes = f.filesize || 0;
+                return {
+                  name: quality,
+                  ext: f.ext,
+                  bytes,
+                  formatLabel: f.format_label || f.ext.toUpperCase(),
+                  detail: bytes ? formatBytes(bytes) : 'Unknown size',
+                  selector: f.format_id,
+                  type: quality.toLowerCase().includes('audio') ? 'Audio' : 'Video'
+                };
+              });
               updatedItems[i] = {
                 url,
                 file: `${mediaData.title}.${mediaData.formats[0].ext}`,
@@ -804,11 +813,14 @@ export const AddDownloadsModal = () => {
                                 isSelected ? 'bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-400 font-semibold shadow-sm' : 'bg-bg-input border-border-modal text-text-secondary hover:border-border-modal/80 hover:bg-item-hover/50'
                               }`}
                             >
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
                                 <Icon size={14} className={isSelected ? 'text-purple-500' : 'text-text-muted'} />
-                                <span>{f.name}</span>
+                                <div className="flex flex-col min-w-0">
+                                  <span className="truncate">{f.name}</span>
+                                  <span className="text-[10px] font-normal text-text-muted truncate">{f.formatLabel}</span>
+                                </div>
                               </div>
-                              <span className="font-mono text-[11px] opacity-80">{f.detail}</span>
+                              <span className="font-mono text-[11px] opacity-80 shrink-0">{f.detail}</span>
                             </div>
                           );
                         })}

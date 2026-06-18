@@ -95,7 +95,7 @@ export const QualityModal = React.memo(() => {
               >
                 {activeMetadata.formats.map(f => (
                   <option key={f.format_id} value={f.format_id}>
-                    {f.resolution} • {f.ext.toUpperCase()} {f.fps ? `• ${f.fps}fps` : ''} {f.filesize ? `• ${formatBytes(f.filesize)}` : ''}
+                    {f.resolution || 'Best'} • {f.format_label || f.ext.toUpperCase()} • {f.filesize ? formatBytes(f.filesize) : 'Unknown size'}
                   </option>
                 ))}
               </select>

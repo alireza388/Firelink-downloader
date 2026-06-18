@@ -23,6 +23,7 @@ pub struct MediaFormat {
     pub format_id: String,
     pub resolution: String,
     pub ext: String,
+    pub format_label: String,
     #[ts(type = "number | null")]
     pub fps: Option<f64>,
     #[ts(type = "number | null")]
@@ -48,6 +49,299 @@ fn is_media_processing_line(line: &str) -> bool {
         || lower.contains("[fixup")
         || lower.contains("merging formats")
         || lower.contains("post-process")
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty())
+}
+
+fn json_lower(value: &serde_json::Value, key: &str) -> String {
+    json_str(value, key).unwrap_or_default().to_lowercase()
+}
+
+fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
+}
+
+fn json_f64(value: &serde_json::Value, key: &str) -> Option<f64> {
+    value.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+}
+
+fn media_filesize(value: &serde_json::Value) -> Option<u64> {
+    json_u64(value, "filesize").or_else(|| json_u64(value, "filesize_approx"))
+}
+
+fn codec_is_present(codec: Option<&str>) -> bool {
+    codec.map(str::trim).filter(|codec| !codec.is_empty()).map(|codec| codec.to_lowercase() != "none").unwrap_or(false)
+}
+
+fn has_video_stream(value: &serde_json::Value) -> bool {
+    codec_is_present(json_str(value, "vcodec"))
+}
+
+fn has_audio_stream(value: &serde_json::Value) -> bool {
+    codec_is_present(json_str(value, "acodec"))
+}
+
+fn is_excluded_yt_dlp_format(value: &serde_json::Value) -> bool {
+    let ext = json_lower(value, "ext");
+    let protocol = json_lower(value, "protocol");
+    if ext == "mhtml" || protocol.contains("mhtml") {
+        return true;
+    }
+
+    for key in ["format_note", "format", "format_id", "protocol"] {
+        let text = json_lower(value, key);
+        if text.contains("storyboard") || text.contains("thumbnail") || text.contains("subtitle") || text.contains("subtitles") {
+            return true;
+        }
+    }
+
+    !(has_video_stream(value) || has_audio_stream(value))
+}
+
+fn format_height(value: &serde_json::Value) -> Option<u64> {
+    if let Some(height) = json_u64(value, "height") {
+        return Some(height);
+    }
+
+    if let Some(resolution) = json_str(value, "resolution") {
+        if let Some((_, height)) = resolution.split_once('x') {
+            if let Ok(parsed) = height.parse::<u64>() {
+                return Some(parsed);
+            }
+        }
+    }
+
+    let note = json_lower(value, "format_note");
+    for height in [4320_u64, 2160, 1440, 1080, 720, 480, 360, 240, 144] {
+        if note.contains(&format!("{height}p")) {
+            return Some(height);
+        }
+    }
+
+    None
+}
+
+fn matches_media_height(value: &serde_json::Value, target: u64) -> bool {
+    if !has_video_stream(value) {
+        return false;
+    }
+
+    let note = json_lower(value, "format_note");
+    if note.contains(&format!("{target}p")) {
+        return true;
+    }
+
+    let Some(height) = format_height(value) else {
+        return false;
+    };
+
+    let tolerance = if target >= 2160 { 600 } else if target >= 1440 { 400 } else if target >= 1080 { 300 } else if target >= 720 { 200 } else { 100 };
+    height <= target && height.saturating_add(tolerance) >= target
+}
+
+fn format_score(value: &serde_json::Value) -> u64 {
+    let height_score = format_height(value).unwrap_or(0).saturating_mul(1_000_000);
+    let bitrate_score = json_f64(value, "tbr").unwrap_or(0.0).max(0.0) as u64 * 1_000;
+    let size_score = media_filesize(value).unwrap_or(0).min(999);
+    height_score + bitrate_score + size_score
+}
+
+fn best_matching_format<'a, F>(formats: &'a [&'a serde_json::Value], predicate: F) -> Option<&'a serde_json::Value>
+where
+    F: Fn(&serde_json::Value) -> bool,
+{
+    formats.iter().copied().filter(|format| predicate(format)).max_by_key(|format| format_score(format))
+}
+
+fn best_audio_format<'a>(formats: &'a [&'a serde_json::Value], ext: Option<&str>) -> Option<&'a serde_json::Value> {
+    best_matching_format(formats, |format| {
+        if !has_audio_stream(format) || has_video_stream(format) {
+            return false;
+        }
+        ext.map(|wanted| json_lower(format, "ext") == wanted).unwrap_or(true)
+    })
+}
+
+fn display_codec(codec: Option<&str>, fallback: &str) -> String {
+    let Some(codec) = codec.map(str::trim).filter(|codec| !codec.is_empty()) else {
+        return fallback.to_string();
+    };
+
+    let lower = codec.to_lowercase();
+    if lower == "none" {
+        return fallback.to_string();
+    }
+
+    if lower.starts_with("avc1") || lower.contains("h264") {
+        "H.264".to_string()
+    } else if lower.starts_with("av01") {
+        "AV1".to_string()
+    } else if lower.starts_with("vp09") || lower.starts_with("vp9") {
+        "VP9".to_string()
+    } else if lower.starts_with("vp8") {
+        "VP8".to_string()
+    } else if lower.starts_with("hev1") || lower.starts_with("hvc1") || lower.contains("h265") || lower.contains("hevc") {
+        "H.265".to_string()
+    } else if lower.starts_with("mp4a") || lower.contains("aac") {
+        "AAC".to_string()
+    } else if lower.contains("opus") {
+        "Opus".to_string()
+    } else if lower.contains("vorbis") {
+        "Vorbis".to_string()
+    } else if lower.contains("mp3") {
+        "MP3".to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn joined_format_label(container: &str, video_codec: Option<&str>, audio_codec: Option<&str>) -> String {
+    let mut codecs = Vec::new();
+    if video_codec.is_some() {
+        codecs.push(display_codec(video_codec, "Video"));
+    }
+    if audio_codec.is_some() {
+        codecs.push(display_codec(audio_codec, "Audio"));
+    }
+
+    if codecs.is_empty() {
+        container.to_uppercase()
+    } else {
+        format!("{} • {}", container.to_uppercase(), codecs.join(" + "))
+    }
+}
+
+fn estimated_merged_size(video: Option<&serde_json::Value>, audio: Option<&serde_json::Value>) -> Option<u64> {
+    let mut total = 0_u64;
+    let mut known = false;
+
+    if let Some(size) = video.and_then(media_filesize) {
+        total = total.saturating_add(size);
+        known = true;
+    }
+    if let Some(size) = audio.and_then(media_filesize) {
+        total = total.saturating_add(size);
+        known = true;
+    }
+
+    known.then_some(total)
+}
+
+fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
+    let format_id = json_str(value, "format_id")?.to_string();
+    let ext = json_str(value, "ext").unwrap_or("mkv").to_string();
+    let fps = json_f64(value, "fps");
+    let filesize = media_filesize(value);
+
+    let resolution = if has_video_stream(value) {
+        format_height(value).map(|height| format!("{height}p")).or_else(|| json_str(value, "resolution").map(ToOwned::to_owned)).unwrap_or_else(|| "Video".to_string())
+    } else {
+        "Audio only".to_string()
+    };
+
+    let format_label = if has_video_stream(value) && has_audio_stream(value) {
+        joined_format_label(&ext, json_str(value, "vcodec"), json_str(value, "acodec"))
+    } else if has_video_stream(value) {
+        joined_format_label(&ext, json_str(value, "vcodec"), None)
+    } else {
+        joined_format_label(&ext, None, json_str(value, "acodec"))
+    };
+
+    Some(MediaFormat { format_id, resolution, ext, format_label, fps, filesize })
+}
+
+fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFormat> {
+    let clean_formats: Vec<&serde_json::Value> = formats_arr.iter().filter(|format| !is_excluded_yt_dlp_format(format)).collect();
+    let has_video = clean_formats.iter().any(|format| has_video_stream(format));
+    let has_audio = clean_formats.iter().any(|format| has_audio_stream(format));
+    let mut options = Vec::new();
+
+    if has_video {
+        let best_video = best_matching_format(&clean_formats, has_video_stream);
+        let best_audio = best_audio_format(&clean_formats, None);
+        options.push(MediaFormat {
+            format_id: "bestvideo+bestaudio/best".to_string(),
+            resolution: "Best".to_string(),
+            ext: "mkv".to_string(),
+            format_label: joined_format_label("mkv", best_video.and_then(|format| json_str(format, "vcodec")), best_audio.and_then(|format| json_str(format, "acodec"))),
+            fps: best_video.and_then(|format| json_f64(format, "fps")),
+            filesize: estimated_merged_size(best_video, best_audio),
+        });
+
+        let available_heights: Vec<u64> = [2160_u64, 1440, 1080, 720, 480, 360]
+            .into_iter()
+            .filter(|height| clean_formats.iter().any(|format| matches_media_height(format, *height)))
+            .collect();
+
+        for height in available_heights {
+            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "mp4") {
+                let audio = best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None));
+                options.push(MediaFormat {
+                    format_id: format!("bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    resolution: format!("{height}p"),
+                    ext: "mp4".to_string(),
+                    format_label: joined_format_label("mp4", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
+                    fps: json_f64(video, "fps"),
+                    filesize: estimated_merged_size(Some(video), audio),
+                });
+            }
+
+            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "webm") {
+                let audio = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))).or_else(|| best_audio_format(&clean_formats, None));
+                options.push(MediaFormat {
+                    format_id: format!("bestvideo[height<={height}][ext=webm]+bestaudio[ext=webm]/best[height<={height}][ext=webm]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    resolution: format!("{height}p"),
+                    ext: "webm".to_string(),
+                    format_label: joined_format_label("webm", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
+                    fps: json_f64(video, "fps"),
+                    filesize: estimated_merged_size(Some(video), audio),
+                });
+            }
+        }
+    }
+
+    if has_audio {
+        if let Some(audio) = best_audio_format(&clean_formats, Some("m4a")) {
+            options.push(MediaFormat {
+                format_id: "bestaudio[ext=m4a]/bestaudio/best".to_string(),
+                resolution: "Audio only".to_string(),
+                ext: "m4a".to_string(),
+                format_label: joined_format_label("m4a", None, json_str(audio, "acodec")),
+                fps: None,
+                filesize: media_filesize(audio),
+            });
+        }
+
+        if let Some(audio) = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))) {
+            options.push(MediaFormat {
+                format_id: "bestaudio[ext=webm]/bestaudio/best".to_string(),
+                resolution: "Audio only".to_string(),
+                ext: "opus".to_string(),
+                format_label: joined_format_label("opus", None, json_str(audio, "acodec")),
+                fps: None,
+                filesize: media_filesize(audio),
+            });
+        }
+
+        if let Some(audio) = best_audio_format(&clean_formats, None) {
+            options.push(MediaFormat {
+                format_id: "bestaudio/best".to_string(),
+                resolution: "Audio only".to_string(),
+                ext: "mp3".to_string(),
+                format_label: "MP3 • Best audio".to_string(),
+                fps: None,
+                filesize: media_filesize(audio),
+            });
+        }
+    }
+
+    if options.is_empty() {
+        clean_formats.iter().filter_map(|format| raw_media_format(format)).collect()
+    } else {
+        options
+    }
 }
 
 const MEDIA_PROGRESS_PREFIX: &str = "__FIRELINK_PROGRESS__";
@@ -438,20 +732,11 @@ async fn fetch_media_metadata(app_handle: tauri::AppHandle, url: String, cookie_
         let duration = value.get("duration").and_then(|v| v.as_f64()).map(|v| v as u64);
         let thumbnail = value.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string());
         
-        let mut formats = Vec::new();
-        if let Some(formats_arr) = value.get("formats").and_then(|v| v.as_array()) {
-            for fmt in formats_arr {
-                let format_id = fmt.get("format_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let resolution = fmt.get("resolution").and_then(|v| v.as_str()).unwrap_or("audio only").to_string();
-                let ext = fmt.get("ext").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let fps = fmt.get("fps").and_then(|v| v.as_f64());
-                let filesize = fmt.get("filesize").and_then(|v| v.as_u64()).or_else(|| fmt.get("filesize_approx").and_then(|v| v.as_f64().map(|f| f as u64)));
-                
-                if !format_id.is_empty() {
-                    formats.push(MediaFormat { format_id, resolution, ext, fps, filesize });
-                }
-            }
-        }
+        let formats = value
+            .get("formats")
+            .and_then(|v| v.as_array())
+            .map(|formats_arr| build_media_format_options(formats_arr))
+            .unwrap_or_default();
         
         Ok(MediaMetadata { title, duration, thumbnail, formats })
     } else {
@@ -2272,9 +2557,10 @@ fn set_extension_frontend_ready(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_download_uris, parse_firelink_urls, parse_media_progress_line, MediaProgress,
-        MEDIA_PROGRESS_PREFIX,
+        build_media_format_options, collect_download_uris, is_excluded_yt_dlp_format, json_lower,
+        parse_firelink_urls, parse_media_progress_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
+    use serde_json::json;
 
     #[test]
     fn collects_primary_url_and_unique_mirrors_in_order() {
@@ -2322,6 +2608,118 @@ mod tests {
         ];
 
         assert!(parse_firelink_urls(links).is_empty());
+    }
+
+    #[test]
+    fn excludes_youtube_storyboard_mhtml_formats() {
+        let storyboard = json!({
+            "format_id": "sb0",
+            "ext": "mhtml",
+            "protocol": "mhtml",
+            "format_note": "storyboard",
+            "vcodec": "none",
+            "acodec": "none"
+        });
+
+        assert!(is_excluded_yt_dlp_format(&storyboard));
+    }
+
+    #[test]
+    fn builds_compact_media_options_without_storyboards() {
+        let formats = vec![
+            json!({
+                "format_id": "sb0",
+                "ext": "mhtml",
+                "protocol": "mhtml",
+                "format_note": "storyboard",
+                "vcodec": "none",
+                "acodec": "none"
+            }),
+            json!({
+                "format_id": "137",
+                "ext": "mp4",
+                "height": 1080,
+                "format_note": "1080p",
+                "vcodec": "avc1.640028",
+                "acodec": "none",
+                "filesize": 100_000_000_u64
+            }),
+            json!({
+                "format_id": "140",
+                "ext": "m4a",
+                "vcodec": "none",
+                "acodec": "mp4a.40.2",
+                "filesize": 10_000_000_u64
+            })
+        ];
+
+        let options = build_media_format_options(&formats);
+
+        assert!(!options.iter().any(|format| format.ext == "mhtml"));
+        assert!(options.iter().any(|format| {
+            format.resolution == "1080p"
+                && format.ext == "mp4"
+                && format.format_label == "MP4 • H.264 + AAC"
+                && format.filesize == Some(110_000_000)
+        }));
+        assert!(options.iter().any(|format| {
+            format.resolution == "Audio only" && format.format_label == "M4A • AAC"
+        }));
+    }
+
+    #[test]
+    #[ignore = "requires network and a local yt-dlp executable"]
+    fn filters_live_youtube_metadata_from_env() {
+        let url = std::env::var("FIRELINK_LIVE_YOUTUBE_URL")
+            .expect("set FIRELINK_LIVE_YOUTUBE_URL to a YouTube watch URL");
+        let output = std::process::Command::new("yt-dlp")
+            .args([
+                "--dump-json",
+                "--no-warnings",
+                "--no-playlist",
+                "--socket-timeout",
+                "20",
+                "--retries",
+                "3",
+                "--extractor-retries",
+                "3",
+                "--compat-options",
+                "no-youtube-unavailable-videos",
+                "--",
+                &url,
+            ])
+            .output()
+            .expect("failed to run yt-dlp");
+
+        assert!(
+            output.status.success(),
+            "yt-dlp failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("yt-dlp did not emit valid JSON");
+        let formats = value
+            .get("formats")
+            .and_then(|v| v.as_array())
+            .expect("yt-dlp JSON did not include formats");
+        let raw_mhtml_count = formats
+            .iter()
+            .filter(|format| json_lower(format, "ext") == "mhtml")
+            .count();
+        let options = build_media_format_options(formats);
+
+        eprintln!(
+            "raw formats: {}, raw mhtml: {}, normalized options: {}",
+            formats.len(),
+            raw_mhtml_count,
+            options.len()
+        );
+        assert!(!options.is_empty());
+        assert!(options.iter().all(|format| format.ext != "mhtml"));
+        assert!(options
+            .iter()
+            .all(|format| !format.format_label.to_lowercase().contains("mhtml")));
     }
 
     #[test]

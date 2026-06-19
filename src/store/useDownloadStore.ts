@@ -74,6 +74,14 @@ const resolveDownloadPath = async (destination: string, fileName: string) => {
   return `${resolvedDestination}${separator}${fileName}`;
 };
 
+const effectiveDestinationForItem = (
+  item: Pick<DownloadItem, 'destination' | 'category'>,
+  settings: ReturnType<typeof useSettingsStore.getState>
+) => item.destination ||
+  (settings.downloadDirectories && settings.downloadDirectories[item.category]) ||
+  settings.defaultDownloadPath ||
+  '~/Downloads';
+
 export type { DownloadStatus };
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -206,10 +214,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   addDownload: async (item) => {
     info(`Download ${item.id} added to queue`);
-    set((state) => ({ downloads: [...state.downloads, item] }));
-
     try {
       const settings = useSettingsStore.getState();
+      const destPath = effectiveDestinationForItem(item, settings);
+      const ownedItem = { ...item, destination: destPath };
+      set((state) => ({ downloads: [...state.downloads, ownedItem] }));
+
       const login = getSiteLogin(item.url, settings);
       let keychainPassword = null;
       if (login) {
@@ -219,11 +229,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           console.warn("Could not fetch keychain password for login:", e);
         }
       }
-      const destPath = item.destination || 
-                       (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
-                       settings.defaultDownloadPath || 
-                       '~/Downloads';
-                       
       const enqueueItem = {
         id: item.id,
         url: item.url,

@@ -274,10 +274,12 @@ export const AddDownloadsModal = () => {
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>([]);
   const [showingDuplicates, setShowingDuplicates] = useState(false);
   const [pendingStartFlag, setPendingStartFlag] = useState(false);
+  const [pendingUseSharedDestination, setPendingUseSharedDestination] = useState(false);
   const [resolvedLocation, setResolvedLocation] = useState('');
 
   // Right Form
   const [saveLocation, setSaveLocation] = useState(defaultDownloadPath);
+  const [isSaveLocationManual, setIsSaveLocationManual] = useState(false);
   const [connections, setConnections] = useState(16);
   const [speedLimitEnabled, setSpeedLimitEnabled] = useState(false);
   const [speedLimit, setSpeedLimit] = useState('1024');
@@ -298,9 +300,11 @@ export const AddDownloadsModal = () => {
   useEffect(() => {
     if (isAddModalOpen) {
       setSaveLocation(defaultDownloadPath);
+      setIsSaveLocationManual(false);
       setUrls(pendingAddUrls || '');
       setParsedItems([]);
       setSelectedItemIndex(null);
+      setPendingUseSharedDestination(false);
       setSelectedQueueId(queues.find(q => q.isMain)?.id || MAIN_QUEUE_ID);
       setUseAuth(false);
       setUsername('');
@@ -439,12 +443,12 @@ export const AddDownloadsModal = () => {
         if (active) setParsedItems([...updatedItems]);
       }
 
-      if (active && firstReadyIndex !== null) {
-        setSelectedItemIndex(firstReadyIndex);
-        const firstFile = updatedItems[firstReadyIndex].file;
-        if (firstFile) {
-          const category = categoryForFileName(firstFile);
-          const settingsStore = useSettingsStore.getState();
+    if (active && firstReadyIndex !== null && !isSaveLocationManual) {
+      setSelectedItemIndex(firstReadyIndex);
+      const firstFile = updatedItems[firstReadyIndex].file;
+      if (firstFile) {
+        const category = categoryForFileName(firstFile);
+        const settingsStore = useSettingsStore.getState();
           const categoryDir = (settingsStore.downloadDirectories && settingsStore.downloadDirectories[category]) || settingsStore.defaultDownloadPath || '~/Downloads';
           setSaveLocation(categoryDir);
         }
@@ -455,7 +459,7 @@ export const AddDownloadsModal = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [urls, pendingAddFilename]);
+  }, [urls, pendingAddFilename, isSaveLocationManual]);
 
   if (!isAddModalOpen) return null;
 
@@ -466,16 +470,26 @@ export const AddDownloadsModal = () => {
         multiple: false,
         defaultPath: saveLocation.startsWith('~') ? undefined : saveLocation
       });
-      if (selected && typeof selected === 'string') {
-        setSaveLocation(selected);
-      }
+    if (selected && typeof selected === 'string') {
+      setSaveLocation(selected);
+      setIsSaveLocationManual(true);
+    }
     } catch (e) {
       console.error("Failed to select folder:", e);
     }
   };
 
+  const categoryLocationForFile = (fileName: string) => {
+    const category = categoryForFileName(fileName);
+    const settingsStore = useSettingsStore.getState();
+    return (settingsStore.downloadDirectories && settingsStore.downloadDirectories[category]) ||
+      settingsStore.defaultDownloadPath ||
+      '~/Downloads';
+  };
+
   const handleStart = async (startImmediately: boolean) => {
     let finalLocation = saveLocation;
+    let useSharedDestination = isSaveLocationManual;
     const settings = useSettingsStore.getState();
     if (settings.askWhereToSaveEachFile && parsedItems.length > 0) {
       try {
@@ -486,6 +500,8 @@ export const AddDownloadsModal = () => {
         });
         if (selected && typeof selected === 'string') {
           finalLocation = selected;
+          useSharedDestination = true;
+          setIsSaveLocationManual(true);
         } else {
           return; // Cancelled
         }
@@ -502,25 +518,26 @@ export const AddDownloadsModal = () => {
       const item = parsedItems[i];
       let finalFile = item.file;
       if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-         const selectedFormat = item.formats[item.selectedFormat];
-         const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-         finalFile = `${baseName}.${selectedFormat.ext}`;
+        const selectedFormat = item.formats[item.selectedFormat];
+        const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
+        finalFile = `${baseName}.${selectedFormat.ext}`;
       }
+      const itemLocation = useSharedDestination ? finalLocation : categoryLocationForFile(finalFile);
 
       const isUrlDupe = store.downloads.some(d => d.url === item.url && d.status !== 'failed' && d.status !== 'completed');
       if (isUrlDupe) {
-          newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'url', msg: 'URL already in queue' }, resolution: 'rename' });
+        newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'url', msg: 'URL already in queue' }, resolution: 'rename' });
       } else {
-         const fileExistsInStore = store.downloads.some(d => {
-             const dest = d.destination || settings.defaultDownloadPath || '~/Downloads';
-             return dest === finalLocation && d.fileName === finalFile && d.status !== 'failed';
-         });
-         
-         let fileExistsOnDisk = false;
-         try {
-             const cleanLocation = finalLocation.endsWith('/') ? finalLocation.slice(0, -1) : finalLocation;
-             fileExistsOnDisk = await invoke('check_file_exists', { path: `${cleanLocation}/${finalFile}` });
-         } catch (e) {}
+        const fileExistsInStore = store.downloads.some(d => {
+          const dest = d.destination || settings.defaultDownloadPath || '~/Downloads';
+          return dest === itemLocation && d.fileName === finalFile && d.status !== 'failed';
+        });
+
+        let fileExistsOnDisk = false;
+        try {
+          const cleanLocation = itemLocation.endsWith('/') ? itemLocation.slice(0, -1) : itemLocation;
+          fileExistsOnDisk = await invoke('check_file_exists', { path: `${cleanLocation}/${finalFile}` });
+        } catch (e) {}
 
          if (fileExistsInStore || fileExistsOnDisk) {
              newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'file', msg: 'File exists at destination' }, resolution: 'rename' });
@@ -529,16 +546,17 @@ export const AddDownloadsModal = () => {
     }
 
     if (newConflicts.length > 0) {
-       setConflicts(newConflicts);
-       setPendingStartFlag(startImmediately);
-       setShowingDuplicates(true);
-       return;
+      setConflicts(newConflicts);
+      setPendingStartFlag(startImmediately);
+      setPendingUseSharedDestination(useSharedDestination);
+      setShowingDuplicates(true);
+      return;
     }
 
-    await executeAddDownloads(startImmediately, finalLocation);
+    await executeAddDownloads(startImmediately, finalLocation, useSharedDestination);
   };
 
-  const executeAddDownloads = async (startImmediately: boolean, finalLocation: string, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
+  const executeAddDownloads = async (startImmediately: boolean, finalLocation: string, useSharedDestination: boolean, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
       let itemsToAdd: Array<ParsedDownloadItem | null> = [...parsedItems];
 
       if (resolutions) {
@@ -551,12 +569,13 @@ export const AddDownloadsModal = () => {
                  itemsToAdd[idx] = null;
              } else if (res.resolution === 'rename') {
                  let finalFile = item.file;
-                 if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-                    const selectedFormat = item.formats[item.selectedFormat];
-                    const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-                    finalFile = `${baseName}.${selectedFormat.ext}`;
-                 }
-                 const cleanLocation = finalLocation.endsWith('/') ? finalLocation.slice(0, -1) : finalLocation;
+        if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
+          const selectedFormat = item.formats[item.selectedFormat];
+          const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
+          finalFile = `${baseName}.${selectedFormat.ext}`;
+        }
+        const itemLocation = useSharedDestination ? finalLocation : categoryLocationForFile(finalFile);
+        const cleanLocation = itemLocation.endsWith('/') ? itemLocation.slice(0, -1) : itemLocation;
                  
                  let count = 1;
                  const base = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -565,11 +584,11 @@ export const AddDownloadsModal = () => {
                  let exists = true;
                  
                  while (exists && count < 1000) {
-                     newName = `${base} (${count})${ext}`;
-                     const storeHas = useDownloadStore.getState().downloads.some(d => {
-                         const dest = d.destination || useSettingsStore.getState().defaultDownloadPath || '~/Downloads';
-                         return dest === finalLocation && d.fileName === newName && d.status !== 'failed';
-                     });
+          newName = `${base} (${count})${ext}`;
+          const storeHas = useDownloadStore.getState().downloads.some(d => {
+            const dest = d.destination || useSettingsStore.getState().defaultDownloadPath || '~/Downloads';
+            return dest === itemLocation && d.fileName === newName && d.status !== 'failed';
+          });
                      let diskHas = false;
                      try { diskHas = await invoke('check_file_exists', { path: `${cleanLocation}/${newName}` }); } catch(e) {}
                      exists = storeHas || diskHas;
@@ -579,19 +598,20 @@ export const AddDownloadsModal = () => {
                  itemsToAdd[idx] = { ...item, file: newName };
              } else if (res.resolution === 'replace') {
                  let finalFile = item.file;
-                 if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-                    const selectedFormat = item.formats[item.selectedFormat];
-                    const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-                    finalFile = `${baseName}.${selectedFormat.ext}`;
-                 }
-                 const cleanLocation = finalLocation.endsWith('/') ? finalLocation.slice(0, -1) : finalLocation;
-                 const fullPath = `${cleanLocation}/${finalFile}`;
+        if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
+          const selectedFormat = item.formats[item.selectedFormat];
+          const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
+          finalFile = `${baseName}.${selectedFormat.ext}`;
+        }
+        const itemLocation = useSharedDestination ? finalLocation : categoryLocationForFile(finalFile);
+        const cleanLocation = itemLocation.endsWith('/') ? itemLocation.slice(0, -1) : itemLocation;
+        const fullPath = `${cleanLocation}/${finalFile}`;
 
-                 const store = useDownloadStore.getState();
-                 const existingItem = store.downloads.find(d => {
-                     const dest = d.destination || useSettingsStore.getState().defaultDownloadPath || '~/Downloads';
-                     return (d.url === item.url || (dest === finalLocation && d.fileName === finalFile)) && d.status !== 'failed';
-                 });
+        const store = useDownloadStore.getState();
+        const existingItem = store.downloads.find(d => {
+          const dest = d.destination || useSettingsStore.getState().defaultDownloadPath || '~/Downloads';
+          return (d.url === item.url || (dest === itemLocation && d.fileName === finalFile)) && d.status !== 'failed';
+        });
 
                  if (existingItem) {
                      await store.removeDownload(existingItem.id);
@@ -617,14 +637,15 @@ export const AddDownloadsModal = () => {
                 const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
                 finalFile = `${baseName}.${selectedFormat.ext}`;
             }
-          }
+        }
 
-          addDownload({
-            id,
-            url: item.url,
-            fileName: finalFile,
-            status: startImmediately ? 'queued' : 'paused',
-            category: categoryForFileName(finalFile),
+        const category = categoryForFileName(finalFile);
+        addDownload({
+          id,
+          url: item.url,
+          fileName: finalFile,
+          status: startImmediately ? 'queued' : 'paused',
+          category,
             dateAdded: new Date().toISOString(),
             connections: Number(connections),
             speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
@@ -636,7 +657,7 @@ export const AddDownloadsModal = () => {
               : undefined,
             cookies: cookies.trim() || undefined,
             mirrors: mirrors.trim() || undefined,
-            destination: finalLocation,
+          destination: useSharedDestination ? finalLocation : undefined,
             isMedia: item.isMedia,
             mediaFormatSelector: formatSelector,
             queueId: selectedQueueId,
@@ -678,7 +699,7 @@ export const AddDownloadsModal = () => {
           conflicts={conflicts} 
           onConfirm={(resolutions) => {
             setShowingDuplicates(false);
-            executeAddDownloads(pendingStartFlag, resolvedLocation, resolutions);
+            executeAddDownloads(pendingStartFlag, resolvedLocation, pendingUseSharedDestination, resolutions);
           }} 
           onCancel={() => setShowingDuplicates(false)} 
         />

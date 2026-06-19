@@ -77,7 +77,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const getDownloadPath = async (item: DownloadItem) => {
     const fileName = item.fileName?.trim();
     if (!fileName) return null;
-    return resolvePath(item.destination || '~/Downloads', fileName);
+    const settings = useSettingsStore.getState();
+    const destination = item.destination ||
+      (settings.downloadDirectories && settings.downloadDirectories[item.category]) ||
+      settings.defaultDownloadPath ||
+      '~/Downloads';
+    return resolvePath(destination, fileName);
   };
 
   const openProperties = (id: string) => {
@@ -85,6 +90,11 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const openDownloadFile = async (item: DownloadItem) => {
+    if (item.status !== 'completed') {
+      openProperties(item.id);
+      return;
+    }
+
     const fullPath = await getDownloadPath(item);
     if (!fullPath) {
       openProperties(item.id);
@@ -100,6 +110,11 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const revealDownloadFile = async (item: DownloadItem) => {
+    if (item.status !== 'completed') {
+      openProperties(item.id);
+      return;
+    }
+
     const fullPath = await getDownloadPath(item);
     if (!fullPath) {
       openProperties(item.id);

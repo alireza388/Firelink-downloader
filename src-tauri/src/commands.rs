@@ -94,6 +94,7 @@ fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, S
     let store = app_handle
         .store("store.bin")
         .map_err(|e| format!("Failed to load download ownership data: {e}"))?;
+    let settings = crate::settings::load_settings(app_handle).ok();
     let downloads = store
         .get("download_queue")
         .map(|value| serde_json::from_value::<Vec<crate::ipc::DownloadItem>>(value.clone()))
@@ -104,8 +105,20 @@ fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, S
     Ok(downloads
         .into_iter()
         .filter_map(|download| {
+            let category = format!("{:?}", download.category);
             let destination = download
                 .destination
+                .filter(|destination| !destination.trim().is_empty())
+                .or_else(|| {
+                    settings
+                        .as_ref()
+                        .and_then(|settings| settings.download_directories.get(&category).cloned())
+                })
+                .or_else(|| {
+                    settings
+                        .as_ref()
+                        .map(|settings| settings.default_download_path.clone())
+                })
                 .unwrap_or_else(|| "~/Downloads".to_string());
             let filename = Path::new(&download.file_name.replace('\\', "/"))
                 .file_name()?
@@ -223,20 +236,24 @@ mod tests {
         assert!(
             authorize_exact_path(Path::new("owned.bin"), std::slice::from_ref(&owned)).is_err()
         );
-        assert!(authorize_exact_path(
-            &root.path().join("sub/../owned.bin"),
-            std::slice::from_ref(&owned)
-        )
-        .is_err());
+        assert!(
+            authorize_exact_path(
+                &root.path().join("sub/../owned.bin"),
+                std::slice::from_ref(&owned)
+            )
+            .is_err()
+        );
         assert!(
             authorize_exact_path(Path::new("/etc/hosts"), std::slice::from_ref(&owned)).is_err()
         );
         if let Some(home) = std::env::var_os("HOME") {
-            assert!(authorize_exact_path(
-                &PathBuf::from(home).join(".ssh"),
-                std::slice::from_ref(&owned)
-            )
-            .is_err());
+            assert!(
+                authorize_exact_path(
+                    &PathBuf::from(home).join(".ssh"),
+                    std::slice::from_ref(&owned)
+                )
+                .is_err()
+            );
         }
     }
 

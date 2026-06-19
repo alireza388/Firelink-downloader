@@ -962,10 +962,9 @@
   white-space: nowrap;
 }
 
-  .download-table-header > div:not(:first-child) {
-    border-left: 1px solid hsl(var(--border-color));
-    padding-left: 12px;
-  }
+.download-table-header > div:not(:first-child) {
+  padding-left: 0;
+}
 
   .column-resize-handle {
     position: absolute;
@@ -990,9 +989,9 @@
   height: 32px;
   display: grid;
   align-items: center;
-  width: auto;
+  width: 100%;
   padding: 0 16px;
-  margin: 2px 12px;
+  margin: 2px 0;
   border-radius: 6px;
   color: hsl(var(--text-primary));
   font-size: 12px;
@@ -1069,12 +1068,12 @@
     font-weight: 500;
   }
 
-  .download-ghost-row {
-    height: 32px;
-    margin: 2px 12px;
-    border-radius: 6px;
-    flex-shrink: 0;
-  }
+.download-ghost-row {
+  height: 32px;
+  margin: 2px 0;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
 
   .download-ghost-row.striped,
   .download-row.striped {
@@ -1085,7 +1084,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-right: 12px;
   min-width: 0;
   overflow: hidden;
 }
@@ -1093,16 +1091,18 @@
 .download-status-cell > span {
   min-width: 0;
   max-width: 100%;
-  flex: 0 1 auto;
+  flex: 0 0 72px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
 .download-progress-track {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   height: 14px;
   border-radius: 4px;
@@ -1134,9 +1134,13 @@
     animation: pulse-progress 1.5s ease-in-out infinite;
   }
 
-  .download-status {
-    font-weight: 500;
-  }
+.download-status {
+  font-weight: 500;
+}
+
+.download-status .truncate {
+  min-width: 0;
+}
 
   .download-status-paused {
     color: hsl(var(--status-paused));

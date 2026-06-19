@@ -7,15 +7,16 @@ import { open } from '@tauri-apps/plugin-dialog';
 type LoginMode = 'matching' | 'custom' | 'none';
 
 export const PropertiesModal = () => {
-  const { 
-    selectedPropertiesDownloadId, 
-    setSelectedPropertiesDownloadId, 
-    updateDownload 
-  } = useDownloadStore();
+  const selectedPropertiesDownloadId = useDownloadStore(state => state.selectedPropertiesDownloadId);
+  const setSelectedPropertiesDownloadId = useDownloadStore(state => state.setSelectedPropertiesDownloadId);
+  const updateDownload = useDownloadStore(state => state.updateDownload);
+  const item = useDownloadStore(state =>
+    selectedPropertiesDownloadId
+      ? state.downloads.find(d => d.id === selectedPropertiesDownloadId) ?? null
+      : null
+  );
 
-  const { defaultDownloadPath } = useSettingsStore();
-
-  const [item, setItem] = useState<DownloadItem | null>(null);
+  const { defaultDownloadPath, perServerConnections } = useSettingsStore();
 
   // Form states
   const [url, setUrl] = useState('');
@@ -44,7 +45,6 @@ export const PropertiesModal = () => {
     if (selectedPropertiesDownloadId) {
       const activeItem = useDownloadStore.getState().downloads.find(d => d.id === selectedPropertiesDownloadId);
       if (activeItem) {
-        setItem(activeItem);
         setUrl(activeItem.url);
         setFileName(activeItem.fileName);
         setSaveLocation(activeItem.destination || defaultDownloadPath || '~/Downloads');
@@ -83,12 +83,10 @@ export const PropertiesModal = () => {
         setMirrors(activeItem.mirrors || '');
         setErrorMessage('');
       } else {
-        setItem(null);
+        setSelectedPropertiesDownloadId(null);
       }
-    } else {
-      setItem(null);
     }
-  }, [selectedPropertiesDownloadId, defaultDownloadPath]);
+  }, [selectedPropertiesDownloadId, defaultDownloadPath, setSelectedPropertiesDownloadId]);
 
   if (!selectedPropertiesDownloadId || !item) return null;
 
@@ -165,15 +163,15 @@ export const PropertiesModal = () => {
             <div className={`h-1.5 rounded-full transition-all duration-300 ${item.status === 'completed' ? 'bg-green-500' : item.status === 'paused' ? 'bg-orange-500' : item.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${(item.status === 'completed' ? 1 : item.fraction || 0) * 100}%` }}></div>
           </div>
           
-          <div className="grid grid-cols-4 gap-y-2 gap-x-4 text-[11px] leading-tight">
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[90px]">Progress</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '100%' : ((item.fraction || 0) * 100).toFixed(0) + '%'}</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[40px]">Size</span><span className="text-text-secondary truncate">-</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[40px]">Speed</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.speed || '-'}</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[30px]">ETA</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.eta || '-'}</span></div>
-            
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[90px]">Live connections</span><span className="text-text-secondary truncate">-</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[60px]">Speed cap</span><span className="text-text-secondary truncate">{item.speedLimit || '-'}</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[55px]">Category</span><span className="text-text-secondary truncate">{item.category}</span></div>
+            <div className="grid grid-cols-4 gap-y-2 gap-x-4 text-[11px] leading-tight">
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Progress</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '100%' : ((item.fraction || 0) * 100).toFixed(0) + '%'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Size</span><span className="text-text-secondary truncate">{item.size || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.speed || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[30px] shrink-0">ETA</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.eta || '-'}</span></div>
+
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Connections</span><span className="text-text-secondary truncate">{item.connections || perServerConnections || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[60px] shrink-0">Speed cap</span><span className="text-text-secondary truncate">{item.speedLimit || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[55px] shrink-0">Category</span><span className="text-text-secondary truncate">{item.category}</span></div>
             <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[50px]">Last try</span><span className="text-text-secondary truncate">-</span></div>
             
             <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[90px]">Date added</span><span className="text-text-secondary truncate">{new Date(item.dateAdded).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span></div>

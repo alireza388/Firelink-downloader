@@ -34,8 +34,13 @@ export async function initDownloadListener() {
 
     const mainStore = useDownloadStore.getState();
     const current = mainStore.downloads.find(d => d.id === payload.id);
-    if (current && payload.size && current.size !== payload.size) {
-      mainStore.updateDownload(payload.id, { size: payload.size });
+    if (current) {
+      mainStore.updateDownload(payload.id, {
+        fraction: payload.fraction,
+        speed: payload.speed,
+        eta: payload.eta,
+        ...(payload.size ? { size: payload.size } : {}),
+      });
     }
   });
 

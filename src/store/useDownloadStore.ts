@@ -309,71 +309,105 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     syncSystemIntegrations();
   },
   redownload: async (id) => {
-    let wasDownloading = false;
-    let targetItem: DownloadItem | undefined;
-    set((state) => {
-      targetItem = state.downloads.find(d => d.id === id);
-      if (targetItem && targetItem.status === 'downloading') {
-        wasDownloading = true;
-      }
-      return {
-        downloads: state.downloads.map(d => {
-          if (d.id === id) {
-            return { ...d, status: 'queued', fraction: 0, speed: '-', eta: '-' };
-          }
-          return d;
-        })
-      };
-    });
-    
-    if (wasDownloading) {
-      await invoke('pause_download', { id }).catch(console.error);
+    const targetItem = get().downloads.find(d => d.id === id);
+    if (!targetItem) {
+      throw new Error('Cannot redownload: download was not found.');
     }
-    
-    if (targetItem) {
+
+    if (!['completed', 'failed', 'paused'].includes(targetItem.status)) {
+      throw new Error(`Cannot redownload a ${targetItem.status} download. Pause or wait for it to finish first.`);
+    }
+
+    const url = targetItem.url?.trim();
+    if (!url) {
+      throw new Error('Cannot redownload: original URL is missing.');
+    }
+
+    const filename = targetItem.fileName?.trim();
+    if (!filename) {
+      throw new Error('Cannot redownload: original filename is missing.');
+    }
+
+    const mediaFormatSelector = targetItem.mediaFormatSelector?.trim();
+    if (targetItem.isMedia && !mediaFormatSelector) {
+      throw new Error('Cannot redownload: selected media format is missing.');
+    }
+
+    const settings = useSettingsStore.getState();
+    const destPath = targetItem.destination ||
+      (settings.downloadDirectories && settings.downloadDirectories[targetItem.category]) ||
+      settings.defaultDownloadPath ||
+      '~/Downloads';
+
+    if (!destPath.trim()) {
+      throw new Error('Cannot redownload: destination folder is missing.');
+    }
+
+    const login = getSiteLogin(url, settings);
+    let keychainPassword: string | null = null;
+    if (login) {
       try {
-        const settings = useSettingsStore.getState();
-        const login = getSiteLogin(targetItem.url, settings);
-        let keychainPassword = null;
-        if (login) {
-          try {
-            keychainPassword = await invoke('get_keychain_password', { id: login.id });
-          } catch (e) {
-            console.warn("Could not fetch keychain password for login:", e);
-          }
-        }
-        const destPath = targetItem.destination || 
-                         (settings.downloadDirectories && settings.downloadDirectories[targetItem.category]) || 
-                         settings.defaultDownloadPath || 
-                         '~/Downloads';
-        const enqueueItem = {
-          id: targetItem.id,
-          url: targetItem.url,
-          destination: destPath,
-          filename: targetItem.fileName,
-          connections: targetItem.connections || settings.perServerConnections || null,
-          speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
-          username: targetItem.username || (login ? login.username : null),
-          password: targetItem.password || keychainPassword,
-          headers: targetItem.headers || null,
-          checksum: targetItem.checksum || null,
-          cookies: targetItem.cookies || null,
-          mirrors: targetItem.mirrors || null,
-          user_agent: settings.customUserAgent || null,
-          max_tries: settings.maxAutomaticRetries,
-          proxy: await getProxyArgs(settings),
-          format_selector: targetItem.mediaFormatSelector || null,
-          cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
-          is_media: targetItem.isMedia || false
-        };
-        await invoke('enqueue_download', { item: enqueueItem });
-        const order = await invoke('get_pending_order');
-        set({ pendingOrder: order });
+        keychainPassword = await invoke('get_keychain_password', { id: login.id });
       } catch (e) {
-        console.error("Failed to enqueue redownload:", e);
+        console.warn("Could not fetch keychain password for login:", e);
       }
     }
-    info(`Download ${id} redownload requested (queued)`);
+
+    const redownloadItem: DownloadItem = {
+      id: crypto.randomUUID(),
+      url,
+      fileName: filename,
+      status: 'queued',
+      category: targetItem.category,
+      dateAdded: new Date().toISOString(),
+      connections: targetItem.connections,
+      speedLimit: targetItem.speedLimit,
+      username: targetItem.username,
+      password: targetItem.password,
+      headers: targetItem.headers,
+      checksum: targetItem.checksum,
+      cookies: targetItem.cookies,
+      mirrors: targetItem.mirrors,
+      destination: destPath,
+      isMedia: targetItem.isMedia,
+      mediaFormatSelector,
+      queueId: targetItem.queueId
+    };
+
+    set((state) => ({
+      downloads: [...state.downloads, redownloadItem]
+    }));
+
+    try {
+      const enqueueItem = {
+        id: redownloadItem.id,
+        url,
+        destination: destPath,
+        filename,
+        connections: targetItem.connections || settings.perServerConnections || null,
+        speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
+        username: targetItem.username || (login ? login.username : null),
+        password: targetItem.password || keychainPassword,
+        headers: targetItem.headers || null,
+        checksum: targetItem.checksum || null,
+        cookies: targetItem.cookies || null,
+        mirrors: targetItem.mirrors || null,
+        user_agent: settings.customUserAgent || null,
+        max_tries: settings.maxAutomaticRetries,
+        proxy: await getProxyArgs(settings),
+        format_selector: mediaFormatSelector || null,
+        cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+        is_media: targetItem.isMedia || false
+      };
+      await invoke('enqueue_download', { item: enqueueItem });
+      const order = await invoke('get_pending_order');
+      set({ pendingOrder: order });
+      info(`Download ${id} redownload requested as ${redownloadItem.id} (queued)`);
+    } catch (e) {
+      console.error("Failed to enqueue redownload:", e);
+      get().updateDownload(redownloadItem.id, { status: 'failed' });
+      throw e instanceof Error ? e : new Error(String(e));
+    }
   },
   resumeDownload: async (id) => {
     const targetItem = get().downloads.find(d => d.id === id);

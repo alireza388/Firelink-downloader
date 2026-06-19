@@ -372,11 +372,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </button>
           )}
 
-          {['completed', 'failed', 'paused', 'retrying'].includes(contextItem.status) && (
+          {['completed', 'failed', 'paused'].includes(contextItem.status) && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 setContextMenu(null);
-                redownload(contextItem.id);
+                try {
+                  await redownload(contextItem.id);
+                } catch (error) {
+                  showInteractionError('Redownload failed', error);
+                }
               }}
               className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
             >

@@ -788,18 +788,11 @@ async fn fetch_media_metadata(
     username: Option<String>,
     password: Option<String>,
 ) -> Result<MediaMetadata, String> {
-    let total_started = Instant::now();
     let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password);
-    println!("media_metadata[{cache_key:x}] start url={url}");
 
     let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
     if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
         if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
-            println!(
-                "media_metadata[{cache_key:x}] cache_hit age_ms={} total_ms={}",
-                cached_at.elapsed().as_millis(),
-                total_started.elapsed().as_millis()
-            );
             return Ok(metadata);
         }
     }
@@ -813,17 +806,10 @@ async fn fetch_media_metadata(
             .clone()
     };
 
-    let wait_started = Instant::now();
     let _request_guard = request_lock.lock().await;
-    let wait_ms = wait_started.elapsed().as_millis();
 
     if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
         if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
-            println!(
-                "media_metadata[{cache_key:x}] dedup_cache_hit wait_ms={wait_ms} age_ms={} total_ms={}",
-                cached_at.elapsed().as_millis(),
-                total_started.elapsed().as_millis()
-            );
             return Ok(metadata);
         }
     }
@@ -841,23 +827,15 @@ async fn fetch_media_metadata(
         return Err("yt-dlp returned no usable media formats for this URL".to_string());
     }
 
-    let format_count = metadata.formats.len();
     cache
         .lock()
         .await
         .insert(cache_key, (Instant::now(), metadata.clone()));
-    println!(
-        "media_metadata[{cache_key:x}] stored formats={format_count} total_ms={}",
-        total_started.elapsed().as_millis()
-    );
 
     Ok(metadata)
 }
 
 async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
-    let setup_started = Instant::now();
-    println!("fetch_media_metadata_uncached called for: {}", url);
-
     // Resolve bundled deno and ffmpeg binaries and create a temporary PATH for yt-dlp
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
@@ -873,13 +851,7 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
     let path_env = format!("{}:{}", bin_dir_str, original_path);
 
     use tauri_plugin_shell::ShellExt;
-    let (ytdlp_path, ytdlp_source) = resolve_metadata_ytdlp_path(&app_handle)?;
-    println!(
-        "fetch_media_metadata setup_ms={} ytdlp_source={} ytdlp_path={}",
-        setup_started.elapsed().as_millis(),
-        ytdlp_source,
-        ytdlp_path.display()
-    );
+    let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
     let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
     cmd = cmd.env("PATH", &path_env)
         .arg("--no-warnings")
@@ -918,7 +890,6 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
 
     cmd = cmd.arg("--").arg(&url);
 
-    let command_started = Instant::now();
     let output = tokio::time::timeout(MEDIA_METADATA_TIMEOUT, cmd.output())
         .await
         .map_err(|_| {
@@ -928,16 +899,7 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
             )
         })?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
-    println!(
-        "fetch_media_metadata ytdlp_ms={} status_success={} stdout_bytes={} stderr_bytes={}",
-        command_started.elapsed().as_millis(),
-        output.status.success(),
-        output.stdout.len(),
-        output.stderr.len()
-    );
-
     if output.status.success() {
-        let parse_started = Instant::now();
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
         
         let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown Title").to_string();
@@ -949,12 +911,6 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
             .and_then(|v| v.as_array())
             .map(|formats_arr| build_media_format_options(formats_arr))
             .unwrap_or_default();
-
-        println!(
-            "fetch_media_metadata parse_ms={} formats={}",
-            parse_started.elapsed().as_millis(),
-            formats.len()
-        );
 
         Ok(MediaMetadata { title, duration, thumbnail, formats })
     } else {
@@ -969,7 +925,6 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
 
 #[tauri::command]
 async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
-    println!("test_ytdlp called!");
     let (version, error, _) = run_sidecar_version(&app_handle, "yt-dlp", &["--version"]).await;
     match (version, error) {
         (Some(version), None) => Ok(version),
@@ -980,7 +935,6 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
-    println!("test_ffmpeg called!");
     use tauri_plugin_shell::ShellExt;
 
     let binary_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
@@ -988,12 +942,8 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
         .arg("-version")
         .output()
         .await
-        .map_err(|e| {
-            println!("Failed to execute: {}", e);
-            format!("Failed to execute ffmpeg: {}", e)
-        })?;
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
 
-    println!("ffmpeg execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let first_line = text.lines().next().unwrap_or("");
@@ -1005,18 +955,15 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
                 let parts: Vec<&str> = first_line.split_whitespace().collect();
                 parts.get(2).unwrap_or(&first_line).split('-').next().unwrap_or("").to_string()
             });
-        println!("ffmpeg output: {}", clean);
         Ok(clean)
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
-        println!("ffmpeg error output: {}", err);
         Err(format!("ffmpeg error: {}", err))
     }
 }
 
 #[tauri::command]
 async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
-    println!("test_deno called!");
     use tauri_plugin_shell::ShellExt;
 
     let binary_path = resolve_bundled_binary_path(&app_handle, "deno")?;
@@ -1024,21 +971,15 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
         .arg("--version")
         .output()
         .await
-        .map_err(|e| {
-            println!("Failed to execute: {}", e);
-            format!("Failed to execute deno: {}", e)
-        })?;
+        .map_err(|e| format!("Failed to execute deno: {}", e))?;
 
-    println!("deno execution finished with status: {:?}", output.status);
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").unwrap();
         let clean = re.captures(&text).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or(&text).to_string();
-        println!("deno output: {}", clean);
         Ok(clean)
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
-        println!("deno error output: {}", err);
         Err(format!("deno error: {}", err))
     }
 }
@@ -1075,7 +1016,6 @@ pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle
 
 #[tauri::command]
 async fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    println!("open_file called for path: {}", path);
     use tauri_plugin_opener::OpenerExt;
     
     let resolved_dest = resolve_path(&path, &app);
@@ -1089,7 +1029,6 @@ async fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    println!("show_in_folder called for path: {}", path);
     use tauri_plugin_opener::OpenerExt;
     
     let resolved_dest = resolve_path(&path, &app);
@@ -1795,6 +1734,21 @@ fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str)
         }
     }
 
+    // Packaged macOS fallback: resolve directly from Contents/MacOS to
+    // Contents/Resources when Tauri's resource_dir is unavailable.
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(contents_dir) = exe_path.parent().and_then(std::path::Path::parent) {
+            let candidate = contents_dir
+                .join("Resources")
+                .join("binaries")
+                .join(&full_name);
+            if candidate.is_file() {
+                log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
+                return Ok(candidate);
+            }
+        }
+    }
+
     // Dev mode: search relative to CWD
     if let Ok(cwd) = std::env::current_dir() {
         let search_dirs = [
@@ -1848,7 +1802,6 @@ pub(crate) async fn start_media_download_internal(
     max_tries: Option<i32>,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
-    println!("start_media_download called for id: {}", id);
     let safe_filename = std::path::Path::new(&filename.replace('\\', "/"))
         .file_name()
         .and_then(|n| n.to_str())

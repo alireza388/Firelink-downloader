@@ -91,7 +91,7 @@ pub async fn start_server(
 
     let (port, listener) = bind_extension_listener().await?;
 
-    println!("Browser extension server bound to 127.0.0.1:{port}");
+    log::info!("Browser extension server bound to 127.0.0.1:{port}");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {

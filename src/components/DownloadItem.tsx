@@ -178,7 +178,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           {download.status === 'queued' && queueIndex !== -1 && (
             <>
               <button 
-                onClick={() => moveInQueue(download.id, 'Up')} 
+                onClick={() => moveInQueue(download.id, 'up')}
                 disabled={queueIndex === 0}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Up"
@@ -186,7 +186,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 <ArrowUp size={14} />
               </button>
               <button 
-                onClick={() => moveInQueue(download.id, 'Down')} 
+                onClick={() => moveInQueue(download.id, 'down')}
                 disabled={queueIndex === pendingOrder.length - 1}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Down"

@@ -1,4 +1,4 @@
-import { initMediaDomains, isActiveDownloadStatus } from './utils/downloads';
+import { initMediaDomains, isActiveDownloadStatus, normalizeSpeedLimitForBackend } from './utils/downloads';
 import { useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
@@ -102,19 +102,7 @@ function App() {
     if (previousSpeedLimit.current === globalSpeedLimit) return;
     previousSpeedLimit.current = globalSpeedLimit;
     
-    // Convert to aria2 format (e.g. "1M", "500K")
-    let formattedLimit = null;
-    if (globalSpeedLimit) {
-      const match = globalSpeedLimit.trim().match(/^(\d+(?:\.\d+)?)\s*([kmgt]?)b?(?:\/s)?$/i);
-      if (match) {
-        const amount = Number(match[1]);
-        if (Number.isFinite(amount) && amount > 0) {
-           const multipliers: Record<string, number> = { '': 1, k: 1024, m: 1048576, g: 1073741824, t: 1099511627776 };
-           const bytes = Math.round(amount * multipliers[match[2].toLowerCase()]);
-           formattedLimit = `${bytes}`;
-        }
-      }
-    }
+    const formattedLimit = normalizeSpeedLimitForBackend(globalSpeedLimit);
 
     invoke('set_global_speed_limit', { limit: formattedLimit }).catch(error => {
       console.error('Failed to apply global speed limit:', error);

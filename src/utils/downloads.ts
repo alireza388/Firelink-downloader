@@ -31,6 +31,20 @@ const ACTIVE_DOWNLOAD_STATUSES: ReadonlySet<DownloadStatus> = new Set([
 export const isActiveDownloadStatus = (status: DownloadStatus): boolean =>
   ACTIVE_DOWNLOAD_STATUSES.has(status);
 
+export const normalizeSpeedLimitForBackend = (value?: string | null): string | null => {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?(?:\/s)?$/i);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const unit = match[2].toUpperCase();
+  return unit ? `${amount}${unit}` : `${amount}K`;
+};
+
 export const initMediaDomains = async () => {
   try {
     const domains = await invoke<string[]>('get_supported_media_domains');

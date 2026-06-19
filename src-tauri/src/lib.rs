@@ -2604,9 +2604,33 @@ async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -
     Ok(())
 }
 
+fn normalize_speed_limit_for_aria2(limit: &str) -> Option<String> {
+    let trimmed = limit.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let re = regex::Regex::new(r"(?i)^(\d+(?:\.\d+)?)\s*([kmgt]?)i?b?(?:/s)?$").ok()?;
+    let captures = re.captures(trimmed)?;
+    let amount = captures.get(1)?.as_str().parse::<f64>().ok()?;
+    if !amount.is_finite() || amount <= 0.0 {
+        return None;
+    }
+
+    let unit = captures.get(2).map(|m| m.as_str().to_ascii_uppercase()).unwrap_or_default();
+    Some(if unit.is_empty() {
+        format!("{amount}K")
+    } else {
+        format!("{amount}{unit}")
+    })
+}
+
 #[tauri::command]
 async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option<String>) -> Result<(), String> {
-    let limit_str = limit.unwrap_or_else(|| "0".to_string());
+    let limit_str = limit
+        .as_deref()
+        .and_then(normalize_speed_limit_for_aria2)
+        .unwrap_or_else(|| "0".to_string());
     rpc_call(
         state.aria2_port,
         &state.aria2_secret,
@@ -2850,11 +2874,20 @@ fn set_extension_frontend_ready(
 mod tests {
     use super::{
         build_media_format_options, collect_download_uris, is_excluded_yt_dlp_format, json_lower,
-        media_progress_speed, parse_firelink_urls, parse_media_progress_line, MediaProgress,
-        MEDIA_PROGRESS_PREFIX,
+        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_urls,
+        parse_media_progress_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn normalizes_bare_global_speed_limits_as_kib_per_second() {
+        assert_eq!(normalize_speed_limit_for_aria2("1024"), Some("1024K".to_string()));
+        assert_eq!(normalize_speed_limit_for_aria2("512K"), Some("512K".to_string()));
+        assert_eq!(normalize_speed_limit_for_aria2("1.5 MB/s"), Some("1.5M".to_string()));
+        assert_eq!(normalize_speed_limit_for_aria2("0"), None);
+        assert_eq!(normalize_speed_limit_for_aria2("bad"), None);
+    }
 
     #[test]
     fn collects_primary_url_and_unique_mirrors_in_order() {
@@ -3257,9 +3290,9 @@ pub fn run() {
                         .arg("--download-result=hide")
                         .arg("--check-certificate=true");
 
-                    if !global_speed_limit.is_empty() {
-                        cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
-                    }
+            if let Some(global_speed_limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {
+                cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
+            }
 
                     cmd.stdout(std::process::Stdio::null());
                     cmd.stderr(std::process::Stdio::piped());

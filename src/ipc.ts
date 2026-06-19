@@ -109,7 +109,7 @@ type CommandMap = {
   get_pending_order: { args: undefined; result: string[] };
   enqueue_download: { args: { item: any }; result: string };
   enqueue_many: { args: { items: any[] }; result: void };
-  move_in_queue: { args: { id: string; direction: 'Up' | 'Down' | 'Top' | 'Bottom' }; result: string[] };
+  move_in_queue: { args: { id: string; direction: 'up' | 'down' }; result: string[] };
   remove_from_queue: { args: { id: string }; result: boolean };
 };
 

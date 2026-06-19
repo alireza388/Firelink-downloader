@@ -390,13 +390,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
           <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
 
-          <button
-            onClick={() => {
-              setContextMenu(null);
-              navigator.clipboard.writeText(contextItem.url);
-            }}
-            className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-          >
+            <button
+              onClick={() => {
+                setContextMenu(null);
+                navigator.clipboard.writeText(contextItem.url).catch(error => {
+                  showInteractionError('Could not copy address', error);
+                });
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+            >
             Copy Address
           </button>
 
@@ -404,8 +406,16 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             <button
               onClick={async () => {
                 setContextMenu(null);
-                const fullPath = await resolvePath(contextItem.destination || '~/Downloads', contextItem.fileName);
-                navigator.clipboard.writeText(fullPath);
+                const fullPath = await getDownloadPath(contextItem);
+                if (!fullPath) {
+                  showInteractionError('Could not copy file path', 'File name is missing');
+                  return;
+                }
+                try {
+                  await navigator.clipboard.writeText(fullPath);
+                } catch (error) {
+                  showInteractionError('Could not copy file path', error);
+                }
               }}
               className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
             >

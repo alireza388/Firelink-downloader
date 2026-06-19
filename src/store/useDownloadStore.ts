@@ -11,7 +11,7 @@ import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
-import { isActiveDownloadStatus, redactDownloadForPersistence } from '../utils/downloads';
+import { isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 
 export type { DownloadCategory } from '../utils/downloads';
@@ -98,7 +98,7 @@ interface DownloadState {
   queues: Queue[];
   pendingOrder: string[];
   setPendingOrder: (order: string[]) => void;
-  moveInQueue: (id: string, direction: 'Up' | 'Down') => Promise<void>;
+  moveInQueue: (id: string, direction: 'up' | 'down') => Promise<void>;
   removeFromQueue: (id: string) => Promise<void>;
   isAddModalOpen: boolean;
   pendingAddUrls: string;
@@ -235,7 +235,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         destination: destPath,
         filename: item.fileName,
         connections: item.connections || settings.perServerConnections || null,
-        speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
+        speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
         username: item.username || (login ? login.username : null),
         password: item.password || keychainPassword,
         headers: item.headers || null,
@@ -283,24 +283,22 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   removeDownload: async (id, deleteFile = false) => {
     const item = get().downloads.find(d => d.id === id);
+
+    if (item && deleteFile) {
+      const filepath = await resolveDownloadPath(item.destination || '~/Downloads', item.fileName);
+      const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
+      await invoke('trash_download_assets', { path: filepath, partialPaths });
+    }
+
     if (item) {
       try {
         await invoke('remove_download', { id, filepath: null });
       } catch (e) {
         console.error("Failed to terminate download on deletion:", e);
-        return;
-      }
-    } 
-    
-    if (item && deleteFile) {
-      try {
-        const filepath = await resolveDownloadPath(item.destination || '~/Downloads', item.fileName);
-        const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
-        await invoke('trash_download_assets', { path: filepath, partialPaths });
-      } catch (e) {
-        console.error("Failed to trash file from disk:", e);
+        throw e;
       }
     }
+
     set((state) => ({
       downloads: state.downloads.filter(d => d.id !== id),
       pendingOrder: state.pendingOrder.filter(x => x !== id)
@@ -385,7 +383,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         destination: destPath,
         filename,
         connections: targetItem.connections || settings.perServerConnections || null,
-        speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
+        speed_limit: targetItem.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
         username: targetItem.username || (login ? login.username : null),
         password: targetItem.password || keychainPassword,
         headers: targetItem.headers || null,
@@ -448,7 +446,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         destination: destPath,
         filename: targetItem.fileName,
         connections: targetItem.connections || settings.perServerConnections || null,
-        speed_limit: targetItem.speedLimit || settings.globalSpeedLimit || null,
+        speed_limit: targetItem.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
         username: targetItem.username || (login ? login.username : null),
         password: targetItem.password || keychainPassword,
         headers: targetItem.headers || null,
@@ -512,7 +510,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           destination: destPath,
           filename: item.fileName,
           connections: item.connections || settings.perServerConnections || null,
-          speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
+          speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
           username: item.username || (login ? login.username : null),
           password: item.password || keychainPassword,
           headers: item.headers || null,
@@ -631,7 +629,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               destination: destPath,
               filename: item.fileName,
               connections: item.connections || settings.perServerConnections || null,
-              speed_limit: item.speedLimit || settings.globalSpeedLimit || null,
+            speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
               username: item.username || (login ? login.username : null),
               password: item.password || keychainPassword,
               headers: item.headers || null,

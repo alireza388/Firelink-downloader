@@ -190,7 +190,7 @@ export const PropertiesModal = () => {
               <span>
                 {item.status === 'completed' 
                   ? "File identity is read-only. Transfer settings are saved for redownload." 
-                  : "Only the speed limit applies to the current transfer. Other settings can be changed after stopping or pausing."}
+                  : "Transfer settings can be changed after stopping or pausing. Current transfers keep their existing backend options."}
               </span>
             </div>
           )}
@@ -222,12 +222,12 @@ export const PropertiesModal = () => {
               <label className="text-xs text-text-muted text-right">Speed</label>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 text-xs text-text-primary">
-                  <input type="checkbox" checked={speedLimitEnabled} onChange={e => setSpeedLimitEnabled(e.target.checked)} className="rounded border-border-modal text-blue-500 focus:ring-blue-500/20 bg-bg-input" />
+                      <input type="checkbox" checked={speedLimitEnabled} onChange={e => setSpeedLimitEnabled(e.target.checked)} disabled={isTransferLocked} className="rounded border-border-modal text-blue-500 focus:ring-blue-500/20 bg-bg-input disabled:opacity-50" />
                   Limit
                 </label>
                 {speedLimitEnabled && (
                   <div className="flex items-center gap-2">
-                    <input type="number" value={speedLimitValue} min={1} step={128} onChange={e=>setSpeedLimitValue(e.target.value)} className="w-20 bg-bg-input border border-border-modal rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent" />
+                          <input type="number" value={speedLimitValue} min={1} step={128} onChange={e=>setSpeedLimitValue(e.target.value)} disabled={isTransferLocked} className="w-20 bg-bg-input border border-border-modal rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent disabled:opacity-50" />
                     <span className="text-xs text-text-muted">KiB/s</span>
                   </div>
                 )}

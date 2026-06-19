@@ -269,6 +269,7 @@ export const AddDownloadsModal = () => {
   const [selectedQueueId, setSelectedQueueId] = useState<string>(MAIN_QUEUE_ID);
 
   const [urls, setUrls] = useState('');
+  const [metadataRefreshNonce, setMetadataRefreshNonce] = useState(0);
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
   const [parsedItems, setParsedItems] = useState<ParsedDownloadItem[]>([]);
 
@@ -464,7 +465,7 @@ export const AddDownloadsModal = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [urls, pendingAddFilename, isSaveLocationManual]);
+  }, [urls, pendingAddFilename, isSaveLocationManual, metadataRefreshNonce]);
 
   if (!isAddModalOpen) return null;
 
@@ -569,6 +570,7 @@ export const AddDownloadsModal = () => {
              const idx = parseInt(res.id);
              const item = itemsToAdd[idx];
              if (!item) continue;
+             const conflict = conflicts.find(c => c.id === res.id);
 
              if (res.resolution === 'skip') {
                  itemsToAdd[idx] = null;
@@ -601,8 +603,12 @@ export const AddDownloadsModal = () => {
                  }
                  
                  itemsToAdd[idx] = { ...item, file: newName };
-             } else if (res.resolution === 'replace') {
-                 let finalFile = item.file;
+            } else if (res.resolution === 'replace') {
+              if (conflict?.reason.type !== 'file') {
+                itemsToAdd[idx] = null;
+                continue;
+              }
+              let finalFile = item.file;
         if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
           const selectedFormat = item.formats[item.selectedFormat];
           const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -734,9 +740,13 @@ export const AddDownloadsModal = () => {
                 />
                 <div className="flex justify-between items-center px-1">
                   <span className="text-[11px] text-text-muted font-medium">{parsedItems.length} valid link(s) detected</span>
-                  <button className="flex items-center gap-1.5 text-[11px] text-blue-500 hover:text-blue-400 font-medium">
-                    <RefreshCw size={12} /> Refresh Metadata
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setMetadataRefreshNonce(value => value + 1)}
+                      className="flex items-center gap-1.5 text-[11px] text-blue-500 hover:text-blue-400 font-medium"
+                    >
+                      <RefreshCw size={12} /> Refresh Metadata
+                    </button>
                 </div>
               </div>
 

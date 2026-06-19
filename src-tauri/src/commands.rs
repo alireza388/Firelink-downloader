@@ -1,7 +1,6 @@
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_store::StoreExt;
 
 #[tauri::command]
 pub async fn reveal_in_file_manager(
@@ -91,41 +90,7 @@ fn authorize_download_path(
 }
 
 fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
-    let store = app_handle
-        .store("store.bin")
-        .map_err(|e| format!("Failed to load download ownership data: {e}"))?;
-    let settings = crate::settings::load_settings(app_handle).ok();
-    let downloads = store
-        .get("download_queue")
-        .map(|value| serde_json::from_value::<Vec<crate::ipc::DownloadItem>>(value.clone()))
-        .transpose()
-        .map_err(|e| format!("Invalid download ownership data: {e}"))?
-        .unwrap_or_default();
-
-    Ok(downloads
-        .into_iter()
-        .filter_map(|download| {
-            let category = format!("{:?}", download.category);
-            let destination = download
-                .destination
-                .filter(|destination| !destination.trim().is_empty())
-                .or_else(|| {
-                    settings
-                        .as_ref()
-                        .and_then(|settings| settings.download_directories.get(&category).cloned())
-                })
-                .or_else(|| {
-                    settings
-                        .as_ref()
-                        .map(|settings| settings.default_download_path.clone())
-                })
-                .unwrap_or_else(|| "~/Downloads".to_string());
-            let filename = Path::new(&download.file_name.replace('\\', "/"))
-                .file_name()?
-                .to_owned();
-            Some(crate::resolve_path(&destination, app_handle).join(filename))
-        })
-        .collect())
+    crate::download_ownership::known_primary_paths(app_handle)
 }
 
 fn authorize_exact_path(requested: &Path, allowed_paths: &[PathBuf]) -> Result<PathBuf, String> {

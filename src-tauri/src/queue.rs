@@ -910,6 +910,15 @@ impl SidecarSpawner for ProductionSpawner {
             &mut cancel_rx,
         )
         .await;
+        if outcome.is_ok() {
+            if let Ok(path) = crate::download_ownership::expected_primary_path(
+                &self.app_handle,
+                &payload.destination,
+                &payload.filename,
+            ) {
+                let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &path);
+            }
+        }
         let _ = state.download_coordinator.finish_media(id.to_string()).await;
         outcome
     }
@@ -924,13 +933,15 @@ impl SidecarSpawner for ProductionSpawner {
             .and_then(|n| n.to_str())
             .unwrap_or("download")
             .to_string();
+        let output_path = resolved_dest.join(safe_filename);
+        let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &output_path);
         state
             .download_coordinator
             .send(crate::download::DownloadCmd::Start(Box::new(
                 crate::download::DownloadPayload {
                     id: download_id,
                     urls: crate::collect_download_uris(&payload.url, payload.mirrors.as_deref()),
-                    output_path: resolved_dest.join(safe_filename),
+                    output_path,
                     speed_limit: payload.speed_limit.clone(),
                     username: payload.username.clone(),
                     password: payload.password.clone(),

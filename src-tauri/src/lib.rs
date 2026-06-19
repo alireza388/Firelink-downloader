@@ -1145,6 +1145,7 @@ pub mod ipc;
 mod parity;
 pub mod error;
 pub mod commands;
+pub mod download_ownership;
 pub mod retry;
 mod settings;
 pub use error::AppError;
@@ -2327,6 +2328,7 @@ async fn remove_download(
     filepath: Option<String>,
 ) -> Result<(), String> {
     log::info!("remove_download called for id: {}", id);
+    let _ = crate::download_ownership::remove(&app_handle, &id);
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
@@ -2529,19 +2531,35 @@ async fn get_pending_order(state: tauri::State<'_, AppState>) -> Result<Vec<Stri
 
 #[tauri::command]
 async fn enqueue_download(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     item: queue::EnqueueItem,
 ) -> Result<String, AppError> {
     let id = item.id.clone();
+    crate::download_ownership::register_expected(
+        &app_handle,
+        &item.id,
+        &item.destination,
+        &item.filename,
+    )?;
     state.queue_manager.push(item.into_task()).await;
     Ok(id)
 }
 
 #[tauri::command]
 async fn enqueue_many(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     items: Vec<queue::EnqueueItem>,
 ) -> Result<(), AppError> {
+    for item in &items {
+        crate::download_ownership::register_expected(
+            &app_handle,
+            &item.id,
+            &item.destination,
+            &item.filename,
+        )?;
+    }
     let tasks = items.into_iter().map(queue::EnqueueItem::into_task).collect();
     state.queue_manager.enqueue_many(tasks).await;
     Ok(())
@@ -2557,8 +2575,16 @@ async fn move_in_queue(
 }
 
 #[tauri::command]
-async fn remove_from_queue(state: tauri::State<'_, AppState>, id: String) -> Result<bool, AppError> {
-    Ok(state.queue_manager.remove_from_pending(&id).await)
+async fn remove_from_queue(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<bool, AppError> {
+    let removed = state.queue_manager.remove_from_pending(&id).await;
+    if removed {
+        crate::download_ownership::remove(&app_handle, &id)?;
+    }
+    Ok(removed)
 }
 
 #[tauri::command]

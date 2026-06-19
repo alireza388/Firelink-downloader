@@ -35,11 +35,12 @@ export async function initDownloadListener() {
     const mainStore = useDownloadStore.getState();
     const current = mainStore.downloads.find(d => d.id === payload.id);
     if (current) {
+      const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
       mainStore.updateDownload(payload.id, {
         fraction: payload.fraction,
         speed: payload.speed,
         eta: payload.eta,
-        ...(payload.size ? { size: payload.size } : {}),
+        ...(shouldUpdateSize ? { size: payload.size! } : {}),
       });
     }
   });

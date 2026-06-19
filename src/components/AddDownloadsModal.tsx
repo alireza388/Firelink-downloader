@@ -28,6 +28,7 @@ interface MediaFormat {
   detail: string;
   type: string;
   bytes: number;
+  isApproximate?: boolean;
 }
 
 interface ParsedDownloadItem {
@@ -383,16 +384,20 @@ export const AddDownloadsModal = () => {
               password: keychainPassword
             });
             if (mediaData && mediaData.formats.length > 0) {
-                  const mappedFormats = mediaData.formats.map(f => {
-                    const quality = f.resolution || 'Best';
-                    const container = f.ext.toUpperCase();
-                    const bytes = f.filesize || 0;
-                    return {
-                      name: `${quality} ${container}`,
-                      ext: f.ext,
-                      bytes,
+              const mappedFormats = mediaData.formats.map(f => {
+                const quality = f.resolution || 'Best';
+                const container = f.ext.toUpperCase();
+                const exactBytes = f.filesize || 0;
+                const approxBytes = f.filesize_approx || 0;
+                const bytes = exactBytes || approxBytes;
+                const isApproximate = !exactBytes && approxBytes > 0;
+                return {
+                  name: `${quality} ${container}`,
+                  ext: f.ext,
+                  bytes,
+                  isApproximate,
                   formatLabel: f.format_label || f.ext.toUpperCase(),
-                  detail: bytes ? formatBytes(bytes) : 'Unknown size',
+                  detail: bytes ? `${isApproximate ? '~' : ''}${formatBytes(bytes)}` : 'Unknown size',
                   selector: f.format_id,
                   type: quality.toLowerCase().includes('audio') ? 'Audio' : 'Video'
                 };

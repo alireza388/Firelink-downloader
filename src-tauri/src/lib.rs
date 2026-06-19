@@ -33,6 +33,8 @@ pub struct MediaFormat {
     pub fps: Option<f64>,
     #[ts(type = "number | null")]
     pub filesize: Option<u64>,
+    #[ts(type = "number | null")]
+    pub filesize_approx: Option<u64>,
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
@@ -74,6 +76,30 @@ fn json_f64(value: &serde_json::Value, key: &str) -> Option<f64> {
 
 fn media_filesize(value: &serde_json::Value) -> Option<u64> {
     json_u64(value, "filesize").or_else(|| json_u64(value, "filesize_approx"))
+}
+
+fn media_exact_filesize(value: &serde_json::Value) -> Option<u64> {
+    json_u64(value, "filesize")
+}
+
+fn media_approx_filesize(value: &serde_json::Value) -> Option<u64> {
+    media_exact_filesize(value).is_none().then(|| json_u64(value, "filesize_approx")).flatten()
+}
+
+fn media_sized_bytes(value: &serde_json::Value) -> Option<(u64, bool)> {
+    if let Some(size) = media_exact_filesize(value) {
+        Some((size, false))
+    } else {
+        media_approx_filesize(value).map(|size| (size, true))
+    }
+}
+
+fn split_size_estimate(bytes: Option<(u64, bool)>) -> (Option<u64>, Option<u64>) {
+    match bytes {
+        Some((bytes, false)) => (Some(bytes), None),
+        Some((bytes, true)) => (None, Some(bytes)),
+        None => (None, None),
+    }
 }
 
 fn codec_is_present(codec: Option<&str>) -> bool {
@@ -218,27 +244,27 @@ fn joined_format_label(container: &str, video_codec: Option<&str>, audio_codec: 
     }
 }
 
-fn estimated_merged_size(video: Option<&serde_json::Value>, audio: Option<&serde_json::Value>) -> Option<u64> {
-    let mut total = 0_u64;
-    let mut known = false;
-
-    if let Some(size) = video.and_then(media_filesize) {
-        total = total.saturating_add(size);
-        known = true;
-    }
-    if let Some(size) = audio.and_then(media_filesize) {
-        total = total.saturating_add(size);
-        known = true;
-    }
-
-    known.then_some(total)
+fn estimated_merged_size(video: Option<&serde_json::Value>, audio: Option<&serde_json::Value>) -> (Option<u64>, Option<u64>) {
+    let Some(video) = video else {
+        return (None, None);
+    };
+    let Some((video_size, video_approx)) = media_sized_bytes(video) else {
+        return (None, None);
+    };
+    let Some(audio) = audio else {
+        return split_size_estimate(Some((video_size, video_approx)));
+    };
+    let Some((audio_size, audio_approx)) = media_sized_bytes(audio) else {
+        return (None, None);
+    };
+    split_size_estimate(Some((video_size.saturating_add(audio_size), video_approx || audio_approx)))
 }
 
 fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
     let format_id = json_str(value, "format_id")?.to_string();
     let ext = json_str(value, "ext").unwrap_or("mkv").to_string();
     let fps = json_f64(value, "fps");
-    let filesize = media_filesize(value);
+    let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(value));
 
     let resolution = if has_video_stream(value) {
         format_height(value).map(|height| format!("{height}p")).or_else(|| json_str(value, "resolution").map(ToOwned::to_owned)).unwrap_or_else(|| "Video".to_string())
@@ -254,7 +280,7 @@ fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
         joined_format_label(&ext, None, json_str(value, "acodec"))
     };
 
-    Some(MediaFormat { format_id, resolution, ext, format_label, fps, filesize })
+    Some(MediaFormat { format_id, resolution, ext, format_label, fps, filesize, filesize_approx })
 }
 
 fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFormat> {
@@ -266,13 +292,15 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
     if has_video {
         let best_video = best_matching_format(&clean_formats, has_video_stream);
         let best_audio = best_audio_format(&clean_formats, None);
+        let (filesize, filesize_approx) = estimated_merged_size(best_video, best_audio);
         options.push(MediaFormat {
             format_id: "bestvideo+bestaudio/best".to_string(),
             resolution: "Best".to_string(),
             ext: "mkv".to_string(),
             format_label: joined_format_label("mkv", best_video.and_then(|format| json_str(format, "vcodec")), best_audio.and_then(|format| json_str(format, "acodec"))),
             fps: best_video.and_then(|format| json_f64(format, "fps")),
-            filesize: estimated_merged_size(best_video, best_audio),
+            filesize,
+            filesize_approx,
         });
 
         let available_heights: Vec<u64> = [2160_u64, 1440, 1080, 720, 480, 360]
@@ -283,37 +311,43 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
         for height in available_heights {
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height)) {
                 let audio = best_audio_format(&clean_formats, None);
+                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
                 options.push(MediaFormat {
                     format_id: format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
                     resolution: format!("{height}p"),
                     ext: "mkv".to_string(),
                     format_label: joined_format_label("mkv", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
                     fps: json_f64(video, "fps"),
-                    filesize: estimated_merged_size(Some(video), audio),
+                    filesize,
+                    filesize_approx,
                 });
             }
 
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "mp4") {
                 let audio = best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None));
+                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
                 options.push(MediaFormat {
                     format_id: format!("bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
                     resolution: format!("{height}p"),
                     ext: "mp4".to_string(),
                     format_label: joined_format_label("mp4", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
                     fps: json_f64(video, "fps"),
-                    filesize: estimated_merged_size(Some(video), audio),
+                    filesize,
+                    filesize_approx,
                 });
             }
 
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "webm") {
                 let audio = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))).or_else(|| best_audio_format(&clean_formats, None));
+                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
                 options.push(MediaFormat {
                     format_id: format!("bestvideo[height<={height}][ext=webm]+bestaudio[ext=webm]/best[height<={height}][ext=webm]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
                     resolution: format!("{height}p"),
                     ext: "webm".to_string(),
                     format_label: joined_format_label("webm", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
                     fps: json_f64(video, "fps"),
-                    filesize: estimated_merged_size(Some(video), audio),
+                    filesize,
+                    filesize_approx,
                 });
             }
         }
@@ -321,35 +355,41 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
 
     if has_audio {
         if let Some(audio) = best_audio_format(&clean_formats, Some("m4a")) {
+            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
             options.push(MediaFormat {
                 format_id: "bestaudio[ext=m4a]/bestaudio/best".to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "m4a".to_string(),
                 format_label: joined_format_label("m4a", None, json_str(audio, "acodec")),
                 fps: None,
-                filesize: media_filesize(audio),
+                filesize,
+                filesize_approx,
             });
         }
 
         if let Some(audio) = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))) {
+            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
             options.push(MediaFormat {
                 format_id: "bestaudio[ext=webm]/bestaudio/best".to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "opus".to_string(),
                 format_label: joined_format_label("opus", None, json_str(audio, "acodec")),
                 fps: None,
-                filesize: media_filesize(audio),
+                filesize,
+                filesize_approx,
             });
         }
 
         if let Some(audio) = best_audio_format(&clean_formats, None) {
+            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
             options.push(MediaFormat {
                 format_id: "bestaudio/best".to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "mp3".to_string(),
                 format_label: "MP3 • Best audio".to_string(),
                 fps: None,
-                filesize: media_filesize(audio),
+                filesize,
+                filesize_approx,
             });
         }
     }
@@ -734,52 +774,7 @@ fn media_metadata_cache_key(
     hasher.finish()
 }
 
-fn executable_exists(path: &std::path::Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
-            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(unix))]
-    {
-        true
-    }
-}
-
-fn find_yt_dlp_on_path() -> Option<PathBuf> {
-    if let Ok(override_path) = std::env::var("FIRELINK_YTDLP_PATH") {
-        let path = PathBuf::from(override_path);
-        if executable_exists(&path) {
-            return Some(path);
-        }
-    }
-
-    if let Some(path) = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("yt-dlp"))
-            .find(|candidate| executable_exists(candidate))
-    }) {
-        return Some(path);
-    }
-
-    ["/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "/usr/bin/yt-dlp"]
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|candidate| executable_exists(candidate))
-}
-
 fn resolve_metadata_ytdlp_path(app_handle: &tauri::AppHandle) -> Result<(PathBuf, &'static str), String> {
-    if let Some(path) = find_yt_dlp_on_path() {
-        return Ok((path, "system"));
-    }
-
     resolve_bundled_binary_path(app_handle, "yt-dlp")
         .map(|path| (path, "bundled"))
         .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))
@@ -1177,6 +1172,7 @@ pub struct DownloadProgressEvent {
     speed: String,
     eta: String,
     size: Option<String>,
+    size_is_final: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -2053,10 +2049,11 @@ pub(crate) async fn start_media_download_internal(
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                         id: id.to_string(),
                                         fraction: overall_fraction,
-                                        speed,
-                                        eta: progress.eta,
-                                        size: progress.size,
-                                    });
+                                    speed,
+                                    eta: progress.eta,
+                                    size: progress.size,
+                                    size_is_final: false,
+                                });
                                     last_progress_at = now;
                                 }
                             }
@@ -2077,10 +2074,11 @@ pub(crate) async fn start_media_download_internal(
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                             id: id.to_string(),
                                             fraction: overall_fraction,
-                                            speed,
-                                            eta: progress.eta,
-                                            size: progress.size,
-                                        });
+                                    speed,
+                                    eta: progress.eta,
+                                    size: progress.size,
+                                    size_is_final: false,
+                                });
                                     last_progress_at = now;
                                 }
                             }
@@ -2099,6 +2097,7 @@ pub(crate) async fn start_media_download_internal(
                                     speed: "Processing".to_string(),
                                     eta: "-".to_string(),
                                     size: None,
+                                    size_is_final: false,
                                 });
                             }
                             let lower = line.to_lowercase();
@@ -2117,6 +2116,18 @@ pub(crate) async fn start_media_download_internal(
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
                             if payload.code == Some(0) {
                                 log::info!("yt-dlp completed successfully for id: {}", id);
+                                if let Ok(metadata) = tokio::fs::metadata(&out_path).await {
+                                    if metadata.is_file() {
+                                        let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                            id: id.to_string(),
+                                            fraction: 1.0,
+                                            speed: "-".to_string(),
+                                            eta: "-".to_string(),
+                                            size: Some(crate::download::format_size(metadata.len() as f64)),
+                                            size_is_final: true,
+                                        });
+                                    }
+                                }
                                 return Ok(());
                             }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
@@ -3412,9 +3423,10 @@ pub fn run() {
                                         id,
                                         fraction,
                                         speed,
-                                        eta,
-                                        size,
-                                    });
+                                    eta,
+                                    size,
+                                    size_is_final: false,
+                                });
                                 }
                             }
                         }

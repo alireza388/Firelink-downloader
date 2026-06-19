@@ -161,6 +161,7 @@ impl CoordinatorEventSink {
                         speed: format_speed(speed_bytes),
                         eta,
                         size: total.map(|t| format_size(t as f64)),
+                        size_is_final: false,
                     },
                 );
             }

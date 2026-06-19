@@ -92,6 +92,17 @@
   --statusbar-bg: 0 0% 11%;
   --sidebar-border: 0 0% 100% / 0.11;
   --sidebar-hover: 0 0% 100% / 0.07;
+  --add-window-bg: 0 0% 13%;
+  --add-left-bg: 0 0% 15%;
+  --add-settings-bg: 0 0% 12%;
+  --add-section-bg: 0 0% 17%;
+  --add-control-bg: 0 0% 12%;
+  --add-preview-bg: 0 0% 14%;
+  --add-header-bg: 0 0% 17%;
+  --add-footer-bg: 0 0% 15%;
+  --add-keyline: 0 0% 100% / 0.11;
+  --add-keyline-strong: 0 0% 100% / 0.16;
+  --add-shadow: 0 0% 0% / 0.28;
 }
 
 .theme-dracula {
@@ -125,6 +136,17 @@
   --statusbar-bg: 231 15% 16%;
   --sidebar-border: 326 100% 74% / 0.16;
   --sidebar-hover: 326 100% 74% / 0.10;
+  --add-window-bg: 231 15% 18%;
+  --add-left-bg: 231 15% 20%;
+  --add-settings-bg: 231 16% 17%;
+  --add-section-bg: 232 14% 23%;
+  --add-control-bg: 231 16% 17%;
+  --add-preview-bg: 231 15% 19%;
+  --add-header-bg: 232 14% 23%;
+  --add-footer-bg: 231 15% 19%;
+  --add-keyline: 228 14% 74% / 0.14;
+  --add-keyline-strong: 228 14% 74% / 0.22;
+  --add-shadow: 231 30% 7% / 0.32;
 }
 
 .theme-nord {
@@ -158,6 +180,17 @@
   --statusbar-bg: 220 18% 19%;
   --sidebar-border: 193 43% 67% / 0.16;
   --sidebar-hover: 193 43% 67% / 0.11;
+  --add-window-bg: 220 16% 22%;
+  --add-left-bg: 220 16% 24%;
+  --add-settings-bg: 220 18% 20%;
+  --add-section-bg: 220 17% 27%;
+  --add-control-bg: 220 18% 20%;
+  --add-preview-bg: 220 16% 23%;
+  --add-header-bg: 220 17% 27%;
+  --add-footer-bg: 220 17% 23%;
+  --add-keyline: 218 17% 75% / 0.15;
+  --add-keyline-strong: 218 17% 75% / 0.23;
+  --add-shadow: 220 28% 10% / 0.30;
 }
 
 @theme {
@@ -721,6 +754,125 @@
   .add-download-advanced-toggle:focus-visible {
     outline: 2px solid hsl(var(--accent-color) / 0.65);
     outline-offset: 2px;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-modal {
+    --add-surface: hsl(var(--add-section-bg));
+    --add-highlight: transparent;
+    background: hsl(var(--add-window-bg));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: hsl(var(--add-keyline-strong));
+    box-shadow:
+      0 24px 64px hsl(var(--add-shadow)),
+      0 1px 4px hsl(var(--add-shadow));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-left {
+    background: hsl(var(--add-left-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-settings {
+    background: hsl(var(--add-settings-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-section,
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-summary-card {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-section-bg));
+    box-shadow: 0 1px 2px hsl(var(--add-shadow));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-control {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-control-bg));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-control:hover:not(:disabled):not(:read-only) {
+    border-color: hsl(var(--add-keyline-strong));
+    background: hsl(var(--add-control-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-control:focus,
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-control:focus-visible {
+    border-color: hsl(var(--accent-color) / 0.88);
+    box-shadow: 0 0 0 3px hsl(var(--accent-color) / 0.2);
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-control:read-only {
+    background: hsl(var(--add-control-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-preview {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-preview-bg));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-preview-header {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-header-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-media-section {
+    border-color: hsl(var(--accent-color) / 0.25);
+    background: hsl(var(--add-section-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-format-row {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-control-bg));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-format-row:hover {
+    border-color: hsl(var(--add-keyline-strong));
+    background: hsl(var(--item-hover));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-value,
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-checkbox {
+    border-color: hsl(var(--add-keyline));
+    background-color: hsl(var(--add-control-bg));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-checkbox:checked {
+    border-color: hsl(var(--accent-color));
+    background-color: hsl(var(--accent-color));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-footer {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-footer-bg));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-button-secondary {
+    border-color: hsl(var(--add-keyline));
+    background: hsl(var(--add-section-bg));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-button-secondary:hover:not(:disabled) {
+    border-color: hsl(var(--add-keyline-strong));
+    background: hsl(var(--item-hover));
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-button-primary {
+    border-color: hsl(var(--accent-color));
+    background: hsl(var(--accent-color));
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-button-primary:hover:not(:disabled) {
+    background: hsl(var(--accent-color) / 0.9);
+    box-shadow: none;
+  }
+
+  :is(.theme-dark, .theme-dracula, .theme-nord) .add-download-button:disabled {
+    opacity: 0.36;
+    filter: none;
   }
 
   .app-toast {

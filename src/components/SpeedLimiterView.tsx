@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Gauge, Save, Zap } from 'lucide-react';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { WindowDragRegion } from './WindowDragRegion';
+import { useToast } from '../contexts/ToastContext';
 
 type SpeedUnit = 'KB/s' | 'MB/s';
 
@@ -25,7 +26,7 @@ export default function SpeedLimiterView() {
   const [enabled, setEnabled] = useState(Boolean(globalSpeedLimit));
   const [value, setValue] = useState(initial.value);
   const [unit, setUnit] = useState<SpeedUnit>(initial.unit);
-  const [toast, setToast] = useState('');
+  const { addToast } = useToast();
 
   useEffect(() => {
     const parsed = parseLimit(globalSpeedLimit, lastCustomSpeedLimitKiB);
@@ -34,18 +35,16 @@ export default function SpeedLimiterView() {
     setUnit(parsed.unit);
   }, [globalSpeedLimit, lastCustomSpeedLimitKiB]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(''), 2200);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   const save = () => {
     const numericValue = Math.max(1, Math.min(Number(value) || 1, unit === 'MB/s' ? 10240 : 10_485_760));
     const valueKiB = Math.min(10_485_760, Math.round(unit === 'MB/s' ? numericValue * 1024 : numericValue));
     setLastCustomSpeedLimitKiB(valueKiB);
     setGlobalSpeedLimit(enabled ? `${valueKiB}K` : '');
-    setToast(enabled ? `Global limit saved at ${numericValue} ${unit}` : 'Global speed limit disabled');
+    addToast({
+      message: enabled ? `Global limit saved at ${numericValue} ${unit}` : 'Global speed limit disabled',
+      variant: 'success'
+    });
   };
 
   const preset = (presetValue: number) => {
@@ -129,11 +128,6 @@ export default function SpeedLimiterView() {
         </section>
       </div>
 
-      {toast && (
-        <div className="app-toast pointer-events-none absolute bottom-7 left-1/2 -translate-x-1/2 px-4 py-2 text-[12px] font-medium">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }

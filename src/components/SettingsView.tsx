@@ -12,6 +12,8 @@ import {
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
 import { invokeCommand as invoke } from '../ipc';
+
+import { useToast, ToastVariant } from '../contexts/ToastContext';
 import type { EngineStatusItem } from '../bindings/EngineStatusItem';
 import { WindowDragRegion } from './WindowDragRegion';
 import appIcon from '../assets/app-icon.png';
@@ -117,15 +119,8 @@ const [appVersion, setAppVersion] = useState('0.7.3');
   const [loginError, setLoginError] = useState('');
 
   // Toast notifications
-  const [toastMessage, setToastMessage] = useState('');
+  const { addToast } = useToast();
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
-
-  useEffect(() => {
-    if (toastMessage) {
-      const t = setTimeout(() => setToastMessage(''), 2000);
-      return () => clearTimeout(t);
-    }
-  }, [toastMessage]);
 
 useEffect(() => {
 getVersion().then(setAppVersion).catch(() => undefined);
@@ -174,8 +169,8 @@ runEngineChecks(false);
 }
 }, [settings.activeView, activeTab, runEngineChecks]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  const showToast = (msg: string, variant: ToastVariant = 'info') => {
+    addToast({ message: msg, variant });
   };
 
   const findEngine = (kind: string) => engineStatus?.find(e => e.kind === kind) ?? null;
@@ -234,14 +229,14 @@ runEngineChecks(false);
       const result = await invoke('check_for_updates');
 
       if (result.type === 'UpToDate') {
-        showToast(`Firelink ${result.latest_version} is up to date`);
+        showToast(`Firelink ${result.latest_version} is up to date`, 'success');
       } else if (result.type === 'UpdateAvailable') {
-        showToast(`Firelink ${result.update.version} is available`);
+        showToast(`Firelink ${result.update.version} is available`, 'info');
       } else {
-        showToast('The update check returned an unexpected response');
+        showToast('The update check returned an unexpected response', 'warning');
       }
     } catch (error) {
-      showToast(`Update check failed: ${String(error)}`);
+      showToast(`Update check failed: ${String(error)}`, 'error');
     } finally {
       setIsCheckingForUpdates(false);
     }
@@ -291,7 +286,7 @@ runEngineChecks(false);
         } catch (e) {
           console.error("Failed to create directories on disk:", e);
         }
-        showToast("Base download folder updated");
+        showToast("Base download folder updated", 'success');
       }
     } catch (e) {
       console.error("Failed to browse base path:", e);
@@ -324,12 +319,12 @@ runEngineChecks(false);
     setLoginUser('');
     setLoginPass('');
     setLoginError('');
-    showToast("Added site credential");
+    showToast("Added site credential", 'success');
   };
 
   const copyToken = () => {
     navigator.clipboard.writeText(settings.extensionPairingToken);
-    showToast("Token copied to clipboard!");
+    showToast("Token copied to clipboard!", 'success');
   };
 
   const activeTabLabel = settingsTabs.find(tab => tab.type === activeTab)?.label ?? 'Downloads';
@@ -356,13 +351,6 @@ runEngineChecks(false);
   return (
     <div className="settings-view flex-1 flex flex-col relative h-full overflow-hidden">
         <WindowDragRegion />
-
-        {/* Toast Notification */}
-        {toastMessage && (
-          <div className="app-toast absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 text-[12px] font-medium">
-            {toastMessage}
-          </div>
-        )}
 
         {/* SwiftUI SettingsPaneContainer-style horizontal tab strip */}
         <div className="settings-toolbar">
@@ -754,7 +742,7 @@ runEngineChecks(false);
                   <button
                     onClick={() => {
                       settings.resetCategoryLocations();
-                      showToast("Reset category locations to default");
+                      showToast("Reset category locations to default", 'success');
                     }}
                     className="app-control hover:bg-item-hover text-text-secondary px-4 py-1"
                   >
@@ -789,7 +777,7 @@ runEngineChecks(false);
                             console.warn("Could not delete password from keychain:", e);
                           }
                           settings.removeSiteLogin(login.id);
-                          showToast("Deleted credential");
+                          showToast("Deleted credential", 'success');
                         }}
                         className="p-1.5 hover:bg-item-hover rounded-md text-text-muted hover:text-red-500"
                         title="Delete credential"
@@ -993,7 +981,7 @@ className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-bg-modal hover:bg
                     <button
                       onClick={() => {
                         settings.regeneratePairingToken();
-                        showToast("Pairing token regenerated");
+                        showToast("Pairing token regenerated", 'success');
                       }}
                       className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 transition-colors"
                     >

@@ -15,10 +15,11 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
 import DiagnosticsView from "./components/DiagnosticsView";
+import { useToast } from "./contexts/ToastContext";
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
-  const [pairingTokenChanged, setPairingTokenChanged] = useState(false);
+
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
     return Number.isFinite(stored) && stored >= 190 && stored <= 260 ? stored : 220;
@@ -41,7 +42,6 @@ function App() {
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
 
   const acknowledgePairingTokenChange = () => {
-    setPairingTokenChanged(false);
     invoke('acknowledge_pairing_token_change').catch(error => {
       console.error('Failed to acknowledge pairing token migration notice:', error);
     });
@@ -73,14 +73,55 @@ function App() {
     window.localStorage.setItem('firelink-sidebar-width', String(sidebarWidth));
   }, [sidebarWidth]);
 
+  const { addToast } = useToast();
+
   useEffect(() => {
     useDownloadStore.getState().initDB();
     useSettingsStore.getState().hydratePairingToken()
-      .then(setPairingTokenChanged)
+      .then(changed => {
+        if (changed) {
+          addToast({
+            variant: 'warning',
+            isActionable: true,
+            message: (
+              <div className="flex flex-col gap-2">
+                <p>Browser extension disconnected because its pairing token changed.</p>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    className="app-button px-2 py-1 bg-surface-raised border border-border-color rounded"
+                    onClick={() => {
+                      const token = useSettingsStore.getState().extensionPairingToken;
+                      if (token) {
+                        void navigator.clipboard.writeText(token);
+                      }
+                      acknowledgePairingTokenChange();
+                    }}
+                  >
+                    Copy token
+                  </button>
+                  <button
+                    type="button"
+                    className="app-button px-2 py-1 bg-surface-raised border border-border-color rounded"
+                    onClick={() => {
+                      const settings = useSettingsStore.getState();
+                      settings.setActiveSettingsTab('integrations');
+                      settings.setActiveView('settings');
+                      acknowledgePairingTokenChange();
+                    }}
+                  >
+                    Integrations
+                  </button>
+                </div>
+              </div>
+            )
+          });
+        }
+      })
       .catch(error => {
         console.error('Failed to hydrate extension pairing token:', error);
       });
-  }, []);
+  }, [addToast]);
 
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
@@ -303,43 +344,7 @@ function App() {
       <AddDownloadsModal />
       <PropertiesModal />
       <DeleteConfirmationModal />
-      {pairingTokenChanged && (
-        <div
-          className="app-toast fixed bottom-5 right-5 z-[80] max-w-[420px] p-4 text-[12px]"
-          role="status"
-        >
-          <p className="font-medium">
-            Browser extension disconnected because its pairing token changed.
-          </p>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              type="button"
-              className="app-button px-3 py-1.5"
-              onClick={() => {
-                const token = useSettingsStore.getState().extensionPairingToken;
-                if (token) {
-                  void navigator.clipboard.writeText(token);
-                }
-                acknowledgePairingTokenChange();
-              }}
-            >
-              Copy new token
-            </button>
-            <button
-              type="button"
-              className="app-button px-3 py-1.5"
-              onClick={() => {
-                const settings = useSettingsStore.getState();
-                settings.setActiveSettingsTab('integrations');
-                settings.setActiveView('settings');
-                acknowledgePairingTokenChange();
-              }}
-            >
-              Open Integrations
-            </button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

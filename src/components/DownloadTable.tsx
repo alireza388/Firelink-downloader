@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
+import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
 import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
@@ -17,11 +18,11 @@ interface DownloadTableProps {
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { downloads, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
+  const { addToast } = useToast();
 
   const isMac = navigator.userAgent.includes('Mac');
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
-  const [interactionError, setInteractionError] = useState('');
   const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
   const columnMinimums = [0, 58, 92, 58, 48, 112];
   const tableGridTemplate = columnWidths.map((width, index) => `minmax(${columnMinimums[index]}px, ${width}fr)`).join(' ');
@@ -54,15 +55,10 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     return () => window.removeEventListener('click', handleCloseMenu);
   }, []);
 
-  useEffect(() => {
-    if (!interactionError) return;
-    const timeout = window.setTimeout(() => setInteractionError(''), 5000);
-    return () => window.clearTimeout(timeout);
-  }, [interactionError]);
 
   const showInteractionError = (message: string, error: unknown) => {
-    const detail = typeof error === 'string' ? error : error instanceof Error ? error.message : String(error);
-    setInteractionError(`${message}: ${detail}`);
+    const detail = error instanceof Error ? error.message : String(error);
+    addToast({ message: `${message}: ${detail}`, variant: 'error', isActionable: true });
   };
 
   const getDownloadPath = async (item: DownloadItem) => {
@@ -437,12 +433,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           >
             Properties
           </button>
-        </div>
-      )}
-
-      {interactionError && (
-        <div className="app-toast fixed bottom-5 left-1/2 z-50 -translate-x-1/2 px-4 py-2 text-[12px]">
-          {interactionError}
         </div>
       )}
 

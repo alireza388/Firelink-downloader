@@ -7,6 +7,7 @@ import {
 import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/useSettingsStore';
 import { useDownloadStore, MAIN_QUEUE_ID } from '../store/useDownloadStore';
 import { WindowDragRegion } from './WindowDragRegion';
+import { useToast } from '../contexts/ToastContext';
 
 const days = [
   { value: 0, label: 'Su' },
@@ -55,7 +56,7 @@ export default function SchedulerView() {
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const setScheduler = useSettingsStore(state => state.setScheduler);
   const [draft, setDraft] = useState<SchedulerSettings>(savedSettings);
-  const [toast, setToast] = useState('');
+  const { addToast } = useToast();
   const [permissionMessage, setPermissionMessage] = useState('');
   const [automationPermissionGranted, setAutomationPermissionGranted] = useState<boolean | null>(null);
   const isMac = navigator.userAgent.includes('Mac');
@@ -64,11 +65,6 @@ export default function SchedulerView() {
     setDraft(savedSettings);
   }, [savedSettings]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(''), 2200);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   const nextRun = useMemo(() => nextScheduledRun(draft), [draft]);
 
@@ -94,23 +90,23 @@ export default function SchedulerView() {
     };
     setScheduler(normalized);
     setDraft(normalized);
-    setToast('Scheduler settings saved');
+    addToast({ message: 'Scheduler settings saved', variant: 'success' });
   };
 
   const runNow = async () => {
     const count = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
     if (count > 0) {
       useSettingsStore.getState().setSchedulerRunning(true);
-      setToast(`Started ${count} download${count === 1 ? '' : 's'}`);
+      addToast({ message: `Started ${count} download${count === 1 ? '' : 's'}`, variant: 'success' });
     } else {
-      setToast('No paused or failed downloads to start');
+      addToast({ message: 'No paused or failed downloads to start', variant: 'info' });
     }
   };
 
   const pauseNow = async () => {
     const count = await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
     useSettingsStore.getState().setSchedulerRunning(false);
-    setToast(count > 0 ? `Paused ${count} active download${count === 1 ? '' : 's'}` : 'No active downloads');
+    addToast({ message: count > 0 ? `Paused ${count} active download${count === 1 ? '' : 's'}` : 'No active downloads', variant: 'info' });
   };
 
   const refreshPermissionStatus = useCallback(async (showMessage = false) => {
@@ -324,12 +320,6 @@ export default function SchedulerView() {
           </section>
         )}
       </div>
-
-      {toast && (
-        <div className="app-toast pointer-events-none absolute bottom-7 left-1/2 -translate-x-1/2 px-4 py-2 text-[12px] font-medium">
-          {toast}
-        </div>
-      )}
     </div>
   );
 }

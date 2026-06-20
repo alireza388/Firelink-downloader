@@ -141,21 +141,38 @@ fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 #[tauri::command]
-pub async fn create_category_directories(app_handle: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
-    use tauri::Manager;
-    for path in paths {
-        let mut expanded = std::path::PathBuf::from(&path);
-        if let Some(stripped) = path.strip_prefix("~/") {
-            if let Ok(home) = app_handle.path().home_dir() {
-                expanded = home.join(stripped);
-            }
+pub async fn create_category_directories(
+    app_handle: tauri::AppHandle,
+    base_folder: String,
+    subfolders: std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let base = crate::resolve_path(&base_folder, &app_handle);
+
+    for subfolder in subfolders.values() {
+        let normalized = subfolder.replace('\\', "/");
+        let relative = std::path::Path::new(&normalized);
+        if relative.is_absolute()
+            || normalized
+                .split('/')
+                .any(|part| part == ".." || part.ends_with(':'))
+        {
+            return Err(format!(
+                "Category subfolder must be a relative path: {subfolder}"
+            ));
         }
+
+        let expanded = base.join(relative);
         if !expanded.exists() {
             if let Err(e) = tokio::fs::create_dir_all(&expanded).await {
-                eprintln!("Failed to create directory {}: {}", path, e);
+                log::warn!(
+                    "Failed to create category directory '{}': {}",
+                    expanded.display(),
+                    e
+                );
             }
         }
     }
+
     Ok(())
 }
 

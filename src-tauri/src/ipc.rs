@@ -227,7 +227,9 @@ pub struct SchedulerSettings {
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct PersistedSettings {
     pub theme: Theme,
-    pub default_download_path: String,
+    pub base_download_folder: String,
+    pub category_subfolders: HashMap<String, String>,
+    pub category_directory_overrides: HashMap<String, String>,
     pub max_concurrent_downloads: usize,
     pub global_speed_limit: String,
     pub is_sidebar_visible: bool,
@@ -251,7 +253,6 @@ pub struct PersistedSettings {
     pub ask_where_to_save_each_file: bool,
     pub prevents_sleep_while_downloading: bool,
     pub media_cookie_source: MediaCookieSource,
-    pub download_directories: HashMap<String, String>,
     pub site_logins: Vec<SiteLogin>,
     // Note: `extension_pairing_token` is intentionally NOT persisted here. It
     // is an HMAC shared secret and is stored in the OS keychain by the

@@ -5,7 +5,6 @@ import {
   SettingsTab,
   useSettingsStore
 } from '../store/useSettingsStore';
-import { useDirectoryPicker } from '../hooks/useDirectoryPicker';
 import {
   Download, Palette, Globe, Folder, Key,
   Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
@@ -16,6 +15,11 @@ import { invokeCommand as invoke } from '../ipc';
 import type { EngineStatusItem } from '../bindings/EngineStatusItem';
 import { WindowDragRegion } from './WindowDragRegion';
 import appIcon from '../assets/app-icon.png';
+import {
+  DEFAULT_CATEGORY_SUBFOLDERS,
+  DOWNLOAD_CATEGORIES,
+  normalizeCategorySubfolder
+} from '../utils/downloadLocations';
 
 const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[] = [
   { type: 'downloads', label: 'Downloads', icon: Download },
@@ -97,7 +101,6 @@ const runEngineStatusCheck = (check: EngineCheck, force: boolean) => {
 
 export default function SettingsView() {
   const settings = useSettingsStore();
-  const { pickDirectory } = useDirectoryPicker();
   const activeTab = settings.activeSettingsTab;
 
   // Local state for engine diagnostics
@@ -245,7 +248,7 @@ runEngineChecks(false);
   };
 
   const handleBrowseCategory = async (category: string) => {
-    const currentPath = (settings.downloadDirectories || {})[category] || '';
+    const currentPath = settings.categoryDirectoryOverrides[category] || settings.baseDownloadFolder;
     try {
       const selected = await open({
         directory: true,
@@ -253,46 +256,42 @@ runEngineChecks(false);
         defaultPath: currentPath.startsWith('~') ? undefined : currentPath
       });
       if (selected && typeof selected === 'string') {
-        settings.setCategoryDirectory(category, selected);
+        settings.setCategoryDirectoryOverride(category, selected);
       }
     } catch (e) {
       console.error(`Failed to select folder for ${category}:`, e);
     }
   };
 
-  const handleBrowseBulk = async () => {
+  const handleBrowseBase = async () => {
     try {
       const base = await open({
         directory: true,
-        multiple: false
+        multiple: false,
+        defaultPath: settings.baseDownloadFolder.startsWith('~')
+          ? undefined
+          : settings.baseDownloadFolder
       });
       if (base && typeof base === 'string') {
-        const cleanBase = base.replace(/\/$/, '');
-        const paths = [
-          `${cleanBase}/Musics`,
-          `${cleanBase}/Movies`,
-          `${cleanBase}/Compressed`,
-          `${cleanBase}/Documents`,
-          `${cleanBase}/Pictures`,
-          `${cleanBase}/Applications`,
-          `${cleanBase}/Other`
-        ];
-        
-        settings.setCategoryDirectory('Musics', paths[0]);
-        settings.setCategoryDirectory('Movies', paths[1]);
-        settings.setCategoryDirectory('Compressed', paths[2]);
-        settings.setCategoryDirectory('Documents', paths[3]);
-        settings.setCategoryDirectory('Pictures', paths[4]);
-        settings.setCategoryDirectory('Applications', paths[5]);
-        settings.setCategoryDirectory('Other', paths[6]);
-        
+        settings.setBaseDownloadFolder(base);
         try {
-          await invoke('create_category_directories', { paths });
+          const safeSubfolders = Object.fromEntries(
+            DOWNLOAD_CATEGORIES.map(category => [
+              category,
+              normalizeCategorySubfolder(
+                settings.categorySubfolders[category] || '',
+                DEFAULT_CATEGORY_SUBFOLDERS[category]
+              )
+            ])
+          );
+          await invoke('create_category_directories', {
+            baseFolder: base,
+            subfolders: safeSubfolders
+          });
         } catch (e) {
           console.error("Failed to create directories on disk:", e);
         }
-        
-        showToast("Updated and created all category folders at base");
+        showToast("Base download folder updated");
       }
     } catch (e) {
       console.error("Failed to browse base path:", e);
@@ -670,20 +669,20 @@ runEngineChecks(false);
             <div className="settings-pane max-w-[760px]">
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
-                  <span className="text-[13px] font-semibold text-text-primary">Default Download Path</span>
+                  <div>
+                    <span className="text-[13px] font-semibold text-text-primary">Base Download Folder</span>
+                    <p className="mt-0.5 text-[11px] text-text-muted">Automatic category folders are created inside this folder.</p>
+                  </div>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      value={settings.defaultDownloadPath || ''}
-                      onChange={(e) => settings.setDefaultDownloadPath(e.target.value)}
+                      value={settings.baseDownloadFolder}
+                      onChange={(e) => settings.setBaseDownloadFolder(e.target.value)}
                       className="app-control w-64 text-[11px] px-2"
                       placeholder="~/Downloads"
                     />
                     <button
-                      onClick={async () => {
-                        const path = await pickDirectory(settings.defaultDownloadPath);
-                        if (path) settings.setDefaultDownloadPath(path);
-                      }}
+                      onClick={handleBrowseBase}
                       className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
                     >
                       Browse
@@ -706,46 +705,56 @@ runEngineChecks(false);
 
               <div className="mac-settings-group">
                 <div className="mac-settings-row bg-item-hover/20">
-                  <span className="text-[13px] font-semibold text-text-primary">All Categories Base</span>
-                  <div className="flex gap-2">
-                    <input
-                      type="text" readOnly placeholder="Choose base folder..."
-                      className="app-control w-64 text-text-muted text-[11px] px-2"
-                    />
-                    <button
-                      onClick={handleBrowseBulk}
-                      className="app-button px-3 text-xs font-semibold text-accent border border-accent/20 bg-accent/10 hover:bg-accent/20"
-                    >
-                      Browse
-                    </button>
-                  </div>
+                  <span className="text-[13px] font-semibold text-text-primary">Category Subfolders</span>
+                  <span className="text-[11px] text-text-muted">Relative to the base folder</span>
                 </div>
 
-                {['Musics', 'Movies', 'Compressed', 'Documents', 'Pictures', 'Applications', 'Other'].map((category) => (
+                {DOWNLOAD_CATEGORIES.map((category) => (
                   <div key={category} className="mac-settings-row">
                     <span className="text-[13px] text-text-primary pl-4">{category}</span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
                       <input
                         type="text"
-                        value={(settings.downloadDirectories || {})[category] || ''}
-                        onChange={(e) => settings.setCategoryDirectory(category, e.target.value)}
+                        value={settings.categorySubfolders[category] || ''}
+                        onChange={(e) => settings.setCategorySubfolder(category, e.target.value)}
+                        onBlur={(e) => settings.setCategorySubfolder(
+                          category,
+                          normalizeCategorySubfolder(
+                            e.target.value,
+                            DEFAULT_CATEGORY_SUBFOLDERS[category]
+                          )
+                        )}
                         className="app-control w-64 text-[11px] px-2"
+                        aria-label={`${category} subfolder`}
                       />
                       <button
                         onClick={() => handleBrowseCategory(category)}
                         className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
                       >
-                        Browse
+                        Custom folder
                       </button>
+                      {settings.categoryDirectoryOverrides[category] && (
+                        <button
+                          onClick={() => settings.setCategoryDirectoryOverride(category)}
+                          className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
+                        >
+                          Use automatic
+                        </button>
+                      )}
                     </div>
+                    {settings.categoryDirectoryOverrides[category] && (
+                      <p className="col-span-full pl-4 text-[10px] text-text-muted">
+                        Override: {settings.categoryDirectoryOverrides[category]}
+                      </p>
+                    )}
                   </div>
                 ))}
                 
                 <div className="mac-settings-row justify-end border-t-0">
                   <button
                     onClick={() => {
-                      settings.resetCategoryDirectories();
-                      showToast("Reset directories to default");
+                      settings.resetCategoryLocations();
+                      showToast("Reset category locations to default");
                     }}
                     className="app-control hover:bg-item-hover text-text-secondary px-4 py-1"
                   >

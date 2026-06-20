@@ -5,7 +5,10 @@ import { SidebarFilter } from './Sidebar';
 import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
 import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
-import { homeDir } from '@tauri-apps/api/path';
+import {
+  resolveCategoryDestination,
+  resolveDownloadFilePath
+} from '../utils/downloadLocations';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -57,18 +60,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     return () => window.clearTimeout(timeout);
   }, [interactionError]);
 
-  const resolvePath = async (dir: string, file: string) => {
-    let resolvedDir = dir;
-    if (dir.startsWith('~/')) {
-      const home = await homeDir();
-      resolvedDir = home + '/' + dir.slice(2);
-    } else if (dir === '~') {
-      resolvedDir = await homeDir();
-    }
-    const separator = resolvedDir.endsWith('/') ? '' : '/';
-    return resolvedDir + separator + file;
-  };
-
   const showInteractionError = (message: string, error: unknown) => {
     const detail = typeof error === 'string' ? error : error instanceof Error ? error.message : String(error);
     setInteractionError(`${message}: ${detail}`);
@@ -79,10 +70,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     if (!fileName) return null;
     const settings = useSettingsStore.getState();
     const destination = item.destination ||
-      (settings.downloadDirectories && settings.downloadDirectories[item.category]) ||
-      settings.defaultDownloadPath ||
-      '~/Downloads';
-    return resolvePath(destination, fileName);
+      await resolveCategoryDestination(settings, item.category);
+    return resolveDownloadFilePath(destination, fileName);
   };
 
   const openProperties = (id: string) => {

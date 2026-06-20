@@ -3,6 +3,7 @@ import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { ChevronDown, ChevronRight, FolderPlus, Info, CheckCircle, AlertCircle, Play, Pause } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { resolveCategoryDestination } from '../utils/downloadLocations';
 
 type LoginMode = 'matching' | 'custom' | 'none';
 
@@ -15,7 +16,7 @@ export const PropertiesModal = () => {
       : null
   );
 
-  const { defaultDownloadPath, perServerConnections } = useSettingsStore();
+  const { baseDownloadFolder, perServerConnections } = useSettingsStore();
 
   // Form states
   const [url, setUrl] = useState('');
@@ -46,7 +47,14 @@ export const PropertiesModal = () => {
       if (activeItem) {
         setUrl(activeItem.url);
         setFileName(activeItem.fileName);
-        setSaveLocation(activeItem.destination || defaultDownloadPath || '~/Downloads');
+        if (activeItem.destination) {
+          setSaveLocation(activeItem.destination);
+        } else {
+          void resolveCategoryDestination(
+            useSettingsStore.getState(),
+            activeItem.category
+          ).then(setSaveLocation);
+        }
         setConnections(activeItem.connections || 16);
         
         if (activeItem.speedLimit) {
@@ -85,7 +93,7 @@ export const PropertiesModal = () => {
         setSelectedPropertiesDownloadId(null);
       }
     }
-  }, [selectedPropertiesDownloadId, defaultDownloadPath, setSelectedPropertiesDownloadId]);
+  }, [selectedPropertiesDownloadId, baseDownloadFolder, setSelectedPropertiesDownloadId]);
 
   if (!selectedPropertiesDownloadId || !item) return null;
 
@@ -179,7 +187,7 @@ export const PropertiesModal = () => {
             <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[50px]">Last try</span><span className="text-text-secondary truncate">-</span></div>
             
             <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[90px]">Date added</span><span className="text-text-secondary truncate">{new Date(item.dateAdded).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span></div>
-            <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[70px]">Destination</span><span className="text-text-secondary truncate" title={item.destination}>{item.destination || defaultDownloadPath}</span></div>
+            <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[70px]">Destination</span><span className="text-text-secondary truncate" title={saveLocation}>{saveLocation || baseDownloadFolder}</span></div>
           </div>
         </div>
 

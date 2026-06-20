@@ -101,7 +101,10 @@ type CommandMap = {
   db_replace_downloads: { args: { data: string }; result: void };
   db_get_all_queues: { args: undefined; result: string[] };
   db_replace_queues: { args: { data: string }; result: void };
-  create_category_directories: { args: { paths: string[] }; result: void };
+  create_category_directories: {
+    args: { baseFolder: string; subfolders: Record<string, string> };
+    result: void;
+  };
   export_logs: { args: { destPath: string }; result: string };
   get_pending_order: { args: undefined; result: string[] };
   enqueue_download: { args: { item: any }; result: string };

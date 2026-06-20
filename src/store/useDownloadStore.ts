@@ -11,6 +11,10 @@ import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
 import { isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
+import {
+  resolveCategoryDestination,
+  resolveDownloadFilePath
+} from '../utils/downloadLocations';
 
 export type { DownloadCategory } from '../utils/downloads';
 
@@ -124,21 +128,18 @@ const syncSystemIntegrations = () => {
 const resolveDownloadPath = async (destination: string, fileName: string) => {
   let resolvedDestination = destination;
   if (destination.startsWith('~/')) {
-    resolvedDestination = `${await homeDir()}/${destination.slice(2)}`;
+    resolvedDestination = await resolveDownloadFilePath(await homeDir(), destination.slice(2));
   } else if (destination === '~') {
     resolvedDestination = await homeDir();
   }
-  const separator = resolvedDestination.endsWith('/') ? '' : '/';
-  return `${resolvedDestination}${separator}${fileName}`;
+  return resolveDownloadFilePath(resolvedDestination, fileName);
 };
 
-const effectiveDestinationForItem = (
+const effectiveDestinationForItem = async (
   item: Pick<DownloadItem, 'destination' | 'category'>,
   settings: ReturnType<typeof useSettingsStore.getState>
-) => item.destination ||
-  (settings.downloadDirectories && settings.downloadDirectories[item.category]) ||
-  settings.defaultDownloadPath ||
-  '~/Downloads';
+): Promise<string> =>
+  item.destination || resolveCategoryDestination(settings, item.category);
 
 export type { DownloadStatus };
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
@@ -312,7 +313,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   addDownload: async (item, action) => {
     const settings = useSettingsStore.getState();
-    const destPath = effectiveDestinationForItem(item, settings);
+    const destPath = await effectiveDestinationForItem(item, settings);
     const ownedItem: DownloadItem = {
       ...item,
       destination: destPath,
@@ -453,9 +454,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     const settings = useSettingsStore.getState();
     const destPath = targetItem.destination ||
-      (settings.downloadDirectories && settings.downloadDirectories[targetItem.category]) ||
-      settings.defaultDownloadPath ||
-      '~/Downloads';
+      await resolveCategoryDestination(settings, targetItem.category);
 
     if (!destPath.trim()) {
       throw new Error('Cannot redownload: destination folder is missing.');
@@ -639,10 +638,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                 console.warn("Could not fetch keychain password for login:", e);
               }
             }
-            const destPath = item.destination || 
-                             (settings.downloadDirectories && settings.downloadDirectories[item.category]) || 
-                             settings.defaultDownloadPath || 
-                             '~/Downloads';
+            const destPath = item.destination ||
+              await resolveCategoryDestination(settings, item.category);
             itemsToEnqueue.push({
               id: item.id,
               url: item.url,

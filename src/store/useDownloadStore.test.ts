@@ -12,6 +12,15 @@ vi.mock('@tauri-apps/plugin-log', () => ({
   error: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/path', () => ({
+  homeDir: vi.fn().mockResolvedValue('/Users/test'),
+  join: vi.fn(async (...parts: string[]) =>
+    parts
+      .map((part, index) => index === 0 ? part.replace(/[\\/]+$/, '') : part.replace(/^[\\/]+|[\\/]+$/g, ''))
+      .join('/')
+  ),
+}));
+
 vi.mock('./useSettingsStore', () => ({
   useSettingsStore: {
     getState: vi.fn(() => ({
@@ -22,6 +31,17 @@ vi.mock('./useSettingsStore', () => ({
       customUserAgent: '',
       maxAutomaticRetries: 3,
       mediaCookieSource: 'none',
+      baseDownloadFolder: '~/Downloads',
+      categorySubfolders: {
+        Musics: 'Musics',
+        Movies: 'Movies',
+        Compressed: 'Compressed',
+        Documents: 'Documents',
+        Pictures: 'Pictures',
+        Applications: 'Applications',
+        Other: 'Other',
+      },
+      categoryDirectoryOverrides: {},
     })),
   }
 }));

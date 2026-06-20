@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { categoryForFileName } from '../utils/downloads';
+import { resolveCategoryDestination } from '../utils/downloadLocations';
 
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return 'Unknown size';
@@ -23,7 +24,7 @@ export const QualityModal = React.memo(() => {
 
   if (!isParsing && !activeMetadata && !parsingError) return null;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!activeMetadata || !activeMetadataUrl || !selectedFormatId) return;
 
     const format = activeMetadata.formats.find(f => f.format_id === selectedFormatId);
@@ -34,7 +35,7 @@ export const QualityModal = React.memo(() => {
     const filename = `${activeMetadata.title}.${format.ext}`.replace(/[\/\\?%*:|"<>]/g, '-');
     
     const category = categoryForFileName(filename);
-    const destination = (settings.downloadDirectories && settings.downloadDirectories[category]) || settings.defaultDownloadPath || '~/Downloads';
+    const destination = await resolveCategoryDestination(settings, category);
 
     const downloadItem = {
       id,
@@ -51,7 +52,7 @@ export const QualityModal = React.memo(() => {
       mediaFormatSelector: format.format_id
     };
 
-    void addDownload(downloadItem, { type: 'start-now' });
+    await addDownload(downloadItem, { type: 'start-now' });
     clearMetadata();
   };
 

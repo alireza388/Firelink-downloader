@@ -119,12 +119,26 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
             destinations.push(destination);
         }
 
-        let category_destination = settings
-            .as_ref()
-            .and_then(|settings| settings.download_directories.get(&category).cloned());
+        let category_destination = settings.as_ref().map(|settings| {
+            settings
+                .category_directory_overrides
+                .get(&category)
+                .cloned()
+                .unwrap_or_else(|| {
+                    let subfolder = settings
+                        .category_subfolders
+                        .get(&category)
+                        .cloned()
+                        .unwrap_or_else(|| category.clone());
+                    std::path::PathBuf::from(&settings.base_download_folder)
+                        .join(subfolder)
+                        .to_string_lossy()
+                        .to_string()
+                })
+        });
         let default_destination = settings
             .as_ref()
-            .map(|settings| settings.default_download_path.clone());
+            .map(|settings| settings.base_download_folder.clone());
 
         if destinations.is_empty() {
             let fallback_destination = category_destination.clone().or(default_destination.clone());

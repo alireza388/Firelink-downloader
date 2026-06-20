@@ -13,6 +13,10 @@ import type { SchedulerSettings } from '../bindings/SchedulerSettings';
 import type { SettingsTab } from '../bindings/SettingsTab';
 import type { SiteLogin } from '../bindings/SiteLogin';
 import type { Theme } from '../bindings/Theme';
+import {
+  DEFAULT_CATEGORY_SUBFOLDERS,
+  normalizeDownloadLocationSettings
+} from '../utils/downloadLocations';
 
 let settingsSave = Promise.resolve();
 
@@ -66,7 +70,9 @@ export type {
 
 export interface SettingsState {
   theme: Theme;
-  defaultDownloadPath: string;
+  baseDownloadFolder: string;
+  categorySubfolders: Record<string, string>;
+  categoryDirectoryOverrides: Record<string, string>;
   maxConcurrentDownloads: number;
   globalSpeedLimit: string;
   isSidebarVisible: boolean;
@@ -94,13 +100,12 @@ export interface SettingsState {
   askWhereToSaveEachFile: boolean;
   preventsSleepWhileDownloading: boolean;
   mediaCookieSource: MediaCookieSource;
-  downloadDirectories: Record<string, string>;
   siteLogins: SiteLogin[];
   extensionPairingToken: string;
   autoCheckUpdates: boolean;
 
   setTheme: (theme: Theme) => void;
-  setDefaultDownloadPath: (path: string) => void;
+  setBaseDownloadFolder: (path: string) => void;
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
   setActiveView: (view: ActiveView) => void;
@@ -127,48 +132,15 @@ export interface SettingsState {
   setAskWhereToSaveEachFile: (ask: boolean) => void;
   setPreventsSleepWhileDownloading: (prevent: boolean) => void;
   setMediaCookieSource: (source: MediaCookieSource) => void;
-  setCategoryDirectory: (category: string, path: string) => void;
-  resetCategoryDirectories: () => void;
+  setCategorySubfolder: (category: string, subfolder: string) => void;
+  setCategoryDirectoryOverride: (category: string, path?: string) => void;
+  resetCategoryLocations: () => void;
   addSiteLogin: (login: SiteLogin) => void;
   removeSiteLogin: (id: string) => void;
   regeneratePairingToken: () => void;
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
   hydratePairingToken: () => Promise<boolean>;
 }
-
-const defaultDirectories = {
-  Musics: '~/Downloads/Musics',
-  Movies: '~/Downloads/Movies',
-  Compressed: '~/Downloads/Compressed',
-  Documents: '~/Downloads/Documents',
-  Pictures: '~/Downloads/Pictures',
-  Applications: '~/Downloads/Applications',
-  Other: '~/Downloads/Other'
-};
-
-const normalizeDownloadDirectories = (directories: unknown): Record<string, string> => {
-  if (!directories || typeof directories !== 'object') {
-    return { ...defaultDirectories };
-  }
-
-  const values = directories as Record<string, unknown>;
-  const directory = (current: string, legacy?: string) => {
-    const value = values[current] ?? (legacy ? values[legacy] : undefined);
-    return typeof value === 'string' && value.length > 0
-      ? value
-      : defaultDirectories[current as keyof typeof defaultDirectories];
-  };
-
-  return {
-    Musics: directory('Musics', 'Audio'),
-    Movies: directory('Movies', 'Video'),
-    Compressed: directory('Compressed', 'Archives'),
-    Documents: directory('Documents'),
-    Pictures: directory('Pictures', 'Images'),
-    Applications: directory('Applications', 'Apps'),
-    Other: directory('Other')
-  };
-};
 
 const generateSecureToken = () => {
   try {
@@ -200,7 +172,9 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       theme: 'system',
-      defaultDownloadPath: '~/Downloads',
+      baseDownloadFolder: '~/Downloads',
+      categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
+      categoryDirectoryOverrides: {},
       maxConcurrentDownloads: 3,
       globalSpeedLimit: '',
       activeView: 'downloads',
@@ -236,13 +210,15 @@ export const useSettingsStore = create<SettingsState>()(
       askWhereToSaveEachFile: false,
       preventsSleepWhileDownloading: true,
       mediaCookieSource: 'none',
-      downloadDirectories: { ...defaultDirectories },
       siteLogins: [],
       extensionPairingToken: '',
       autoCheckUpdates: true,
 
       setTheme: (theme) => { info('Settings updated: theme'); set({ theme }); },
-      setDefaultDownloadPath: (path) => { info('Settings updated: defaultDownloadPath'); set({ defaultDownloadPath: path }); },
+      setBaseDownloadFolder: (path) => {
+        info('Settings updated: baseDownloadFolder');
+        set({ baseDownloadFolder: path });
+      },
       setMaxConcurrentDownloads: (max) => {
         info('Settings updated: maxConcurrentDownloads');
         set({ maxConcurrentDownloads: max });
@@ -282,13 +258,28 @@ export const useSettingsStore = create<SettingsState>()(
         if (!preventsSleepWhileDownloading) invoke('set_prevent_sleep', { prevent: false }).catch(console.error);
       },
       setMediaCookieSource: (mediaCookieSource) => { info('Settings updated: mediaCookieSource'); set({ mediaCookieSource }); },
-      setCategoryDirectory: (category, path) => {
-        info(`Settings updated: category directory ${category}`);
+      setCategorySubfolder: (category, subfolder) => {
+        info(`Settings updated: category subfolder ${category}`);
         set((state) => ({
-          downloadDirectories: { ...state.downloadDirectories, [category]: path }
+          categorySubfolders: { ...state.categorySubfolders, [category]: subfolder }
         }));
       },
-      resetCategoryDirectories: () => { info('Settings updated: resetCategoryDirectories'); set({ downloadDirectories: { ...defaultDirectories } }); },
+      setCategoryDirectoryOverride: (category, path) => {
+        info(`Settings updated: category directory override ${category}`);
+        set((state) => {
+          const next = { ...state.categoryDirectoryOverrides };
+          if (path?.trim()) next[category] = path.trim();
+          else delete next[category];
+          return { categoryDirectoryOverrides: next };
+        });
+      },
+      resetCategoryLocations: () => {
+        info('Settings updated: resetCategoryLocations');
+        set({
+          categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
+          categoryDirectoryOverrides: {}
+        });
+      },
       addSiteLogin: (login) => set((state) => ({
         siteLogins: [...state.siteLogins, login]
       })),
@@ -312,21 +303,29 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'firelink-settings',
       storage: createJSONStorage(() => tauriStorage),
-      version: 1,
+      version: 2,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as SettingsState;
         }
         const persisted = persistedState as Partial<SettingsState>;
+        const locations = normalizeDownloadLocationSettings(
+          persisted as Partial<SettingsState> & {
+            defaultDownloadPath?: unknown;
+            downloadDirectories?: unknown;
+          }
+        );
         return {
           ...persisted,
-          downloadDirectories: normalizeDownloadDirectories(persisted.downloadDirectories),
+          ...locations,
           siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : []
         } as SettingsState;
       },
       partialize: (state): PersistedSettings => ({
         theme: state.theme,
-        defaultDownloadPath: state.defaultDownloadPath,
+        baseDownloadFolder: state.baseDownloadFolder,
+        categorySubfolders: state.categorySubfolders,
+        categoryDirectoryOverrides: state.categoryDirectoryOverrides,
         maxConcurrentDownloads: state.maxConcurrentDownloads,
         globalSpeedLimit: state.globalSpeedLimit,
         isSidebarVisible: state.isSidebarVisible,
@@ -351,7 +350,6 @@ export const useSettingsStore = create<SettingsState>()(
         askWhereToSaveEachFile: state.askWhereToSaveEachFile,
         preventsSleepWhileDownloading: state.preventsSleepWhileDownloading,
         mediaCookieSource: state.mediaCookieSource,
-        downloadDirectories: state.downloadDirectories,
         siteLogins: state.siteLogins,
         autoCheckUpdates: state.autoCheckUpdates
       }),
@@ -359,12 +357,13 @@ export const useSettingsStore = create<SettingsState>()(
         const persisted = persistedState && typeof persistedState === 'object'
           ? persistedState as Partial<SettingsState>
           : {};
+        const locations = normalizeDownloadLocationSettings(persisted);
         return ({
         ...currentState,
         ...persisted,
+        ...locations,
         appFontSize: persisted.appFontSize || currentState.appFontSize,
         listRowDensity: persisted.listRowDensity || currentState.listRowDensity,
-        downloadDirectories: normalizeDownloadDirectories(persisted.downloadDirectories),
         siteLogins: Array.isArray(persisted.siteLogins)
           ? persisted.siteLogins
           : currentState.siteLogins

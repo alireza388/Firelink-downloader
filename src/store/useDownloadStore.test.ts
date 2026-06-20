@@ -91,4 +91,79 @@ describe('useDownloadStore', () => {
     expect(calls.some(c => c[0] === 'enqueue_download')).toBe(true);
     expect(useDownloadStore.getState().backendRegisteredIds.has('1')).toBe(true); // Re-registered by dispatchItem
   });
+
+  it('adds to the list without assigning a queue or dispatching', async () => {
+    await useDownloadStore.getState().addDownload({
+      id: 'list-1',
+      url: 'https://example.com/list.bin',
+      fileName: 'list.bin',
+      category: 'Other',
+      dateAdded: ''
+    }, { type: 'add-to-list' });
+
+    const item = useDownloadStore.getState().downloads[0];
+    expect(item.status).toBe('ready');
+    expect(item.queueId).toBeUndefined();
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
+  });
+
+  it('adds to the selected queue without dispatching', async () => {
+    await useDownloadStore.getState().addDownload({
+      id: 'queue-1',
+      url: 'https://example.com/queue.bin',
+      fileName: 'queue.bin',
+      category: 'Other',
+      dateAdded: ''
+    }, { type: 'add-to-queue', queueId: 'queue-b' });
+
+    const item = useDownloadStore.getState().downloads[0];
+    expect(item.status).toBe('queued');
+    expect(item.queueId).toBe('queue-b');
+    expect(useDownloadStore.getState().pendingOrder).toContain('queue-1');
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
+  });
+
+  it('starts immediately without assigning a user queue', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['start-1'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().addDownload({
+      id: 'start-1',
+      url: 'https://example.com/start.bin',
+      fileName: 'start.bin',
+      category: 'Other',
+      dateAdded: ''
+    }, { type: 'start-now' });
+
+    const item = useDownloadStore.getState().downloads[0];
+    expect(item.queueId).toBeUndefined();
+    expect(item.hasBeenDispatched).toBe(true);
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({ id: 'start-1' })
+      })
+    );
+  });
+
+  it('preserves extension request headers and cookies for the Add modal', () => {
+    useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://example.com/file.bin'],
+      referer: 'https://example.com/page',
+      silent: false,
+      filename: 'file.bin',
+      headers: 'X-Test: value',
+      cookies: 'session=secret'
+    });
+
+    const state = useDownloadStore.getState();
+    expect(state.isAddModalOpen).toBe(true);
+    expect(state.pendingAddUrls).toBe('https://example.com/file.bin');
+    expect(state.pendingAddReferer).toBe('https://example.com/page');
+    expect(state.pendingAddFilename).toBe('file.bin');
+    expect(state.pendingAddHeaders).toBe('X-Test: value');
+    expect(state.pendingAddCookies).toBe('session=secret');
+  });
 });

@@ -41,19 +41,17 @@ export const QualityModal = React.memo(() => {
       url: activeMetadataUrl,
       fileName: filename,
       destination,
-      status: 'queued' as const,
       fraction: 0,
       size: format.filesize ? formatBytes(format.filesize) : 'Unknown',
       speed: '-',
       eta: '-',
+      category,
       dateAdded: new Date().toISOString(),
-      queueId: '00000000-0000-0000-0000-000000000001',
-      _dispatched: false,
       isMedia: true,
-      selectedFormatId: format.format_id
+      mediaFormatSelector: format.format_id
     };
 
-    addDownload(downloadItem as any);
+    void addDownload(downloadItem, { type: 'start-now' });
     clearMetadata();
   };
 

@@ -147,6 +147,11 @@ export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
 export type { DownloadItem, Queue };
 export type ExtensionDownloadRequest = ExtensionDownload;
+export type AddDownloadAction =
+  | { type: 'start-now' }
+  | { type: 'add-to-list' }
+  | { type: 'add-to-queue'; queueId: string };
+export type DownloadDraft = Omit<DownloadItem, 'status' | 'queueId' | 'hasBeenDispatched'>;
 
 export type DeleteModalState = {
   isOpen: boolean;
@@ -170,15 +175,23 @@ interface DownloadState {
   pendingAddUrls: string;
   pendingAddReferer: string;
   pendingAddFilename: string;
+  pendingAddHeaders: string;
+  pendingAddCookies: string;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
-  openAddModalWithUrls: (urls: string, referer?: string | null, filename?: string | null) => void;
+  openAddModalWithUrls: (
+    urls: string,
+    referer?: string | null,
+    filename?: string | null,
+    headers?: string | null,
+    cookies?: string | null
+  ) => void;
   handleExtensionDownload: (request: ExtensionDownloadRequest) => void;
   deleteModalState: DeleteModalState;
   openDeleteModal: (downloadId?: string) => void;
   closeDeleteModal: () => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
-  addDownload: (item: DownloadItem) => Promise<void>;
+  addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<void>;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
   removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
   redownload: (id: string) => Promise<void>;
@@ -238,6 +251,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddUrls: '',
   pendingAddReferer: '',
   pendingAddFilename: '',
+  pendingAddHeaders: '',
+  pendingAddCookies: '',
   selectedPropertiesDownloadId: null,
   isParsing: false,
   activeMetadata: null,
@@ -250,16 +265,20 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     isAddModalOpen: isOpen,
     pendingAddUrls: '',
     pendingAddReferer: '',
-    pendingAddFilename: ''
+    pendingAddFilename: '',
+    pendingAddHeaders: '',
+    pendingAddCookies: ''
   }),
-  openAddModalWithUrls: (urls, referer, filename) => set((state) => {
+  openAddModalWithUrls: (urls, referer, filename, headers, cookies) => set((state) => {
     const existingUrls = state.isAddModalOpen && state.pendingAddUrls ? state.pendingAddUrls : '';
     const mergedUrls = existingUrls ? `${existingUrls}\n${urls}` : urls;
     return {
       isAddModalOpen: true,
       pendingAddUrls: mergedUrls,
       pendingAddReferer: referer?.trim() || state.pendingAddReferer || '',
-      pendingAddFilename: filename?.trim() || state.pendingAddFilename || ''
+      pendingAddFilename: filename?.trim() || state.pendingAddFilename || '',
+      pendingAddHeaders: headers?.trim() || state.pendingAddHeaders || '',
+      pendingAddCookies: cookies?.trim() || state.pendingAddCookies || ''
     };
   }),
   handleExtensionDownload: (request) => {
@@ -269,7 +288,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     get().openAddModalWithUrls(
       urls.join('\n'),
       request.referer,
-      urls.length === 1 ? request.filename : null
+      urls.length === 1 ? request.filename : null,
+      request.headers,
+      request.cookies
     );
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
@@ -291,23 +312,31 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       info(`Media metadata parsing failed for ${url}: ${e}`);
     }
   },
-  addDownload: async (item) => {
-    info(`Download ${item.id} added to queue`);
+  addDownload: async (item, action) => {
     const settings = useSettingsStore.getState();
     const destPath = effectiveDestinationForItem(item, settings);
-    const ownedItem = { ...item, destination: destPath, hasBeenDispatched: false };
+    const ownedItem: DownloadItem = {
+      ...item,
+      destination: destPath,
+      status: action.type === 'add-to-queue' ? 'queued' : 'ready',
+      queueId: action.type === 'add-to-queue' ? action.queueId : undefined,
+      hasBeenDispatched: false
+    };
     set((state) => ({ downloads: [...state.downloads, ownedItem] }));
 
-    if (item.status === 'queued') {
+    if (action.type === 'add-to-queue') {
       const order = useDownloadStore.getState().pendingOrder;
       if (!order.includes(item.id)) {
         useDownloadStore.getState().setPendingOrder([...order, item.id]);
       }
-    } else {
-      // Immediate dispatch (e.g., "Start immediately" from UI where status isn't just 'queued')
+      info(`Download ${item.id} added to queue ${action.queueId}`);
+    } else if (action.type === 'start-now') {
       if (await dispatchItem(item.id)) {
         get().updateDownload(item.id, { hasBeenDispatched: true });
       }
+      info(`Download ${item.id} started`);
+    } else {
+      info(`Download ${item.id} added to list`);
     }
   },
   applyProperties: async (id, updates) => {
@@ -319,7 +348,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       throw new Error("Cannot change properties while transfer is active. Pause it first.");
     }
 
-    if (item.status === 'completed' || item.status === 'failed') {
+    if (item.status === 'ready' || item.status === 'completed' || item.status === 'failed') {
       state.updateDownload(id, updates);
       return;
     }
@@ -470,6 +499,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     if (!targetItem) return;
 
     try {
+      if (targetItem.status === 'ready') {
+        if (await dispatchItem(id)) {
+          get().updateDownload(id, { hasBeenDispatched: true });
+        }
+        return;
+      }
+
       const resumedExisting = await invoke('resume_download', { id });
       if (resumedExisting) {
         return;

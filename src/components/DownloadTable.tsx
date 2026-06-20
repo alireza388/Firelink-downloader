@@ -221,7 +221,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             className="main-control-button" 
             disabled={filteredDownloads.length === 0}
             onClick={() => {
-              filteredDownloads.filter(d => d.status === 'paused').forEach(d => handleResume(d));
+              filteredDownloads
+                .filter(d => d.status === 'ready' || d.status === 'paused')
+                .forEach(d => handleResume(d));
             }}
             title="Resume All"
           >
@@ -360,7 +362,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </button>
           )}
 
-          {(contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
+          {(contextItem.status === 'ready' || contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
             <button
               onClick={() => {
                 setContextMenu(null);
@@ -368,7 +370,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               }}
               className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
             >
-              Resume
+              {contextItem.status === 'ready' ? 'Start' : 'Resume'}
             </button>
           )}
 

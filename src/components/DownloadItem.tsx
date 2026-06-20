@@ -200,8 +200,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               <Pause size={14} fill="currentColor" />
             </button>
           )}
-          {download.status === 'paused' && (
-            <button onClick={() => handleResume(download)} className="app-icon-button h-7 w-7" title="Resume">
+          {(download.status === 'ready' || download.status === 'paused') && (
+            <button onClick={() => handleResume(download)} className="app-icon-button h-7 w-7" title={download.status === 'ready' ? 'Start' : 'Resume'}>
               <Play size={14} fill="currentColor" />
             </button>
           )}

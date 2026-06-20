@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
@@ -23,7 +23,6 @@ pub const EXTENSION_SERVER_PORT: u16 = 6412;
 pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> = EXTENSION_SERVER_PORT..=6422;
 const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
-const MAIN_QUEUE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -34,6 +33,7 @@ type ReplayCache = Arc<Mutex<HashMap<String, u64>>>;
 pub struct ServerState {
     pub app_handle: AppHandle,
     pub pairing_token: SharedExtensionToken,
+    pub frontend_ready: SharedFrontendReady,
     pub replay_cache: ReplayCache,
 }
 
@@ -66,12 +66,13 @@ pub struct ExtensionDownload {
 pub async fn start_server(
     app_handle: AppHandle,
     pairing_token: SharedExtensionToken,
-    _frontend_ready: SharedFrontendReady,
+    frontend_ready: SharedFrontendReady,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let state = ServerState {
         app_handle,
         pairing_token,
+        frontend_ready,
         replay_cache: Arc::new(Mutex::new(HashMap::new())),
     };
 
@@ -206,8 +207,13 @@ async fn download_handler(
         }
     }
 
-    if enqueue_extension_download(&state.app_handle, &download)
-        .await
+    if !wait_for_frontend(&state.frontend_ready).await {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    if state
+        .app_handle
+        .emit("extension-add-download", download)
         .is_err()
     {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -216,142 +222,14 @@ async fn download_handler(
     Ok(StatusCode::OK)
 }
 
-async fn enqueue_extension_download(
-    app_handle: &AppHandle,
-    download: &ExtensionDownload,
-) -> Result<(), String> {
-    let Ok(settings) = crate::settings::load_settings(app_handle) else {
-        return Err("settings unavailable".to_string());
-    };
-    let state = app_handle.state::<crate::AppState>();
-    let mut created_items = Vec::new();
-    let mut tasks = Vec::new();
-
-    for url in &download.urls {
-        let filename = download
-            .filename
-            .as_deref()
-            .filter(|_| download.urls.len() == 1)
-            .map(str::to_string)
-            .unwrap_or_else(|| filename_from_url(url));
-        let category = crate::parity::get_file_category(filename.clone());
-        let category_key = format!("{category:?}");
-        let destination = settings
-            .download_directories
-            .get(&category_key)
-            .cloned()
-            .filter(|path| !path.trim().is_empty())
-            .unwrap_or_else(|| settings.default_download_path.clone());
-        let id = uuid::Uuid::new_v4().to_string();
-        let headers = merge_headers(download.referer.as_deref(), download.headers.as_deref());
-        let item = crate::ipc::DownloadItem {
-            id: id.clone(),
-            url: url.clone(),
-            file_name: filename.clone(),
-            status: crate::ipc::DownloadStatus::Queued,
-            fraction: Some(0.0),
-            speed: Some("-".to_string()),
-            eta: Some("-".to_string()),
-            size: None,
-            category,
-            date_added: chrono::Utc::now().to_rfc3339(),
-            connections: Some(settings.per_server_connections),
-            speed_limit: (!settings.global_speed_limit.trim().is_empty())
-                .then(|| settings.global_speed_limit.clone()),
-            username: None,
-            password: None,
-            headers: headers.clone(),
-            checksum: None,
-            cookies: download.cookies.clone(),
-            mirrors: None,
-            destination: Some(destination.clone()),
-            is_media: Some(false),
-            media_format_selector: None,
-            queue_id: MAIN_QUEUE_ID.to_string(),
-            has_been_dispatched: Some(true),
-        };
-        let task = crate::queue::EnqueueItem {
-            id,
-            url: url.clone(),
-            destination,
-            filename,
-            connections: Some(settings.per_server_connections),
-            speed_limit: (!settings.global_speed_limit.trim().is_empty())
-                .then(|| settings.global_speed_limit.clone()),
-            username: None,
-            password: None,
-            headers,
-            checksum: None,
-            cookies: download.cookies.clone(),
-            mirrors: None,
-            user_agent: (!settings.custom_user_agent.trim().is_empty())
-                .then(|| settings.custom_user_agent.clone()),
-            max_tries: Some(settings.max_automatic_retries),
-            proxy: None,
-            format_selector: None,
-            cookie_source: None,
-            is_media: Some(false),
+async fn wait_for_frontend(frontend_ready: &SharedFrontendReady) -> bool {
+    for _ in 0..40 {
+        if frontend_ready.load(Ordering::Acquire) {
+            return true;
         }
-        .into_task();
-
-        if let Err(e) = crate::download_ownership::register_expected(
-            app_handle,
-            &item.id,
-            item.destination.as_deref().unwrap_or(""),
-            &item.file_name,
-        ) {
-            log::warn!("extension: ownership registration failed: {}", e);
-            continue;
-        }
-
-        created_items.push(item);
-        tasks.push(task);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-
-    let results = state.queue_manager.enqueue_many(tasks).await;
-    let mut emitted_items = Vec::new();
-    
-    for (item, result) in created_items.into_iter().zip(results) {
-        if result.success {
-            emitted_items.push(item);
-        } else {
-            let _ = crate::download_ownership::remove(app_handle, &item.id);
-            state.queue_manager.release_registered_id(&item.id).await;
-        }
-    }
-
-    if !emitted_items.is_empty() {
-        let _ = app_handle.emit("extension-downloads-queued", emitted_items);
-    }
-    Ok(())
-}
-
-fn merge_headers(referer: Option<&str>, headers: Option<&str>) -> Option<String> {
-    let mut values = Vec::new();
-    if let Some(referer) = referer {
-        values.push(format!("Referer: {referer}"));
-    }
-    if let Some(headers) = headers {
-        values.extend(
-            headers
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_string),
-        );
-    }
-    (!values.is_empty()).then(|| values.join("\n"))
-}
-
-fn filename_from_url(raw_url: &str) -> String {
-    Url::parse(raw_url)
-        .ok()
-        .and_then(|url| {
-            url.path_segments()
-                .and_then(Iterator::last)
-                .and_then(sanitize_filename)
-        })
-        .unwrap_or_else(|| "download".to_string())
+    false
 }
 
 fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {

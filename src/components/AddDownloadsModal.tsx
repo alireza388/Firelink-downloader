@@ -1,7 +1,12 @@
-import { useState, useEffect } from 'react';
-import { useDownloadStore, MAIN_QUEUE_ID, getSiteLogin } from '../store/useDownloadStore';
+import { useState, useEffect, useRef } from 'react';
+import {
+  useDownloadStore,
+  MAIN_QUEUE_ID,
+  getSiteLogin,
+  type AddDownloadAction
+} from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, type LucideIcon } from 'lucide-react';
+import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, ListPlus, Rows3, type LucideIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
@@ -260,6 +265,8 @@ export const AddDownloadsModal = () => {
     pendingAddUrls,
     pendingAddReferer,
     pendingAddFilename,
+    pendingAddHeaders,
+    pendingAddCookies,
     toggleAddModal,
     addDownload,
     queues
@@ -275,9 +282,11 @@ export const AddDownloadsModal = () => {
 
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>([]);
   const [showingDuplicates, setShowingDuplicates] = useState(false);
-  const [pendingStartFlag, setPendingStartFlag] = useState(false);
+  const [pendingAction, setPendingAction] = useState<AddDownloadAction>({ type: 'start-now' });
   const [pendingUseSharedDestination, setPendingUseSharedDestination] = useState(false);
   const [resolvedLocation, setResolvedLocation] = useState('');
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const actionMenuRef = useRef<HTMLDivElement>(null);
 
   // Right Form
   const [saveLocation, setSaveLocation] = useState(defaultDownloadPath);
@@ -315,17 +324,34 @@ export const AddDownloadsModal = () => {
       setChecksumEnabled(false);
       setChecksumAlgo('SHA-256');
       setChecksumValue('');
-      setHeaders(pendingAddReferer ? `Referer: ${pendingAddReferer}` : '');
-      setCookies('');
+      setHeaders([
+        pendingAddReferer ? `Referer: ${pendingAddReferer}` : '',
+        pendingAddHeaders
+      ].filter(Boolean).join('\n'));
+      setCookies(pendingAddCookies);
       setMirrors('');
+      setIsActionMenuOpen(false);
     }
   }, [
     isAddModalOpen,
     pendingAddUrls,
     pendingAddReferer,
+    pendingAddHeaders,
+    pendingAddCookies,
     defaultDownloadPath,
     queues
   ]);
+
+  useEffect(() => {
+    if (!isActionMenuOpen) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!actionMenuRef.current?.contains(event.target as Node)) {
+        setIsActionMenuOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', closeMenu);
+    return () => window.removeEventListener('pointerdown', closeMenu);
+  }, [isActionMenuOpen]);
 
   useEffect(() => {
     if (!saveLocation) return;
@@ -493,7 +519,7 @@ export const AddDownloadsModal = () => {
       '~/Downloads';
   };
 
-  const handleStart = async (startImmediately: boolean) => {
+  const handleAction = async (action: AddDownloadAction) => {
     let finalLocation = saveLocation;
     let useSharedDestination = isSaveLocationManual;
     const settings = useSettingsStore.getState();
@@ -553,16 +579,16 @@ export const AddDownloadsModal = () => {
 
     if (newConflicts.length > 0) {
       setConflicts(newConflicts);
-      setPendingStartFlag(startImmediately);
+      setPendingAction(action);
       setPendingUseSharedDestination(useSharedDestination);
       setShowingDuplicates(true);
       return;
     }
 
-    await executeAddDownloads(startImmediately, finalLocation, useSharedDestination);
+    await executeAddDownloads(action, finalLocation, useSharedDestination);
   };
 
-  const executeAddDownloads = async (startImmediately: boolean, finalLocation: string, useSharedDestination: boolean, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
+  const executeAddDownloads = async (action: AddDownloadAction, finalLocation: string, useSharedDestination: boolean, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
       let itemsToAdd: Array<ParsedDownloadItem | null> = [...parsedItems];
 
       if (resolutions) {
@@ -651,29 +677,27 @@ export const AddDownloadsModal = () => {
         }
 
         const category = categoryForFileName(finalFile);
-        addDownload({
+        await addDownload({
           id,
           url: item.url,
           fileName: finalFile,
-          status: startImmediately ? 'queued' : 'paused',
           category,
-            dateAdded: new Date().toISOString(),
-            connections: Number(connections),
-            speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
-            username: useAuth ? username.trim() : undefined,
-            password: useAuth ? password.trim() : undefined,
-            headers: headers.trim() || undefined,
-            checksum: checksumEnabled && checksumValue.trim()
-              ? `${checksumAlgo}=${checksumValue.trim()}`
-              : undefined,
-            cookies: cookies.trim() || undefined,
-            mirrors: mirrors.trim() || undefined,
+          dateAdded: new Date().toISOString(),
+          connections: Number(connections),
+          speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
+          username: useAuth ? username.trim() : undefined,
+          password: useAuth ? password.trim() : undefined,
+          headers: headers.trim() || undefined,
+          checksum: checksumEnabled && checksumValue.trim()
+            ? `${checksumAlgo}=${checksumValue.trim()}`
+            : undefined,
+          cookies: cookies.trim() || undefined,
+          mirrors: mirrors.trim() || undefined,
           destination: useSharedDestination ? finalLocation : undefined,
-            isMedia: item.isMedia,
-            mediaFormatSelector: formatSelector,
-            queueId: selectedQueueId,
-            size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
-          });
+          isMedia: item.isMedia,
+          mediaFormatSelector: formatSelector,
+          size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
+        }, action);
         } catch (e) {
           console.error("Invalid URL or failed to add:", e);
         }
@@ -725,7 +749,7 @@ export const AddDownloadsModal = () => {
           conflicts={conflicts} 
           onConfirm={(resolutions) => {
             setShowingDuplicates(false);
-            executeAddDownloads(pendingStartFlag, resolvedLocation, pendingUseSharedDestination, resolutions);
+            executeAddDownloads(pendingAction, resolvedLocation, pendingUseSharedDestination, resolutions);
           }} 
           onCancel={() => setShowingDuplicates(false)} 
         />
@@ -925,14 +949,16 @@ export const AddDownloadsModal = () => {
                   <Settings size={16} className="text-blue-500" /> Transfer Settings
                 </div>
                   <div className="flex flex-col gap-3">
+                    {queues.length > 1 && (
                     <div className="flex items-center justify-between">
-                      <label className="text-xs text-text-secondary font-medium">Target Queue</label>
+                      <label className="text-xs text-text-secondary font-medium">Queue for “Add to Queue”</label>
                       <select value={selectedQueueId} onChange={e=>setSelectedQueueId(e.target.value)} className="add-download-control add-download-select w-32 px-2 py-1 text-xs" aria-label="Target queue">
                         {queues.map(q => (
                           <option key={q.id} value={q.id}>{q.name}</option>
                         ))}
                       </select>
                     </div>
+                    )}
 
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-text-secondary font-medium">Connections per File</label>
@@ -1031,20 +1057,63 @@ export const AddDownloadsModal = () => {
             <button onClick={() => toggleAddModal(false)} className="add-download-button add-download-button-cancel px-4 text-xs">
               Cancel
             </button>
-            <button
-              onClick={() => handleStart(false)}
-              disabled={parsedItems.length === 0}
-              className="add-download-button add-download-button-secondary px-4 text-xs"
-            >
-              Add to Queue
-            </button>
-            <button
-              onClick={() => handleStart(true)}
-              disabled={parsedItems.length === 0}
-              className="add-download-button add-download-button-primary px-5 text-xs"
-            >
-              <Play size={12} fill="currentColor" /> Start Downloads
-            </button>
+            <div ref={actionMenuRef} className="relative flex">
+              <button
+                onClick={() => handleAction({ type: 'start-now' })}
+                disabled={parsedItems.length === 0}
+                className="add-download-button add-download-button-primary rounded-r-none px-5 text-xs"
+              >
+                <Play size={12} fill="currentColor" /> Start Downloads
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsActionMenuOpen(open => !open)}
+                disabled={parsedItems.length === 0}
+                className="add-download-button add-download-button-primary rounded-l-none border-l border-white/20 px-2 text-xs"
+                aria-label="More add actions"
+                aria-haspopup="menu"
+                aria-expanded={isActionMenuOpen}
+              >
+                <ChevronDown size={14} />
+              </button>
+              {isActionMenuOpen && (
+                <div
+                  role="menu"
+                  className="app-modal absolute bottom-full right-0 z-[70] mb-2 min-w-[230px] overflow-hidden py-1.5 text-xs"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsActionMenuOpen(false);
+                      void handleAction({ type: 'add-to-list' });
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                  >
+                    <Rows3 size={14} />
+                    <span>Add to List</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsActionMenuOpen(false);
+                      const queueId = queues.length === 1 ? queues[0].id : selectedQueueId;
+                      void handleAction({ type: 'add-to-queue', queueId });
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                  >
+                    <ListPlus size={14} />
+                    <span className="min-w-0">
+                      <span className="block">Add to Queue</span>
+                      <span className="block truncate text-[10px] text-text-muted">
+                        {queues.find(queue => queue.id === (queues.length === 1 ? queues[0].id : selectedQueueId))?.name}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

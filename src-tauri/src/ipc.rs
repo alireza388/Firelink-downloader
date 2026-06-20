@@ -6,6 +6,8 @@ use ts_rs::TS;
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub enum DownloadStatus {
+    /// Added to the download list but not assigned to a queue or dispatched.
+    Ready,
     Downloading,
     /// Post-download media processing such as yt-dlp/ffmpeg merging or
     /// extraction. The queue permit is still held.
@@ -22,6 +24,7 @@ pub enum DownloadStatus {
 impl DownloadStatus {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Ready => "ready",
             Self::Downloading => "downloading",
             Self::Processing => "processing",
             Self::Paused => "paused",
@@ -94,7 +97,8 @@ pub struct DownloadItem {
     pub is_media: Option<bool>,
     #[ts(optional)]
     pub media_format_selector: Option<String>,
-    pub queue_id: String,
+    #[ts(optional)]
+    pub queue_id: Option<String>,
     #[ts(optional)]
     pub has_been_dispatched: Option<bool>,
 }

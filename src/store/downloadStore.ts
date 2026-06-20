@@ -80,10 +80,14 @@ export async function initDownloadListener() {
     unlistenTray = await listen<string>('tray-action', (event) => {
       const mainStore = useDownloadStore.getState();
       if (event.payload === 'pause-all') {
-        const uniqueQueues = Array.from(new Set(mainStore.downloads.map(d => d.queueId)));
+        const uniqueQueues = Array.from(new Set(
+          mainStore.downloads.map(d => d.queueId).filter((id): id is string => Boolean(id))
+        ));
         uniqueQueues.forEach(qid => mainStore.pauseQueue(qid));
       } else if (event.payload === 'resume-all') {
-        const uniqueQueues = Array.from(new Set(mainStore.downloads.map(d => d.queueId)));
+        const uniqueQueues = Array.from(new Set(
+          mainStore.downloads.map(d => d.queueId).filter((id): id is string => Boolean(id))
+        ));
         uniqueQueues.forEach(qid => mainStore.startQueue(qid));
       }
     });

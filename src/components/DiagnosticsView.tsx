@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { attachLogger } from '@tauri-apps/plugin-log';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
-import { FileDown, Trash2, Terminal } from 'lucide-react';
+import { FileDown, Trash2, Terminal, Filter } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 
 interface LogEntry {
@@ -10,22 +10,34 @@ interface LogEntry {
   message: string;
 }
 
+const getLevelStr = (level: number): LogEntry['level'] => {
+  switch (level) {
+    case 1: return 'Trace';
+    case 2: return 'Debug';
+    case 3: return 'Info';
+    case 4: return 'Warn';
+    case 5: return 'Error';
+    default: return 'Debug';
+  }
+};
+
 export default function DiagnosticsView() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
   const scrollRef = useRef<HTMLDivElement>(null);
   const MAX_LOG_LINES = 2000;
 
   useEffect(() => {
-    const unlisten = listen<{ level: string; message: string }>('log', (event) => {
-      const level = event.payload.level as LogEntry['level'];
-      const message = event.payload.message;
+    const unlistenPromise = attachLogger((logRecord) => {
+      const level = getLevelStr(logRecord.level);
+      const message = logRecord.message;
       if (message.includes('[download]') && message.includes('%')) return;
       setLogs(prev => {
         const next = [...prev, { level, message }];
         return next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next;
       });
     });
-    return () => { unlisten.then(f => f()); };
+    return () => { unlistenPromise.then(f => f()); };
   }, []);
 
   useEffect(() => {
@@ -69,7 +81,23 @@ export default function DiagnosticsView() {
           <span className="text-[13px] font-semibold text-text-primary">Diagnostics Console</span>
           <span className="text-[11px] text-text-muted">({logs.length} entries)</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <Filter size={13} className="text-text-muted" />
+            <select
+              value={levelFilter}
+              onChange={e => setLevelFilter(e.target.value as LogEntry['level'] | 'All')}
+              className="bg-bg-input border border-border-modal rounded px-1.5 py-0.5 text-[11px] text-text-primary focus:outline-none focus:border-accent"
+            >
+              <option value="All">All Levels</option>
+              <option value="Error">Error</option>
+              <option value="Warn">Warn</option>
+              <option value="Info">Info</option>
+              <option value="Debug">Debug</option>
+              <option value="Trace">Trace</option>
+            </select>
+          </div>
+          <div className="w-[1px] h-4 bg-border-modal mx-0.5" />
           <button
             onClick={handleClear}
             className="app-icon-button"
@@ -93,7 +121,7 @@ export default function DiagnosticsView() {
         {logs.length === 0 && (
           <div className="text-text-muted italic select-none">Waiting for log entries...</div>
         )}
-        {logs.map((entry, i) => (
+        {logs.filter(entry => levelFilter === 'All' || entry.level === levelFilter).map((entry, i) => (
           <div key={i} className={`log-line ${severityClass(entry.level)}`}>
             <span className="log-level-tag">[{entry.level}]</span>
             <span className="log-message">{entry.message}</span>

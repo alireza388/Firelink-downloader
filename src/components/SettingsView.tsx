@@ -697,52 +697,95 @@ runEngineChecks(false);
                   <span className="text-[11px] text-text-muted">Relative to the base folder</span>
                 </div>
 
+const CategoryFolderInput = ({
+  category,
+  settings,
+  onBrowse
+}: {
+  category: string;
+  settings: ReturnType<typeof useSettingsStore>;
+  onBrowse: () => void;
+}) => {
+  const base = settings.baseDownloadFolder.replace(/\/+$/, '') || '~/Downloads';
+  const sub = settings.categorySubfolders[category] || DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS];
+  const override = settings.categoryDirectoryOverrides[category];
+  const displayPath = override ?? `${base}/${sub}`;
+
+  const [localValue, setLocalValue] = useState<string | null>(null);
+
+  const value = localValue !== null ? localValue : displayPath;
+
+  return (
+    <div className="flex items-center gap-2 flex-1 justify-end">
+      <input
+        type="text"
+        value={value}
+        onFocus={() => setLocalValue(displayPath)}
+        onChange={(e) => {
+          const val = e.target.value;
+          setLocalValue(val);
+          const basePrefix = base + '/';
+          
+          if (!val.trim()) {
+            settings.setCategoryDirectoryOverride(category, undefined);
+            settings.setCategorySubfolder(category, '');
+          } else if (val.startsWith(basePrefix)) {
+            settings.setCategoryDirectoryOverride(category, undefined);
+            settings.setCategorySubfolder(category, val.substring(basePrefix.length));
+          } else {
+            settings.setCategoryDirectoryOverride(category, val);
+          }
+        }}
+        onBlur={() => {
+          setLocalValue(null);
+          // Normalize subfolder if not an override
+          const currentOverride = settings.categoryDirectoryOverrides[category];
+          if (!currentOverride) {
+            settings.setCategorySubfolder(
+              category,
+              normalizeCategorySubfolder(
+                settings.categorySubfolders[category] || '',
+                DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS]
+              )
+            );
+          }
+        }}
+        className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay"
+        aria-label={`${category} subfolder`}
+      />
+      <button
+        onClick={onBrowse}
+        className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
+      >
+        Custom folder
+      </button>
+      {override && (
+        <button
+          onClick={() => {
+            settings.setCategoryDirectoryOverride(category, undefined);
+            setLocalValue(null);
+          }}
+          className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30"
+        >
+          Use automatic
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ... inside render:
                 <div className="flex flex-col divide-y divide-border-color/30">
                   {DOWNLOAD_CATEGORIES.map((category) => (
                     <div key={category} className="flex flex-col gap-2 px-4 py-3 hover:bg-item-hover/20 transition-colors">
                       <div className="flex justify-between items-center">
                         <span className="text-[13px] font-medium text-text-primary w-32 shrink-0">{category}</span>
-                        <div className="flex items-center gap-2 flex-1 justify-end">
-                          <input
-                            type="text"
-                            value={settings.categorySubfolders[category] || ''}
-                            onChange={(e) => settings.setCategorySubfolder(category, e.target.value)}
-                            onBlur={(e) => settings.setCategorySubfolder(
-                              category,
-                              normalizeCategorySubfolder(
-                                e.target.value,
-                                DEFAULT_CATEGORY_SUBFOLDERS[category]
-                              )
-                            )}
-                            className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay"
-                            aria-label={`${category} subfolder`}
-                          />
-                          <button
-                            onClick={() => handleBrowseCategory(category)}
-                            className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
-                          >
-                            Custom folder
-                          </button>
-                          {settings.categoryDirectoryOverrides[category] && (
-                            <button
-                              onClick={() => settings.setCategoryDirectoryOverride(category)}
-                              className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30"
-                            >
-                              Use automatic
-                            </button>
-                          )}
-                        </div>
+                        <CategoryFolderInput
+                          category={category}
+                          settings={settings}
+                          onBrowse={() => handleBrowseCategory(category)}
+                        />
                       </div>
-                      {settings.categoryDirectoryOverrides[category] && (
-                        <div className="flex pl-32">
-                          <div className="bg-surface-overlay/40 border border-border-color/30 rounded px-2 py-1 flex items-center gap-2">
-                            <span className="text-[10px] uppercase font-bold text-text-muted">Override</span>
-                            <span className="text-[11px] font-mono text-text-secondary truncate max-w-[400px]">
-                              {settings.categoryDirectoryOverrides[category]}
-                            </span>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>

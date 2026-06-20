@@ -33,6 +33,7 @@ export const QualityModal = React.memo(() => {
     const settings = useSettingsStore.getState();
     const id = crypto.randomUUID();
     const filename = `${activeMetadata.title}.${format.ext}`.replace(/[\/\\?%*:|"<>]/g, '-');
+    const estimatedBytes = format.filesize || format.filesize_approx || 0;
     
     const category = categoryForFileName(filename);
     const destination = await resolveCategoryDestination(settings, category);
@@ -43,7 +44,9 @@ export const QualityModal = React.memo(() => {
       fileName: filename,
       destination,
       fraction: 0,
-      size: format.filesize ? formatBytes(format.filesize) : 'Unknown',
+      size: estimatedBytes
+        ? `${format.filesize ? '' : '~'}${formatBytes(estimatedBytes)}`
+        : 'Unknown',
       speed: '-',
       eta: '-',
       category,

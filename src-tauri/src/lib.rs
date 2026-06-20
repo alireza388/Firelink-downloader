@@ -94,6 +94,28 @@ fn media_sized_bytes(value: &serde_json::Value) -> Option<(u64, bool)> {
     }
 }
 
+fn estimated_stream_bytes(
+    value: &serde_json::Value,
+    duration_seconds: Option<f64>,
+) -> Option<(u64, bool)> {
+    if let Some(size) = media_sized_bytes(value) {
+        return Some(size);
+    }
+
+    let duration_seconds = duration_seconds.filter(|duration| *duration > 0.0)?;
+    let bitrate_kbps = if has_video_stream(value) && !has_audio_stream(value) {
+        json_f64(value, "vbr").or_else(|| json_f64(value, "tbr"))
+    } else if has_audio_stream(value) && !has_video_stream(value) {
+        json_f64(value, "abr").or_else(|| json_f64(value, "tbr"))
+    } else {
+        json_f64(value, "tbr")
+    }
+    .filter(|bitrate| *bitrate > 0.0)?;
+
+    let bytes = bitrate_kbps * 1_000.0 * duration_seconds / 8.0;
+    (bytes.is_finite() && bytes > 0.0).then_some((bytes.round() as u64, true))
+}
+
 fn split_size_estimate(bytes: Option<(u64, bool)>) -> (Option<u64>, Option<u64>) {
     match bytes {
         Some((bytes, false)) => (Some(bytes), None),
@@ -244,25 +266,62 @@ fn joined_format_label(container: &str, video_codec: Option<&str>, audio_codec: 
     }
 }
 
-fn estimated_merged_size(video: Option<&serde_json::Value>, audio: Option<&serde_json::Value>) -> (Option<u64>, Option<u64>) {
-    let v_bytes = video.and_then(media_sized_bytes);
-    let a_bytes = audio.and_then(media_sized_bytes);
-
-    match (v_bytes, a_bytes) {
-        (Some((v_size, v_approx)), Some((a_size, a_approx))) => {
-            split_size_estimate(Some((v_size.saturating_add(a_size), v_approx || a_approx)))
+fn selected_format_id(
+    video: Option<&serde_json::Value>,
+    audio: Option<&serde_json::Value>,
+) -> Option<String> {
+    match (
+        video.and_then(|format| json_str(format, "format_id")),
+        audio.and_then(|format| json_str(format, "format_id")),
+    ) {
+        (Some(video_id), Some(audio_id)) if video_id != audio_id => {
+            Some(format!("{video_id}+{audio_id}"))
         }
-        (Some((v_size, _v_approx)), None) => split_size_estimate(Some((v_size, true))),
-        (None, Some((a_size, _a_approx))) => split_size_estimate(Some((a_size, true))),
-        (None, None) => (None, None),
+        (Some(video_id), _) => Some(video_id.to_string()),
+        (None, Some(audio_id)) => Some(audio_id.to_string()),
+        (None, None) => None,
     }
 }
 
-fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
+fn estimated_merged_size(
+    video: Option<&serde_json::Value>,
+    audio: Option<&serde_json::Value>,
+    duration_seconds: Option<f64>,
+) -> (Option<u64>, Option<u64>) {
+    let video_has_audio = video.is_some_and(|format| has_audio_stream(format));
+    let v_bytes = video.and_then(|format| estimated_stream_bytes(format, duration_seconds));
+    let a_bytes = if video_has_audio {
+        None
+    } else {
+        audio.and_then(|format| estimated_stream_bytes(format, duration_seconds))
+    };
+
+    match (video, audio, v_bytes, a_bytes, video_has_audio) {
+        (Some(_), _, Some((v_size, v_approx)), _, true) => {
+            split_size_estimate(Some((v_size, v_approx)))
+        }
+        (Some(_), Some(_), Some((v_size, v_approx)), Some((a_size, a_approx)), false) => {
+            split_size_estimate(Some((v_size.saturating_add(a_size), v_approx || a_approx)))
+        }
+        (Some(_), None, Some((v_size, v_approx)), None, false) => {
+            split_size_estimate(Some((v_size, v_approx)))
+        }
+        (None, Some(_), None, Some((a_size, a_approx)), false) => {
+            split_size_estimate(Some((a_size, a_approx)))
+        }
+        _ => (None, None),
+    }
+}
+
+fn raw_media_format(
+    value: &serde_json::Value,
+    duration_seconds: Option<f64>,
+) -> Option<MediaFormat> {
     let format_id = json_str(value, "format_id")?.to_string();
     let ext = json_str(value, "ext").unwrap_or("mkv").to_string();
     let fps = json_f64(value, "fps");
-    let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(value));
+    let (filesize, filesize_approx) =
+        split_size_estimate(estimated_stream_bytes(value, duration_seconds));
 
     let resolution = if has_video_stream(value) {
         format_height(value).map(|height| format!("{height}p")).or_else(|| json_str(value, "resolution").map(ToOwned::to_owned)).unwrap_or_else(|| "Video".to_string())
@@ -281,18 +340,32 @@ fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
     Some(MediaFormat { format_id, resolution, ext, format_label, fps, filesize, filesize_approx })
 }
 
-fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFormat> {
+fn build_media_format_options(
+    formats_arr: &[serde_json::Value],
+    duration_seconds: Option<f64>,
+    requested_formats: Option<&[serde_json::Value]>,
+) -> Vec<MediaFormat> {
     let clean_formats: Vec<&serde_json::Value> = formats_arr.iter().filter(|format| !is_excluded_yt_dlp_format(format)).collect();
     let has_video = clean_formats.iter().any(|format| has_video_stream(format));
     let has_audio = clean_formats.iter().any(|format| has_audio_stream(format));
     let mut options = Vec::new();
 
     if has_video {
-        let best_video = best_matching_format(&clean_formats, has_video_stream);
-        let best_audio = best_audio_format(&clean_formats, None);
-        let (filesize, filesize_approx) = estimated_merged_size(best_video, best_audio);
+        let requested_video = requested_formats
+            .and_then(|formats| formats.iter().find(|format| has_video_stream(format)));
+        let requested_audio = requested_formats
+            .and_then(|formats| formats.iter().find(|format| has_audio_stream(format) && !has_video_stream(format)));
+        let best_video = requested_video.or_else(|| best_matching_format(&clean_formats, has_video_stream));
+        let best_audio = if best_video.is_some_and(|format| has_audio_stream(format)) {
+            None
+        } else {
+            requested_audio.or_else(|| best_audio_format(&clean_formats, None))
+        };
+        let (filesize, filesize_approx) =
+            estimated_merged_size(best_video, best_audio, duration_seconds);
         options.push(MediaFormat {
-            format_id: "bestvideo+bestaudio/best".to_string(),
+            format_id: selected_format_id(best_video, best_audio)
+                .unwrap_or_else(|| "bestvideo+bestaudio/best".to_string()),
             resolution: "Best".to_string(),
             ext: "mkv".to_string(),
             format_label: joined_format_label("mkv", best_video.and_then(|format| json_str(format, "vcodec")), best_audio.and_then(|format| json_str(format, "acodec"))),
@@ -308,10 +381,12 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
 
         for height in available_heights {
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height)) {
-                let audio = best_audio_format(&clean_formats, None);
-                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
+                let audio = if has_audio_stream(video) { None } else { best_audio_format(&clean_formats, None) };
+                let (filesize, filesize_approx) =
+                    estimated_merged_size(Some(video), audio, duration_seconds);
                 options.push(MediaFormat {
-                    format_id: format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    format_id: selected_format_id(Some(video), audio)
+                        .unwrap_or_else(|| format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]")),
                     resolution: format!("{height}p"),
                     ext: "mkv".to_string(),
                     format_label: joined_format_label("mkv", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
@@ -322,10 +397,17 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
             }
 
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "mp4") {
-                let audio = best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None));
-                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
+                let audio = if has_audio_stream(video) {
+                    None
+                } else {
+                    best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None))
+                };
+                let (filesize, filesize_approx) =
+                    estimated_merged_size(Some(video), audio, duration_seconds);
                 options.push(MediaFormat {
-                    format_id: format!("bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    format_id: selected_format_id(Some(video), audio).unwrap_or_else(|| {
+                        format!("bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/bestvideo[height<={height}]+bestaudio/best[height<={height}]")
+                    }),
                     resolution: format!("{height}p"),
                     ext: "mp4".to_string(),
                     format_label: joined_format_label("mp4", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
@@ -336,10 +418,17 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
             }
 
             if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "webm") {
-                let audio = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))).or_else(|| best_audio_format(&clean_formats, None));
-                let (filesize, filesize_approx) = estimated_merged_size(Some(video), audio);
+                let audio = if has_audio_stream(video) {
+                    None
+                } else {
+                    best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))).or_else(|| best_audio_format(&clean_formats, None))
+                };
+                let (filesize, filesize_approx) =
+                    estimated_merged_size(Some(video), audio, duration_seconds);
                 options.push(MediaFormat {
-                    format_id: format!("bestvideo[height<={height}][ext=webm]+bestaudio[ext=webm]/best[height<={height}][ext=webm]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"),
+                    format_id: selected_format_id(Some(video), audio).unwrap_or_else(|| {
+                        format!("bestvideo[height<={height}][ext=webm]+bestaudio[ext=webm]/best[height<={height}][ext=webm]/bestvideo[height<={height}]+bestaudio/best[height<={height}]")
+                    }),
                     resolution: format!("{height}p"),
                     ext: "webm".to_string(),
                     format_label: joined_format_label("webm", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
@@ -353,9 +442,12 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
 
     if has_audio {
         if let Some(audio) = best_audio_format(&clean_formats, Some("m4a")) {
-            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
+            let (filesize, filesize_approx) =
+                split_size_estimate(estimated_stream_bytes(audio, duration_seconds));
             options.push(MediaFormat {
-                format_id: "bestaudio[ext=m4a]/bestaudio/best".to_string(),
+                format_id: json_str(audio, "format_id")
+                    .unwrap_or("bestaudio[ext=m4a]/bestaudio/best")
+                    .to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "m4a".to_string(),
                 format_label: joined_format_label("m4a", None, json_str(audio, "acodec")),
@@ -366,9 +458,12 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
         }
 
         if let Some(audio) = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))) {
-            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
+            let (filesize, filesize_approx) =
+                split_size_estimate(estimated_stream_bytes(audio, duration_seconds));
             options.push(MediaFormat {
-                format_id: "bestaudio[ext=webm]/bestaudio/best".to_string(),
+                format_id: json_str(audio, "format_id")
+                    .unwrap_or("bestaudio[ext=webm]/bestaudio/best")
+                    .to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "opus".to_string(),
                 format_label: joined_format_label("opus", None, json_str(audio, "acodec")),
@@ -379,9 +474,10 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
         }
 
         if let Some(audio) = best_audio_format(&clean_formats, None) {
-            let (filesize, filesize_approx) = split_size_estimate(media_sized_bytes(audio));
+            let (filesize, filesize_approx) =
+                split_size_estimate(estimated_stream_bytes(audio, duration_seconds));
             options.push(MediaFormat {
-                format_id: "bestaudio/best".to_string(),
+                format_id: json_str(audio, "format_id").unwrap_or("bestaudio/best").to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "mp3".to_string(),
                 format_label: "MP3 • Best audio".to_string(),
@@ -393,7 +489,10 @@ fn build_media_format_options(formats_arr: &[serde_json::Value]) -> Vec<MediaFor
     }
 
     if options.is_empty() {
-        clean_formats.iter().filter_map(|format| raw_media_format(format)).collect()
+        clean_formats
+            .iter()
+            .filter_map(|format| raw_media_format(format, duration_seconds))
+            .collect()
     } else {
         options
     }
@@ -891,7 +990,7 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         .arg("--retries").arg("3")
         .arg("--extractor-retries").arg("3")
         .arg("--compat-options").arg("no-youtube-unavailable-videos")
-        .arg("--print").arg("%(.{title,duration,thumbnail,formats})j");
+        .arg("--print").arg("%(.{title,duration,thumbnail,formats,requested_formats})j");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
@@ -933,13 +1032,20 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
         
         let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown Title").to_string();
-        let duration = value.get("duration").and_then(|v| v.as_f64()).map(|v| v as u64);
+        let duration_seconds = value.get("duration").and_then(|v| v.as_f64());
+        let duration = duration_seconds.map(|v| v as u64);
         let thumbnail = value.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string());
-        
+        let requested_formats = value
+            .get("requested_formats")
+            .and_then(|v| v.as_array())
+            .map(Vec::as_slice);
+
         let formats = value
             .get("formats")
             .and_then(|v| v.as_array())
-            .map(|formats_arr| build_media_format_options(formats_arr))
+            .map(|formats_arr| {
+                build_media_format_options(formats_arr, duration_seconds, requested_formats)
+            })
             .unwrap_or_default();
 
         Ok(MediaMetadata { title, duration, thumbnail, formats })
@@ -3094,7 +3200,7 @@ mod tests {
             })
         ];
 
-        let options = build_media_format_options(&formats);
+        let options = build_media_format_options(&formats, Some(600.0), None);
 
     assert!(!options.iter().any(|format| format.ext == "mhtml"));
     assert!(options.iter().any(|format| {
@@ -3112,6 +3218,40 @@ mod tests {
         assert!(options.iter().any(|format| {
             format.resolution == "Audio only" && format.format_label == "M4A • AAC"
         }));
+    }
+
+    #[test]
+    fn estimates_missing_video_size_from_bitrate_and_uses_exact_stream_ids() {
+        let formats = vec![
+            json!({
+                "format_id": "301",
+                "ext": "mp4",
+                "height": 1080,
+                "fps": 60,
+                "vcodec": "avc1.64002A",
+                "acodec": "none",
+                "tbr": 6_400.0
+            }),
+            json!({
+                "format_id": "251",
+                "ext": "webm",
+                "vcodec": "none",
+                "acodec": "opus",
+                "filesize": 28_000_000_u64
+            })
+        ];
+        let requested_formats = vec![formats[0].clone(), formats[1].clone()];
+
+        let options = build_media_format_options(
+            &formats,
+            Some(1_800.0),
+            Some(&requested_formats),
+        );
+        let best = options.first().expect("best format option");
+
+        assert_eq!(best.format_id, "301+251");
+        assert_eq!(best.filesize, None);
+        assert_eq!(best.filesize_approx, Some(1_468_000_000));
     }
 
     #[test]
@@ -3154,7 +3294,12 @@ mod tests {
             .iter()
             .filter(|format| json_lower(format, "ext") == "mhtml")
             .count();
-        let options = build_media_format_options(formats);
+        let duration = value.get("duration").and_then(|duration| duration.as_f64());
+        let requested_formats = value
+            .get("requested_formats")
+            .and_then(|requested| requested.as_array())
+            .map(Vec::as_slice);
+        let options = build_media_format_options(formats, duration, requested_formats);
 
         eprintln!(
             "raw formats: {}, raw mhtml: {}, normalized options: {}",

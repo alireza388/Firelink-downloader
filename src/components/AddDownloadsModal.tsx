@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   useDownloadStore,
-  
   getSiteLogin,
   type AddDownloadAction
 } from '../store/useDownloadStore';
@@ -288,6 +287,7 @@ export const AddDownloadsModal = () => {
   const [pendingUseSharedDestination, setPendingUseSharedDestination] = useState(false);
   const [resolvedLocation, setResolvedLocation] = useState('');
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [isQueueMenuOpen, setIsQueueMenuOpen] = useState(false);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
   // Right Form
@@ -332,6 +332,7 @@ export const AddDownloadsModal = () => {
       setCookies(pendingAddCookies);
       setMirrors('');
       setIsActionMenuOpen(false);
+      setIsQueueMenuOpen(false);
     } else {
       setUrls('');
     }
@@ -341,8 +342,7 @@ export const AddDownloadsModal = () => {
     pendingAddReferer,
     pendingAddHeaders,
     pendingAddCookies,
-    baseDownloadFolder,
-    queues
+    baseDownloadFolder
   ]);
 
   useEffect(() => {
@@ -350,6 +350,7 @@ export const AddDownloadsModal = () => {
     const closeMenu = (event: PointerEvent) => {
       if (!actionMenuRef.current?.contains(event.target as Node)) {
         setIsActionMenuOpen(false);
+        setIsQueueMenuOpen(false);
       }
     };
     window.addEventListener('pointerdown', closeMenu);
@@ -1006,7 +1007,7 @@ export const AddDownloadsModal = () => {
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-text-secondary font-medium">Connections per File</label>
                     <div className="flex items-center gap-2">
-                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className={`add-download-range w-24 accent-blue-500 cursor-pointer ${parsedItems.some(i => i.isMedia) ? 'opacity-50 pointer-events-none' : ''}`} aria-label="Connections per file" />
+                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24 accent-blue-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50" disabled={parsedItems.some(i => i.isMedia)} aria-label="Connections per file" />
                       <span className="add-download-value text-xs text-text-primary font-mono w-6 text-center">{connections}</span>
                     </div>
                   </div>
@@ -1111,7 +1112,10 @@ export const AddDownloadsModal = () => {
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setIsActionMenuOpen(open => !open)}
+                  onClick={() => {
+                    setIsActionMenuOpen(open => !open);
+                    setIsQueueMenuOpen(false);
+                  }}
                   disabled={parsedItems.length === 0}
                   className="add-download-button add-download-button-secondary px-4 text-xs"
                   aria-label="Add to..."
@@ -1141,6 +1145,9 @@ export const AddDownloadsModal = () => {
                       <button
                         type="button"
                         role="menuitem"
+                        aria-haspopup="menu"
+                        aria-expanded={isQueueMenuOpen}
+                        onClick={() => setIsQueueMenuOpen(open => !open)}
                         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-item-hover"
                       >
                         <div className="flex items-center gap-2">
@@ -1149,7 +1156,7 @@ export const AddDownloadsModal = () => {
                         </div>
                         <ChevronRight size={14} />
                       </button>
-                      <div className="app-modal absolute bottom-0 right-[calc(100%+4px)] z-[80] hidden min-w-[160px] py-1.5 group-hover:block">
+                      <div className={`app-modal absolute bottom-0 right-[calc(100%+4px)] z-[80] min-w-[160px] py-1.5 ${isQueueMenuOpen ? 'block' : 'hidden group-hover:block'}`}>
                         {queues.map(queue => (
                           <button
                             key={queue.id}
@@ -1157,6 +1164,7 @@ export const AddDownloadsModal = () => {
                             role="menuitem"
                             onClick={() => {
                               setIsActionMenuOpen(false);
+                              setIsQueueMenuOpen(false);
                               void handleAction({ type: 'add-to-queue', queueId: queue.id });
                             }}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"

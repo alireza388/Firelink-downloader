@@ -754,6 +754,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
 
 const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);
 const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
+const MEDIA_METADATA_CACHE_MAX_ENTRIES: usize = 128;
 
 static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> = OnceLock::new();
 static MEDIA_METADATA_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<u64, std::sync::Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
@@ -770,6 +771,21 @@ fn media_metadata_cache_key(
     username.hash(&mut hasher);
     password.hash(&mut hasher);
     hasher.finish()
+}
+
+async fn release_media_metadata_lock(
+    cache_key: u64,
+    request_lock: &std::sync::Arc<tokio::sync::Mutex<()>>,
+) {
+    let locks = MEDIA_METADATA_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+    let mut locks_guard = locks.lock().await;
+    if std::sync::Arc::strong_count(request_lock) == 2
+        && locks_guard
+            .get(&cache_key)
+            .is_some_and(|current| std::sync::Arc::ptr_eq(current, request_lock))
+    {
+        locks_guard.remove(&cache_key);
+    }
 }
 
 fn resolve_metadata_ytdlp_path(app_handle: &tauri::AppHandle) -> Result<(PathBuf, &'static str), String> {
@@ -789,11 +805,12 @@ async fn fetch_media_metadata(
     let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password);
 
     let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
-    if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
-        if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
-            return Ok(metadata);
-        }
+    let mut cache_guard = cache.lock().await;
+    cache_guard.retain(|_, (cached_at, _)| cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL);
+    if let Some((_, metadata)) = cache_guard.get(&cache_key).cloned() {
+        return Ok(metadata);
     }
+    drop(cache_guard);
 
     let request_lock = {
         let locks = MEDIA_METADATA_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
@@ -804,54 +821,69 @@ async fn fetch_media_metadata(
             .clone()
     };
 
-    let _request_guard = request_lock.lock().await;
+    let request_guard = request_lock.lock().await;
 
-    if let Some((cached_at, metadata)) = cache.lock().await.get(&cache_key).cloned() {
-        if cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL {
-            return Ok(metadata);
-        }
+    let mut cache_guard = cache.lock().await;
+    cache_guard.retain(|_, (cached_at, _)| cached_at.elapsed() <= MEDIA_METADATA_CACHE_TTL);
+    if let Some((_, metadata)) = cache_guard.get(&cache_key).cloned() {
+        drop(cache_guard);
+        drop(request_guard);
+        release_media_metadata_lock(cache_key, &request_lock).await;
+        return Ok(metadata);
     }
+    drop(cache_guard);
 
-    let metadata = fetch_media_metadata_uncached(
+    let result = fetch_media_metadata_uncached(
         app_handle,
         url,
         cookie_browser,
         username,
         password,
     )
-    .await?;
+    .await;
 
-    if metadata.formats.is_empty() {
-        return Err("yt-dlp returned no usable media formats for this URL".to_string());
-    }
+    let result = match result {
+        Ok(metadata) if metadata.formats.is_empty() => {
+            Err("yt-dlp returned no usable media formats for this URL".to_string())
+        }
+        Ok(metadata) => {
+            let mut cache_guard = cache.lock().await;
+            if cache_guard.len() >= MEDIA_METADATA_CACHE_MAX_ENTRIES
+                && !cache_guard.contains_key(&cache_key)
+            {
+                if let Some(oldest_key) = cache_guard
+                    .iter()
+                    .min_by_key(|(_, (cached_at, _))| *cached_at)
+                    .map(|(key, _)| *key)
+                {
+                    cache_guard.remove(&oldest_key);
+                }
+            }
+            cache_guard.insert(cache_key, (Instant::now(), metadata.clone()));
+            Ok(metadata)
+        }
+        Err(error) => Err(error),
+    };
 
-    cache
-        .lock()
-        .await
-        .insert(cache_key, (Instant::now(), metadata.clone()));
+    drop(request_guard);
+    release_media_metadata_lock(cache_key, &request_lock).await;
 
-    Ok(metadata)
+    result
 }
 
 async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
-    // Resolve bundled deno and ffmpeg binaries and create a temporary PATH for yt-dlp
+    // Pass bundled tools by absolute path so extraction never depends on
+    // system Python, a user-managed PATH, or auto-detection heuristics.
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
-    
-    let bin_dir = tempfile::tempdir().map_err(|e| format!("failed to create bundling temp dir: {e}"))?;
-    {
-        use std::os::unix::fs::symlink;
-        symlink(&deno_path, bin_dir.path().join("deno")).map_err(|e| format!("failed to symlink deno: {e}"))?;
-        symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg")).map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
-    }
-    let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
-    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
+    let deno_runtime = format!("deno:{}", deno_path.to_string_lossy());
 
     use tauri_plugin_shell::ShellExt;
     let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
     let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
-    cmd = cmd.env("PATH", &path_env)
-        .arg("--ffmpeg-location").arg(&bin_dir_str)
+    cmd = cmd.env("PATH", "/usr/bin:/bin")
+        .arg("--ffmpeg-location").arg(&ffmpeg_path)
+        .arg("--js-runtimes").arg(&deno_runtime)
         .arg("--no-warnings")
         .arg("--no-playlist")
         .arg("--skip-download")
@@ -1319,23 +1351,10 @@ async fn run_sidecar_version(
     let output_future = command.output();
     tokio::pin!(output_future);
 
-    const NORMAL_VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-    const YTDLP_FIRST_RUN_GRACE: std::time::Duration = std::time::Duration::from_secs(40);
-
-    let result = match tokio::time::timeout(NORMAL_VERSION_TIMEOUT, &mut output_future).await {
-        Ok(result) => Ok(result),
-        Err(_) if sidecar_name == "yt-dlp" && !ytdlp_expects_internal_dir(&binary_path) => {
-            log::info!(
-                "Bundled yt-dlp version check exceeded {} seconds; allowing {} seconds for standalone first-run initialization",
-                NORMAL_VERSION_TIMEOUT.as_secs(),
-                YTDLP_FIRST_RUN_GRACE.as_secs()
-            );
-            tokio::time::timeout(YTDLP_FIRST_RUN_GRACE, &mut output_future)
-                .await
-                .map_err(|_| NORMAL_VERSION_TIMEOUT + YTDLP_FIRST_RUN_GRACE)
-        }
-        Err(_) => Err(NORMAL_VERSION_TIMEOUT),
-    };
+    const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+    let result = tokio::time::timeout(VERSION_TIMEOUT, &mut output_future)
+        .await
+        .map_err(|_| VERSION_TIMEOUT);
 
     let output = match result {
         Ok(Ok(output)) => output,
@@ -1397,12 +1416,6 @@ fn version_cache_key(binary_path: &std::path::Path, args: &[&str]) -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     format!("{}:{modified}:{}", binary_path.display(), args.join("\u{1f}"))
-}
-
-fn ytdlp_expects_internal_dir(binary_path: &std::path::Path) -> bool {
-    binary_path
-        .parent()
-        .is_some_and(|parent| parent.join("_internal").is_dir())
 }
 
 fn validate_bundled_binary(binary_path: &std::path::Path) -> Result<(), String> {
@@ -1908,6 +1921,7 @@ pub(crate) async fn start_media_download_internal(
            .arg("--downloader").arg("aria2c")
            .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M --summary-interval=1")
            .arg("--ffmpeg-location").arg(&bin_dir_str)
+           .arg("--js-runtimes").arg(format!("deno:{}", deno_path.to_string_lossy()))
            .arg("--concurrent-fragments").arg("4")
            .arg("--no-warnings")
            .arg("--continue")

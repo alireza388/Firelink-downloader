@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
 import { CheckCircle2, AlertCircle, Info, XCircle, X } from 'lucide-react';
 
 export type ToastVariant = 'success' | 'info' | 'warning' | 'error';
@@ -11,6 +11,10 @@ export interface ToastMessage {
   isActionable?: boolean;
 }
 
+interface ToastState extends ToastMessage {
+  exiting?: boolean;
+}
+
 interface ToastContextType {
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   removeToast: (id: string) => void;
@@ -19,14 +23,16 @@ interface ToastContextType {
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [toasts, setToasts] = useState<ToastState[]>([]);
+  const nextToastId = useRef(0);
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
-    setToasts(prev => [...prev, { ...toast, id: Math.random().toString(36).substring(2, 9) }]);
+    nextToastId.current += 1;
+    setToasts(prev => [...prev, { ...toast, id: `toast-${nextToastId.current}` }]);
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t) as any);
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 300); // Matches the exit animation duration
@@ -35,7 +41,7 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      <ToastContainer toasts={toasts as any} removeToast={removeToast} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </ToastContext.Provider>
   );
 };
@@ -46,13 +52,13 @@ export const useToast = () => {
   return context;
 };
 
-const ToastItem: React.FC<{ toast: ToastMessage & { exiting?: boolean }; removeToast: (id: string) => void }> = ({ toast, removeToast }) => {
+const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void }> = ({ toast, removeToast }) => {
   const [isHovered, setIsHovered] = useState(false);
-  
+
   useEffect(() => {
     let timeoutDuration = toast.duration ?? 5000;
     if (timeoutDuration < 5000) timeoutDuration = 5000;
-    
+
     if (toast.isActionable || (toast.variant === 'error' && !toast.duration)) {
       return;
     }
@@ -103,7 +109,7 @@ const ToastItem: React.FC<{ toast: ToastMessage & { exiting?: boolean }; removeT
     >
       <div className="mt-0.5">{Icon}</div>
       <div className="font-semibold flex-1 tracking-tight">{toast.message}</div>
-      <button 
+      <button
         onClick={() => removeToast(toast.id)}
         className="shrink-0 ml-2 mt-0.5 opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded-full transition-all active:scale-90"
         aria-label="Dismiss notification"
@@ -114,7 +120,7 @@ const ToastItem: React.FC<{ toast: ToastMessage & { exiting?: boolean }; removeT
   );
 };
 
-const ToastContainer: React.FC<{ toasts: ToastMessage[]; removeToast: (id: string) => void }> = ({ toasts, removeToast }) => {
+const ToastContainer: React.FC<{ toasts: ToastState[]; removeToast: (id: string) => void }> = ({ toasts, removeToast }) => {
   return (
     <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col gap-3 pointer-events-none items-center px-4">
       <style>{`

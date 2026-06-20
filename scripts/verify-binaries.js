@@ -170,8 +170,21 @@ console.log('\n─── 6. yt-dlp packaging ───');
           ok('_internal/ symlinks valid');
         }
       }
+
+      const requiredRuntimeFiles = [
+        path.join(internalDir, 'Python'),
+        path.join(internalDir, 'yt_dlp_ejs', 'yt', 'solver', 'core.min.js'),
+        path.join(internalDir, 'yt_dlp_ejs', 'yt', 'solver', 'lib.min.js'),
+      ];
+      for (const required of requiredRuntimeFiles) {
+        if (fs.existsSync(required)) {
+          ok(`yt-dlp runtime component: ${path.relative(binariesDir, required)}`);
+        } else {
+          fail(`Missing yt-dlp runtime component: ${path.relative(binariesDir, required)}`);
+        }
+      }
     } else {
-      console.log('  No _internal/ directory, assuming standalone onefile binary');
+      fail('yt-dlp must use the self-contained onedir distribution; onefile adds ~17 seconds to every launch');
     }
   }
 }
@@ -209,7 +222,8 @@ function runEngine(label, engine, args, timeout = 30000) {
   }
 }
 
-runEngine('yt-dlp', 'yt-dlp', ['--version'], 45000);
+runEngine('yt-dlp cold start', 'yt-dlp', ['--version'], 20000);
+runEngine('yt-dlp warm start', 'yt-dlp', ['--version'], 8000);
 runEngine('ffmpeg', 'ffmpeg', ['-version']);
 runEngine('deno', 'deno', ['--version']);
 runEngine('aria2c', 'aria2c', ['--version']);

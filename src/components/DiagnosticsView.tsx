@@ -28,7 +28,9 @@ export default function DiagnosticsView() {
   const MAX_LOG_LINES = 2000;
 
   useEffect(() => {
+    let active = true;
     const unlistenPromise = attachLogger((logRecord) => {
+      if (!active) return;
       const level = getLevelStr(logRecord.level);
       const message = logRecord.message;
       if (message.includes('[download]') && message.includes('%')) return;
@@ -37,7 +39,10 @@ export default function DiagnosticsView() {
         return next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next;
       });
     });
-    return () => { unlistenPromise.then(f => f()); };
+    return () => {
+      active = false;
+      void unlistenPromise.then(unlisten => unlisten()).catch(() => undefined);
+    };
   }, []);
 
   useEffect(() => {

@@ -697,46 +697,55 @@ runEngineChecks(false);
                   <span className="text-[11px] text-text-muted">Relative to the base folder</span>
                 </div>
 
-                {DOWNLOAD_CATEGORIES.map((category) => (
-                  <div key={category} className="mac-settings-row">
-                    <span className="text-[13px] text-text-primary pl-4">{category}</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={settings.categorySubfolders[category] || ''}
-                        onChange={(e) => settings.setCategorySubfolder(category, e.target.value)}
-                        onBlur={(e) => settings.setCategorySubfolder(
-                          category,
-                          normalizeCategorySubfolder(
-                            e.target.value,
-                            DEFAULT_CATEGORY_SUBFOLDERS[category]
-                          )
-                        )}
-                        className="app-control w-64 text-[11px] px-2"
-                        aria-label={`${category} subfolder`}
-                      />
-                      <button
-                        onClick={() => handleBrowseCategory(category)}
-                        className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
-                      >
-                        Custom folder
-                      </button>
+                <div className="flex flex-col divide-y divide-border-color/30">
+                  {DOWNLOAD_CATEGORIES.map((category) => (
+                    <div key={category} className="flex flex-col gap-2 px-4 py-3 hover:bg-item-hover/20 transition-colors">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[13px] font-medium text-text-primary w-32 shrink-0">{category}</span>
+                        <div className="flex items-center gap-2 flex-1 justify-end">
+                          <input
+                            type="text"
+                            value={settings.categorySubfolders[category] || ''}
+                            onChange={(e) => settings.setCategorySubfolder(category, e.target.value)}
+                            onBlur={(e) => settings.setCategorySubfolder(
+                              category,
+                              normalizeCategorySubfolder(
+                                e.target.value,
+                                DEFAULT_CATEGORY_SUBFOLDERS[category]
+                              )
+                            )}
+                            className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay"
+                            aria-label={`${category} subfolder`}
+                          />
+                          <button
+                            onClick={() => handleBrowseCategory(category)}
+                            className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
+                          >
+                            Custom folder
+                          </button>
+                          {settings.categoryDirectoryOverrides[category] && (
+                            <button
+                              onClick={() => settings.setCategoryDirectoryOverride(category)}
+                              className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30"
+                            >
+                              Use automatic
+                            </button>
+                          )}
+                        </div>
+                      </div>
                       {settings.categoryDirectoryOverrides[category] && (
-                        <button
-                          onClick={() => settings.setCategoryDirectoryOverride(category)}
-                          className="app-button px-3 text-xs text-text-secondary hover:bg-item-hover"
-                        >
-                          Use automatic
-                        </button>
+                        <div className="flex pl-32">
+                          <div className="bg-surface-overlay/40 border border-border-color/30 rounded px-2 py-1 flex items-center gap-2">
+                            <span className="text-[10px] uppercase font-bold text-text-muted">Override</span>
+                            <span className="text-[11px] font-mono text-text-secondary truncate max-w-[400px]">
+                              {settings.categoryDirectoryOverrides[category]}
+                            </span>
+                          </div>
+                        </div>
                       )}
                     </div>
-                    {settings.categoryDirectoryOverrides[category] && (
-                      <p className="col-span-full pl-4 text-[10px] text-text-muted">
-                        Override: {settings.categoryDirectoryOverrides[category]}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
                 
                 <div className="mac-settings-row justify-end border-t-0">
                   <button

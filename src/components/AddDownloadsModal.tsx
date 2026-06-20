@@ -1112,62 +1112,75 @@ export const AddDownloadsModal = () => {
             <button onClick={() => toggleAddModal(false)} className="add-download-button add-download-button-cancel px-4 text-xs">
               Cancel
             </button>
-            <div ref={actionMenuRef} className="relative flex">
+            <div ref={actionMenuRef} className="relative flex gap-2.5">
               <button
                 onClick={() => handleAction({ type: 'start-now' })}
                 disabled={parsedItems.length === 0}
-                className="add-download-button add-download-button-primary rounded-r-none px-5 text-xs"
+                className="add-download-button add-download-button-primary px-5 text-xs"
               >
                 <Play size={12} fill="currentColor" /> Start Downloads
               </button>
-              <button
-                type="button"
-                onClick={() => setIsActionMenuOpen(open => !open)}
-                disabled={parsedItems.length === 0}
-                className="add-download-button add-download-button-primary rounded-l-none border-l border-white/20 px-2 text-xs"
-                aria-label="More add actions"
-                aria-haspopup="menu"
-                aria-expanded={isActionMenuOpen}
-              >
-                <ChevronDown size={14} />
-              </button>
-              {isActionMenuOpen && (
-                <div
-                  role="menu"
-                  className="app-modal absolute bottom-full right-0 z-[70] mb-2 min-w-[230px] overflow-hidden py-1.5 text-xs"
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsActionMenuOpen(open => !open)}
+                  disabled={parsedItems.length === 0}
+                  className="add-download-button add-download-button-secondary px-4 text-xs"
+                  aria-label="Add to..."
+                  aria-haspopup="menu"
+                  aria-expanded={isActionMenuOpen}
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsActionMenuOpen(false);
-                      void handleAction({ type: 'add-to-list' });
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                  Add to... <ChevronDown size={14} className="ml-1" />
+                </button>
+                {isActionMenuOpen && (
+                  <div
+                    role="menu"
+                    className="app-modal absolute bottom-full right-0 z-[70] mb-2 min-w-[200px] overflow-visible py-1.5 text-xs"
                   >
-                    <Rows3 size={14} />
-                    <span>Add to List</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsActionMenuOpen(false);
-                      const queueId = queues.length === 1 ? queues[0].id : selectedQueueId;
-                      void handleAction({ type: 'add-to-queue', queueId });
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
-                  >
-                    <ListPlus size={14} />
-                    <span className="min-w-0">
-                      <span className="block">Add to Queue</span>
-                      <span className="block truncate text-[10px] text-text-muted">
-                        {queues.find(queue => queue.id === (queues.length === 1 ? queues[0].id : selectedQueueId))?.name}
-                      </span>
-                    </span>
-                  </button>
-                </div>
-              )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsActionMenuOpen(false);
+                        void handleAction({ type: 'add-to-list' });
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                    >
+                      <Rows3 size={14} />
+                      <span>Add to List</span>
+                    </button>
+                    <div className="group relative">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                      >
+                        <div className="flex items-center gap-2">
+                          <ListPlus size={14} />
+                          <span>Add to Queue</span>
+                        </div>
+                        <ChevronRight size={14} />
+                      </button>
+                      <div className="app-modal absolute bottom-0 right-[calc(100%+4px)] z-[80] hidden min-w-[160px] py-1.5 group-hover:block">
+                        {queues.map(queue => (
+                          <button
+                            key={queue.id}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsActionMenuOpen(false);
+                              void handleAction({ type: 'add-to-queue', queueId: queue.id });
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                          >
+                            <span className="truncate">{queue.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

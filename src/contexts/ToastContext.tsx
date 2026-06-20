@@ -71,10 +71,10 @@ const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => vo
 
   // Variant styling
   const variantStyles = {
-    success: 'border-green-500/50 bg-green-500/10 text-green-700 dark:text-green-400',
+    success: 'border-[#10b981]/20 bg-[#064e3b]/95 text-[#34d399]',
     info: 'border-[hsl(var(--border-modal))] bg-[hsl(var(--surface-overlay))] text-[hsl(var(--text-primary))]',
-    warning: 'border-yellow-500/50 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400',
-    error: 'border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-400',
+    warning: 'border-[#eab308]/20 bg-[#713f12]/95 text-[#fde047]',
+    error: 'border-[#ef4444]/20 bg-[#7f1d1d]/95 text-[#f87171]',
   };
 
   const style = variantStyles[toast.variant || 'info'];
@@ -82,7 +82,8 @@ const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => vo
   return (
     <div
       role={role}
-      className={`app-toast-item pointer-events-auto flex items-center justify-between gap-4 rounded-lg border p-4 shadow-lg backdrop-blur-[20px] transition-all duration-300 motion-reduce:transition-none motion-reduce:animation-none text-[12px] ${style}`}
+      className={`app-toast-item pointer-events-auto flex items-center justify-between gap-4 rounded-xl border p-4 shadow-2xl backdrop-blur-[20px] transition-all duration-300 text-[13px] ${style}`}
+      style={{ animation: 'fade-in 200ms ease-out forwards' }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onFocus={() => setIsHovered(true)}
@@ -105,7 +106,7 @@ const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => vo
 
 const ToastContainer: React.FC<{ toasts: ToastMessage[]; removeToast: (id: string) => void }> = ({ toasts, removeToast }) => {
   return (
-    <div className="fixed bottom-5 right-5 z-[100] flex max-w-[420px] flex-col gap-2 pointer-events-none">
+    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col gap-3 pointer-events-none items-center">
       {toasts.map(toast => (
         <ToastItem key={toast.id} toast={toast} removeToast={removeToast} />
       ))}

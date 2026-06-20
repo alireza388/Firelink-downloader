@@ -16,18 +16,6 @@ import {
   resolveDownloadFilePath
 } from '../utils/downloadLocations';
 
-interface RawMediaFormat {
-  format_id?: string;
-  ext?: string;
-  resolution?: string;
-  format_note?: string;
-  vcodec?: string;
-  acodec?: string;
-  height?: number;
-  filesize?: number;
-  filesize_approx?: number;
-}
-
 interface MediaFormat {
   name: string;
   selector: string;
@@ -50,216 +38,12 @@ interface ParsedDownloadItem {
   selectedFormat?: number;
 }
 
-const isVideo = (f: RawMediaFormat) => {
-  const vcodec = f.vcodec?.toLowerCase();
-  return vcodec && vcodec !== 'none';
-};
-
-const isAudio = (f: RawMediaFormat) => {
-  const acodec = f.acodec?.toLowerCase();
-  const vcodec = f.vcodec?.toLowerCase();
-  return acodec && acodec !== 'none' && (!vcodec || vcodec === 'none');
-};
-
-const formatSize = (f: RawMediaFormat) => f.filesize ?? f.filesize_approx ?? 0;
-
-const matchesHeight = (f: RawMediaFormat, height: number | null) => {
-  if (height === null) return true;
-
-  const note = f.format_note || "";
-  if (height === 2160 && (note.includes("2160p") || note.toLowerCase().includes("4k"))) return true;
-  if (height === 1440 && note.includes("1440p")) return true;
-  if (height === 1080 && note.includes("1080p")) return true;
-  if (height === 720 && note.includes("720p")) return true;
-  if (height === 480 && note.includes("480p")) return true;
-  if (height === 360 && note.includes("360p")) return true;
-
-  if (f.resolution) {
-    const parts = f.resolution.split('x').map(n => parseInt(n, 10));
-    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-      const maxDim = Math.max(parts[0], parts[1]);
-      switch (height) {
-        case 2160: if (maxDim >= 3800) return true; break;
-        case 1440: if (maxDim >= 2500 && maxDim < 3800) return true; break;
-        case 1080: if (maxDim >= 1900 && maxDim < 2500) return true; break;
-        case 720:  if (maxDim >= 1200 && maxDim < 1900) return true; break;
-        case 480:  if (maxDim >= 800 && maxDim < 1200) return true; break;
-        case 360:  if (maxDim >= 600 && maxDim < 800) return true; break;
-      }
-    }
-  }
-
-  const formatHeight = f.height;
-  if (!formatHeight) return false;
-
-  let tolerance = 100;
-  if (height >= 2160) tolerance = 600;
-  else if (height >= 1440) tolerance = 400;
-  else if (height >= 1080) tolerance = 300;
-  else if (height >= 720) tolerance = 200;
-
-  return formatHeight <= height && formatHeight >= height - tolerance;
-};
-
-const hasVideoFormat = (formats: RawMediaFormat[], height: number | null, container: string) => {
-  return formats.some(f => {
-    if (!isVideo(f) || !matchesHeight(f, height)) return false;
-    return container === 'mkv' || f.ext?.toLowerCase() === container.toLowerCase();
-  });
-};
-
-const hasAudioFormat = (formats: RawMediaFormat[], ext: string | null) => {
-  return formats.some(f => {
-    if (!isAudio(f)) return false;
-    if (!ext) return true;
-    return f.ext?.toLowerCase() === ext.toLowerCase();
-  });
-};
-
-const estimatedVideoBytes = (formats: RawMediaFormat[], height: number | null, container: string) => {
-  let maxVideo = 0;
-  for (const f of formats) {
-    if (isVideo(f) && matchesHeight(f, height) && (container === 'mkv' || f.ext?.toLowerCase() === container.toLowerCase())) {
-      const size = formatSize(f);
-      if (size > maxVideo) maxVideo = size;
-    }
-  }
-  if (maxVideo === 0) return null;
-
-  let maxAudio = estimatedAudioBytes(formats, container === 'webm' ? 'webm' : 'm4a') || estimatedAudioBytes(formats, null) || 0;
-  return maxVideo + maxAudio;
-};
-
-const estimatedAudioBytes = (formats: RawMediaFormat[], ext: string | null): number | null => {
-  let maxPreferred = 0;
-  for (const f of formats) {
-    if (isAudio(f)) {
-      if (!ext || f.ext?.toLowerCase() === ext.toLowerCase()) {
-        const size = formatSize(f);
-        if (size > maxPreferred) maxPreferred = size;
-      }
-    }
-  }
-  if (maxPreferred > 0 || !ext) return maxPreferred > 0 ? maxPreferred : null;
-  return estimatedAudioBytes(formats, null);
-};
-
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return 'Unknown size';
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-};
-
-// @ts-ignore
-interface QualityOption {
-  h: number;
-  name: string;
-}
-
-const standardResolutions = [
-  { h: 2160, name: "4K" },
-  { h: 1440, name: "1440p" },
-  { h: 1080, name: "1080p" },
-  { h: 720, name: "720p" },
-  { h: 480, name: "480p" },
-  { h: 360, name: "360p" }
-];
-
-// @ts-ignore
-const parseMediaFormats = (jsonStr: string) => {
-  try {
-    const parsed: unknown = JSON.parse(jsonStr);
-    if (!parsed || typeof parsed !== 'object') return null;
-    const data = parsed as { title?: unknown; formats?: unknown };
-    let title = typeof data.title === 'string' ? data.title : 'Media';
-    title = title.replace(/[\/\\?%*:|"<>]/g, '-');
-    const rawFormats = Array.isArray(data.formats)
-      ? data.formats.filter((format): format is RawMediaFormat => Boolean(format) && typeof format === 'object')
-      : [];
-
-    const options = [];
-
-    const availableResolutions = standardResolutions.filter(res =>
-      rawFormats.some(f => isVideo(f) && matchesHeight(f, res.h))
-    );
-
-    const videoQualities: { h: number | null, name: string }[] = [{ h: null, name: "Best" }, ...availableResolutions];
-    const videoContainers = [
-      { ext: "mp4", name: "MP4" },
-      { ext: "mkv", name: "MKV" },
-      { ext: "webm", name: "WebM" }
-    ];
-
-    for (const q of videoQualities) {
-      for (const c of videoContainers) {
-        if (!hasVideoFormat(rawFormats, q.h, c.ext)) continue;
-        const est = estimatedVideoBytes(rawFormats, q.h, c.ext);
-        const filter = q.h ? `[height<=${q.h}]` : '';
-
-        let selector = `bestvideo${filter}+bestaudio/best${filter}`;
-        if (c.ext === 'mp4') {
-          selector = `bestvideo${filter}[ext=mp4]+bestaudio[ext=m4a]/best${filter}[ext=mp4]/bestvideo${filter}+bestaudio/best${filter}`;
-        } else if (c.ext === 'webm') {
-          selector = `bestvideo${filter}[ext=webm]+bestaudio[ext=webm]/best${filter}[ext=webm]/bestvideo${filter}+bestaudio/best${filter}`;
-        }
-
-        options.push({
-          name: `${q.name} ${c.name}`,
-          selector,
-          ext: c.ext,
-          formatLabel: `${c.name.toUpperCase()} • Video + audio`,
-          detail: est ? `~${formatBytes(est)}` : '',
-          type: 'Video',
-          bytes: est || 0
-        });
-      }
-    }
-
-    if (hasAudioFormat(rawFormats, null)) {
-      const est = estimatedAudioBytes(rawFormats, null);
-      options.push({
-        name: "Audio MP3",
-        selector: "bestaudio/best",
-        ext: "mp3",
-        formatLabel: "MP3 • Best audio",
-        detail: est ? `~${formatBytes(est)}` : '',
-        type: 'Audio',
-        bytes: est || 0
-      });
-    }
-
-    if (hasAudioFormat(rawFormats, "m4a")) {
-      const est = estimatedAudioBytes(rawFormats, "m4a");
-      options.push({
-        name: "Audio M4A",
-        selector: "bestaudio[ext=m4a]/bestaudio/best",
-        ext: "m4a",
-        formatLabel: "M4A • AAC",
-        detail: est ? `~${formatBytes(est)}` : '',
-        type: 'Audio',
-        bytes: est || 0
-      });
-    }
-
-    if (hasAudioFormat(rawFormats, "webm") || hasAudioFormat(rawFormats, "opus")) {
-      const est = estimatedAudioBytes(rawFormats, "webm") || estimatedAudioBytes(rawFormats, "opus");
-      options.push({
-        name: "Audio Opus",
-        selector: "bestaudio[ext=webm]/bestaudio/best",
-        ext: "opus",
-        formatLabel: "OPUS • Opus",
-        detail: est ? `~${formatBytes(est)}` : '',
-        type: 'Audio',
-        bytes: est || 0
-      });
-    }
-
-    return { title, formats: options };
-  } catch (e) {
-    return null;
-  }
 };
 
 export const AddDownloadsModal = () => {
@@ -416,7 +200,7 @@ export const AddDownloadsModal = () => {
             });
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
-                const quality = f.resolution || 'Best';
+                const quality = f.resolution || 'Video';
                 const container = f.ext.toUpperCase();
                 const exactBytes = f.filesize || 0;
                 const approxBytes = f.filesize_approx || 0;

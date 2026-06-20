@@ -186,12 +186,7 @@ fn matches_media_height(value: &serde_json::Value, target: u64) -> bool {
         return true;
     }
 
-    let Some(height) = format_height(value) else {
-        return false;
-    };
-
-    let tolerance = if target >= 2160 { 600 } else if target >= 1440 { 400 } else if target >= 1080 { 300 } else if target >= 720 { 200 } else { 100 };
-    height <= target && height.saturating_add(tolerance) >= target
+    format_height(value) == Some(target)
 }
 
 fn format_score(value: &serde_json::Value) -> u64 {
@@ -343,7 +338,6 @@ fn raw_media_format(
 fn build_media_format_options(
     formats_arr: &[serde_json::Value],
     duration_seconds: Option<f64>,
-    requested_formats: Option<&[serde_json::Value]>,
 ) -> Vec<MediaFormat> {
     let clean_formats: Vec<&serde_json::Value> = formats_arr.iter().filter(|format| !is_excluded_yt_dlp_format(format)).collect();
     let has_video = clean_formats.iter().any(|format| has_video_stream(format));
@@ -351,29 +345,6 @@ fn build_media_format_options(
     let mut options = Vec::new();
 
     if has_video {
-        let requested_video = requested_formats
-            .and_then(|formats| formats.iter().find(|format| has_video_stream(format)));
-        let requested_audio = requested_formats
-            .and_then(|formats| formats.iter().find(|format| has_audio_stream(format) && !has_video_stream(format)));
-        let best_video = requested_video.or_else(|| best_matching_format(&clean_formats, has_video_stream));
-        let best_audio = if best_video.is_some_and(|format| has_audio_stream(format)) {
-            None
-        } else {
-            requested_audio.or_else(|| best_audio_format(&clean_formats, None))
-        };
-        let (filesize, filesize_approx) =
-            estimated_merged_size(best_video, best_audio, duration_seconds);
-        options.push(MediaFormat {
-            format_id: selected_format_id(best_video, best_audio)
-                .unwrap_or_else(|| "bestvideo+bestaudio/best".to_string()),
-            resolution: "Best".to_string(),
-            ext: "mkv".to_string(),
-            format_label: joined_format_label("mkv", best_video.and_then(|format| json_str(format, "vcodec")), best_audio.and_then(|format| json_str(format, "acodec"))),
-            fps: best_video.and_then(|format| json_f64(format, "fps")),
-            filesize,
-            filesize_approx,
-        });
-
         let available_heights: Vec<u64> = [2160_u64, 1440, 1080, 720, 480, 360]
             .into_iter()
             .filter(|height| clean_formats.iter().any(|format| matches_media_height(format, *height)))
@@ -534,7 +505,19 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         let total = progress_json_number(&progress, "total_bytes")
             .or_else(|| progress_json_number(&progress, "total_bytes_estimate"))
             .unwrap_or(0.0);
-        let fraction = if total > 0.0 {
+        let fragment_index = progress_json_number(&progress, "fragment_index");
+        let fragment_count = progress_json_number(&progress, "fragment_count");
+        let fraction = if let (Some(fragment_index), Some(fragment_count)) =
+            (fragment_index, fragment_count)
+        {
+            if fragment_count > 1.0 {
+                (fragment_index / fragment_count).clamp(0.0, 1.0)
+            } else if total > 0.0 {
+                downloaded / total
+            } else {
+                0.0
+            }
+        } else if total > 0.0 {
             downloaded / total
         } else {
             progress_json_string(&progress, "_percent_str")
@@ -660,6 +643,24 @@ fn media_progress_speed(progress: &MediaProgress, now: Instant, last_sample: &mu
     } else {
         progress.speed.clone()
     }
+}
+
+fn aggregate_media_fraction(
+    total_tracks: f64,
+    current_track: &mut f64,
+    last_fraction: &mut f64,
+    next_fraction: f64,
+) -> f64 {
+    let next_fraction = next_fraction.clamp(0.0, 1.0);
+    let has_next_track = *current_track + 1.0 < total_tracks;
+    if has_next_track && *last_fraction >= 0.95 && next_fraction <= 0.05 {
+        *current_track += 1.0;
+        *last_fraction = next_fraction;
+    } else {
+        *last_fraction = (*last_fraction).max(next_fraction);
+    }
+
+    ((*current_track + *last_fraction) / total_tracks).clamp(0.0, 1.0)
 }
 
 async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
@@ -990,7 +991,7 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         .arg("--retries").arg("3")
         .arg("--extractor-retries").arg("3")
         .arg("--compat-options").arg("no-youtube-unavailable-videos")
-        .arg("--print").arg("%(.{title,duration,thumbnail,formats,requested_formats})j");
+        .arg("--print").arg("%(.{title,duration,thumbnail,formats})j");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
@@ -1035,17 +1036,10 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         let duration_seconds = value.get("duration").and_then(|v| v.as_f64());
         let duration = duration_seconds.map(|v| v as u64);
         let thumbnail = value.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let requested_formats = value
-            .get("requested_formats")
-            .and_then(|v| v.as_array())
-            .map(Vec::as_slice);
-
         let formats = value
             .get("formats")
             .and_then(|v| v.as_array())
-            .map(|formats_arr| {
-                build_media_format_options(formats_arr, duration_seconds, requested_formats)
-            })
+            .map(|formats_arr| build_media_format_options(formats_arr, duration_seconds))
             .unwrap_or_default();
 
         Ok(MediaMetadata { title, duration, thumbnail, formats })
@@ -2106,14 +2100,17 @@ pub(crate) async fn start_media_download_internal(
                         Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
                             if let Some(progress) = parse_media_progress_line(&line) {
-                            if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
-                                current_track += 1.0;
+                            let previous_track = current_track;
+                            let overall_fraction = aggregate_media_fraction(
+                                total_tracks,
+                                &mut current_track,
+                                &mut last_fraction,
+                                progress.fraction,
+                            );
+                            if current_track != previous_track {
                                 last_speed_sample = None;
                             }
-                            last_fraction = progress.fraction;
                             let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
-
-                            let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
 
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
@@ -2132,14 +2129,17 @@ pub(crate) async fn start_media_download_internal(
                         Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
                             if let Some(progress) = parse_media_progress_line(&line) {
-                                if progress.fraction < last_fraction && (last_fraction - progress.fraction) > 0.5 {
-                                    current_track += 1.0;
+                                let previous_track = current_track;
+                                let overall_fraction = aggregate_media_fraction(
+                                    total_tracks,
+                                    &mut current_track,
+                                    &mut last_fraction,
+                                    progress.fraction,
+                                );
+                                if current_track != previous_track {
                                     last_speed_sample = None;
                                 }
-                                last_fraction = progress.fraction;
                                 let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
-
-                                let overall_fraction = ((current_track + progress.fraction) / total_tracks).min(1.0);
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
@@ -3093,9 +3093,10 @@ fn set_extension_frontend_ready(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_media_format_options, collect_download_uris, is_excluded_yt_dlp_format, json_lower,
-        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_urls,
-        parse_media_progress_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        aggregate_media_fraction, build_media_format_options, collect_download_uris,
+        is_excluded_yt_dlp_format, json_lower, media_progress_speed,
+        normalize_speed_limit_for_aria2, parse_firelink_urls, parse_media_progress_line,
+        MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -3200,9 +3201,11 @@ mod tests {
             })
         ];
 
-        let options = build_media_format_options(&formats, Some(600.0), None);
+        let options = build_media_format_options(&formats, Some(600.0));
 
     assert!(!options.iter().any(|format| format.ext == "mhtml"));
+    assert!(!options.iter().any(|format| format.resolution == "Best"));
+    assert!(!options.iter().any(|format| format.resolution == "1440p"));
     assert!(options.iter().any(|format| {
         format.resolution == "1080p"
             && format.ext == "mkv"
@@ -3240,18 +3243,15 @@ mod tests {
                 "filesize": 28_000_000_u64
             })
         ];
-        let requested_formats = vec![formats[0].clone(), formats[1].clone()];
+        let options = build_media_format_options(&formats, Some(1_800.0));
+        let option = options
+            .iter()
+            .find(|format| format.resolution == "1080p" && format.ext == "mkv")
+            .expect("1080p MKV option");
 
-        let options = build_media_format_options(
-            &formats,
-            Some(1_800.0),
-            Some(&requested_formats),
-        );
-        let best = options.first().expect("best format option");
-
-        assert_eq!(best.format_id, "301+251");
-        assert_eq!(best.filesize, None);
-        assert_eq!(best.filesize_approx, Some(1_468_000_000));
+        assert_eq!(option.format_id, "301+251");
+        assert_eq!(option.filesize, None);
+        assert_eq!(option.filesize_approx, Some(1_468_000_000));
     }
 
     #[test]
@@ -3295,11 +3295,7 @@ mod tests {
             .filter(|format| json_lower(format, "ext") == "mhtml")
             .count();
         let duration = value.get("duration").and_then(|duration| duration.as_f64());
-        let requested_formats = value
-            .get("requested_formats")
-            .and_then(|requested| requested.as_array())
-            .map(Vec::as_slice);
-        let options = build_media_format_options(formats, duration, requested_formats);
+        let options = build_media_format_options(formats, duration);
 
         eprintln!(
             "raw formats: {}, raw mhtml: {}, normalized options: {}",
@@ -3330,6 +3326,42 @@ mod tests {
                 downloaded_bytes: Some(5242880.0),
             })
         );
+    }
+
+    #[test]
+    fn uses_fragment_progress_instead_of_temporary_hls_size_estimates() {
+        let line = format!(
+            "{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":1024,\"total_bytes_estimate\":1024,\"fragment_index\":0,\"fragment_count\":354,\"_percent_str\":\"100.0%\"}}"
+        );
+
+        assert_eq!(
+            parse_media_progress_line(&line).map(|progress| progress.fraction),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn advances_tracks_only_after_a_completed_track_restarts() {
+        let mut current_track = 0.0;
+        let mut last_fraction = 0.0;
+
+        assert_eq!(
+            aggregate_media_fraction(2.0, &mut current_track, &mut last_fraction, 0.5),
+            0.25
+        );
+        assert_eq!(
+            aggregate_media_fraction(2.0, &mut current_track, &mut last_fraction, 1.0),
+            0.5
+        );
+        assert_eq!(
+            aggregate_media_fraction(2.0, &mut current_track, &mut last_fraction, 0.0),
+            0.5
+        );
+        assert_eq!(
+            aggregate_media_fraction(2.0, &mut current_track, &mut last_fraction, 0.4),
+            0.7
+        );
+        assert_eq!(current_track, 1.0);
     }
 
     #[test]

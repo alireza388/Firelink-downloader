@@ -335,6 +335,8 @@ export const AddDownloadsModal = () => {
       setCookies(pendingAddCookies);
       setMirrors('');
       setIsActionMenuOpen(false);
+    } else {
+      setUrls('');
     }
   }, [
     isAddModalOpen,
@@ -1018,7 +1020,7 @@ export const AddDownloadsModal = () => {
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-text-secondary font-medium">Connections per File</label>
                     <div className="flex items-center gap-2">
-                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24" disabled={parsedItems.some(i => i.isMedia)} aria-label="Connections per file" />
+                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24 accent-blue-500" disabled={parsedItems.some(i => i.isMedia)} aria-label="Connections per file" />
                       <span className="add-download-value text-xs text-text-primary font-mono w-6 text-center">{connections}</span>
                     </div>
                   </div>

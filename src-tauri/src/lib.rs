@@ -245,19 +245,17 @@ fn joined_format_label(container: &str, video_codec: Option<&str>, audio_codec: 
 }
 
 fn estimated_merged_size(video: Option<&serde_json::Value>, audio: Option<&serde_json::Value>) -> (Option<u64>, Option<u64>) {
-    let Some(video) = video else {
-        return (None, None);
-    };
-    let Some((video_size, video_approx)) = media_sized_bytes(video) else {
-        return (None, None);
-    };
-    let Some(audio) = audio else {
-        return split_size_estimate(Some((video_size, video_approx)));
-    };
-    let Some((audio_size, audio_approx)) = media_sized_bytes(audio) else {
-        return (None, None);
-    };
-    split_size_estimate(Some((video_size.saturating_add(audio_size), video_approx || audio_approx)))
+    let v_bytes = video.and_then(media_sized_bytes);
+    let a_bytes = audio.and_then(media_sized_bytes);
+
+    match (v_bytes, a_bytes) {
+        (Some((v_size, v_approx)), Some((a_size, a_approx))) => {
+            split_size_estimate(Some((v_size.saturating_add(a_size), v_approx || a_approx)))
+        }
+        (Some((v_size, _v_approx)), None) => split_size_estimate(Some((v_size, true))),
+        (None, Some((a_size, _a_approx))) => split_size_estimate(Some((a_size, true))),
+        (None, None) => (None, None),
+    }
 }
 
 fn raw_media_format(value: &serde_json::Value) -> Option<MediaFormat> {
@@ -847,13 +845,13 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg")).map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
     }
     let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
-    let original_path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
-    let path_env = format!("{}:{}", bin_dir_str, original_path);
+    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
 
     use tauri_plugin_shell::ShellExt;
     let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
     let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
     cmd = cmd.env("PATH", &path_env)
+        .arg("--ffmpeg-location").arg(&bin_dir_str)
         .arg("--no-warnings")
         .arg("--no-playlist")
         .arg("--skip-download")

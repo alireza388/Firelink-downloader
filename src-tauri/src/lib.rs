@@ -2172,6 +2172,7 @@ async fn pause_download(
                 state.queue_manager.clear_aria2_retry_state(&id).await;
                 state.queue_manager.forget_aria2_gid(&id).await;
                 state.queue_manager.release_permit(&id).await;
+                state.queue_manager.release_registered_id(&id).await;
                 return Err(format!(
                     "cannot pause aria2 gid {gid} in terminal state {terminal}"
                 ));
@@ -2214,11 +2215,13 @@ async fn resume_download(
 ) -> Result<bool, String> {
     let Some(gid) = state.queue_manager.aria2_gid_for_download(&id) else {
         log::info!("aria2 resume [{}]: no mapped gid; re-enqueue is permitted", id);
+        state.queue_manager.release_registered_id(&id).await;
         return Ok(false);
     };
     if gid.starts_with("native:") {
         state.queue_manager.forget_aria2_gid(&id).await;
         log::info!("aria2 resume [{}]: native fallback has no aria2 gid", id);
+        state.queue_manager.release_registered_id(&id).await;
         return Ok(false);
     }
 
@@ -2263,6 +2266,7 @@ async fn resume_download(
             state.queue_manager.clear_aria2_retry_state(&id).await;
             state.queue_manager.forget_aria2_gid(&id).await;
             state.queue_manager.release_permit(&id).await;
+            state.queue_manager.release_registered_id(&id).await;
             log::info!(
                 "aria2 resume [{}]: gid {} is {}; re-enqueue is permitted",
                 id,
@@ -2293,6 +2297,7 @@ async fn remove_download(
 ) -> Result<(), String> {
     log::info!("remove_download called for id: {}", id);
     let _ = crate::download_ownership::remove(&app_handle, &id);
+    state.queue_manager.release_registered_id(&id).await;
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
@@ -2351,6 +2356,69 @@ async fn remove_download(
             }
         }
     }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn detach_download_for_reconfigure(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    log::info!("detach_download_for_reconfigure called for id: {}", id);
+    let active_kind = state.queue_manager.active_kind(&id).await;
+    state.queue_manager.remove_from_pending(&id).await;
+    state.queue_manager.cancel_aria2_retries(&id).await;
+    let retry_add_guard = state.queue_manager.lock_aria2_retry_add().await;
+    let gid = state.queue_manager.aria2_gid_for_download(&id);
+
+    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+        let removal_result = async {
+            rpc_call(
+                state.aria2_port,
+                &state.aria2_secret,
+                "aria2.forcePause",
+                serde_json::json!([gid]),
+            )
+            .await?;
+            wait_for_aria2_stopped(state.aria2_port, &state.aria2_secret, gid).await
+        }
+        .await;
+        if let Err(error) = removal_result {
+            state.queue_manager.allow_aria2_retries(&id).await;
+            return Err(error);
+        }
+        state.queue_manager.clear_aria2_retry_state(&id).await;
+        state.queue_manager.forget_aria2_gid(&id).await;
+        state.queue_manager.release_permit(&id).await;
+        state.queue_manager.release_registered_id(&id).await;
+        log::info!("aria2 detach [{}]: gid {} stopped and forgotten", id, gid);
+    } else {
+        drop(retry_add_guard);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+            state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
+        } else if let Ok(download_id) = Uuid::parse_str(&id) {
+            state.download_coordinator.send(crate::download::DownloadCmd::PauseWithAck(download_id, tx)).await?;
+        } else {
+            let _ = tx.send(()); // Fallback if no task exists
+        }
+        let _ = rx.await; // Wait for the writer to stop
+
+        if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+            state.queue_manager.release_permit(&id).await;
+        }
+        state.queue_manager.clear_aria2_retry_state(&id).await;
+        state.queue_manager.forget_aria2_gid(&id).await;
+        state.queue_manager.release_registered_id(&id).await;
+    }
+
+    use tauri::Emitter;
+    let _ = app_handle.emit(
+        "download-state",
+        crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
+    );
 
     Ok(())
 }
@@ -2506,7 +2574,11 @@ async fn enqueue_download(
         &item.destination,
         &item.filename,
     )?;
-    state.queue_manager.push(item.into_task()).await;
+    if let Err(e) = state.queue_manager.push(item.into_task()).await {
+        let _ = crate::download_ownership::remove(&app_handle, &id);
+        state.queue_manager.release_registered_id(&id).await;
+        return Err(AppError::Internal(e));
+    }
     Ok(id)
 }
 
@@ -2515,7 +2587,7 @@ async fn enqueue_many(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     items: Vec<queue::EnqueueItem>,
-) -> Result<(), AppError> {
+) -> Result<Vec<crate::ipc::EnqueueResult>, AppError> {
     for item in &items {
         crate::download_ownership::register_expected(
             &app_handle,
@@ -2525,8 +2597,16 @@ async fn enqueue_many(
         )?;
     }
     let tasks = items.into_iter().map(queue::EnqueueItem::into_task).collect();
-    state.queue_manager.enqueue_many(tasks).await;
-    Ok(())
+    let results = state.queue_manager.enqueue_many(tasks).await;
+
+    for result in &results {
+        if !result.success {
+            let _ = crate::download_ownership::remove(&app_handle, &result.id);
+            state.queue_manager.release_registered_id(&result.id).await;
+        }
+    }
+
+    Ok(results)
 }
 
 #[tauri::command]
@@ -2546,7 +2626,8 @@ async fn remove_from_queue(
 ) -> Result<bool, AppError> {
     let removed = state.queue_manager.remove_from_pending(&id).await;
     if removed {
-        crate::download_ownership::remove(&app_handle, &id)?;
+        let _ = crate::download_ownership::remove(&app_handle, &id);
+        state.queue_manager.release_registered_id(&id).await;
     }
     Ok(removed)
 }
@@ -3475,6 +3556,7 @@ pub fn run() {
             set_keychain_password, get_keychain_password, delete_keychain_password,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
+            detach_download_for_reconfigure,
             enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,

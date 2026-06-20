@@ -1,121 +1,180 @@
-# Firelink interaction/functionality review
+# Firelink UI Interaction Inventory
 
-Date: 2026-06-19
+## 1. Main Window & Sidebar
 
-## Review method
+### Sidebar Actions
+- **Select Filter/Category/Queue**
+  - **Location**: Sidebar item clicks (`NavItem`, `QueueItem`).
+  - **Component**: `Sidebar.tsx` (`onSelectFilter`)
+  - **Store Action**: `useSettingsStore.setActiveView('downloads')`, updates local state filter.
+  - **Expected**: Main table filters to show matching downloads.
+- **Add Queue**
+  - **Location**: Sidebar '+' button.
+  - **Component**: `Sidebar.tsx` (`handleAddQueueSubmit`)
+  - **Store Action**: `useDownloadStore.addQueue()`
+  - **Expected**: A new custom queue is created.
+- **Queue Context Menu**
+  - **Location**: Right-click on a custom queue.
+  - **Component**: `Sidebar.tsx` (`handleQueueContextMenu`)
+  - **Actions**:
+    - **Start Queue**: `useDownloadStore.startQueue()` -> IPC `start_download` (for active items)
+    - **Pause Queue**: `useDownloadStore.pauseQueue()` -> IPC `pause_download`
+    - **Rename Queue**: `useDownloadStore.renameQueue()`
+    - **Delete Queue**: `useDownloadStore.removeQueue()` -> IPC `db_delete_queue`
+  - **Expected**: Context menu opens, performing the respective queue manipulation.
+- **Resize Sidebar**
+  - **Location**: Sidebar drag handle.
+  - **Component**: `App.tsx` (`startSidebarResize`)
+  - **Expected**: Drags and resizes the sidebar width dynamically.
 
-Code-traced visible UI actions through React components, Zustand stores, typed IPC wrappers, registered Tauri commands, Rust side effects, and frontend update/error paths. Build and Rust tests were run after fixes.
+### Main Toolbar
+- **Toggle Sidebar**
+  - **Location**: Top-left icon (when sidebar is hidden).
+  - **Component**: `DownloadTable.tsx` / `Sidebar.tsx`
+  - **Store Action**: `useSettingsStore.toggleSidebar()`
+- **Add Download**
+  - **Location**: '+' Button.
+  - **Component**: `DownloadTable.tsx`
+  - **Store Action**: `useDownloadStore.toggleAddModal(true)`
+- **Resume All / Pause All**
+  - **Location**: Toolbar Play/Pause icons.
+  - **Component**: `DownloadTable.tsx`
+  - **Store Action**: `handleResume` -> `resumeDownload`, `handlePause` -> IPC `pause_download`
+  - **Rust**: `commands::pause_download`
+  - **Expected**: Iterates through visible items and pauses/resumes them.
 
-## Root causes found
+## 2. Download Table
 
-1. The handwritten frontend IPC map had drifted from generated Rust bindings.
-   - Queue reordering sent `Up`/`Down`, but Rust deserializes `QueueDirection` as lowercase `up`/`down`.
+- **Table Column Resize**
+  - **Location**: Table headers drag handle.
+  - **Component**: `DownloadTable.tsx` (`startColumnResize`)
+  - **Expected**: Modifies local state grid template widths.
+- **Row Double Click**
+  - **Location**: Table row.
+  - **Component**: `DownloadTable.tsx` (`handleDownloadDoubleClick`)
+  - **Expected**: If completed, opens file (IPC `open_downloaded_file`). Otherwise, opens properties (`useDownloadStore.setSelectedPropertiesDownloadId`).
+- **Row Context Menu (Right Click)**
+  - **Location**: Table row.
+  - **Component**: `DownloadTable.tsx`
+  - **Actions**:
+    - **Open**: IPC `open_downloaded_file` -> Rust `commands::open_downloaded_file`
+    - **Show in Finder**: IPC `reveal_in_file_manager` -> Rust `commands::reveal_in_file_manager`
+    - **Pause**: IPC `pause_download` -> Rust `commands::pause_download`
+    - **Resume**: `useDownloadStore.resumeDownload()` -> IPC `resume_download` -> Rust `commands::resume_download`
+    - **Redownload**: `useDownloadStore.redownload()` -> IPC `remove_download` -> Rust `commands::enqueue_download`
+    - **Copy Address**: `navigator.clipboard.writeText(url)`
+    - **Copy File Path**: `navigator.clipboard.writeText(fullPath)`
+    - **Remove**: `useDownloadStore.openDeleteModal()`
+    - **Properties**: `useDownloadStore.setSelectedPropertiesDownloadId()`
 
-2. Some UI buttons were visually present but not wired.
-   - Add Download `Refresh Metadata` had no click handler.
+## 3. Add Downloads Window
 
-3. Some UI promises did not match the backend side effect.
-   - Settings global speed limit was labeled KiB/s, but bare numeric input was passed as bytes/s.
-   - Download Properties allowed editing speed for active transfers even though no backend command applied a per-download active speed change.
+- **Input URLs**
+  - **Location**: Main textarea.
+  - **Component**: `AddDownloadsModal.tsx`
+  - **Expected**: Parses text, fetches metadata (IPC `fetch_metadata` or `fetchMediaMetadataDeduped`), and populates preview list.
+- **Refresh Metadata**
+  - **Location**: "Refresh Metadata" button.
+  - **Component**: `AddDownloadsModal.tsx`
+  - **Expected**: Re-triggers metadata fetch for URLs.
+- **Preview List Selection**
+  - **Location**: Preview items list.
+  - **Component**: `AddDownloadsModal.tsx` (`setSelectedItemIndex`)
+  - **Expected**: Updates the right-side form to reflect the selected item's specific options.
+- **Media Format Selection**
+  - **Location**: Format list (if media).
+  - **Component**: `AddDownloadsModal.tsx` (`selectMediaFormat`)
+  - **Expected**: Updates the selected format, updating estimated sizes and file extensions.
+- **Browse Save Location**
+  - **Location**: "Select" button next to save location.
+  - **Component**: `AddDownloadsModal.tsx` (`handleBrowse`)
+  - **Expected**: Opens Tauri native directory picker.
+- **Options Toggles & Inputs**
+  - **Location**: Right-side pane.
+  - **Actions**: Change connections, toggle speed limit, set username/password, expand advanced, toggle checksum, edit headers/cookies/mirrors.
+  - **Expected**: Mutates local component state for the download configuration.
+- **Start / Add to Queue**
+  - **Location**: Bottom right buttons.
+  - **Component**: `AddDownloadsModal.tsx` (`handleStart`)
+  - **Store Action**: `useDownloadStore.addDownload()`
+  - **IPC Command**: `enqueue_download` (called by store)
+  - **Rust**: `commands::enqueue_download`
+  - **Validation**: Checks for duplicates on disk (IPC `check_file_exists`) and in store, potentially opening `DuplicateResolutionModal`.
 
-4. Duplicate-resolution semantics were too broad.
-   - The duplicate dialog offered `Replace` for URL duplicates, but replacement only makes sense for destination-file conflicts.
+## 4. Download Properties Window
 
-5. File-path actions used inconsistent destination resolution.
-   - `Copy File Path` bypassed the same effective destination logic used by Open/Reveal.
+- **Browse Save Location**
+  - **Location**: "Select" button.
+  - **Component**: `PropertiesModal.tsx`
+  - **Expected**: Opens Tauri native directory picker.
+- **Form Inputs**
+  - **Location**: Text inputs and selects.
+  - **Component**: `PropertiesModal.tsx`
+  - **Expected**: Adjusts URL, filename, connections, speed limits, auth (matches/custom/none), advanced settings. Disabled if the download is locked/active.
+- **Save Changes**
+  - **Location**: "Save" button.
+  - **Component**: `PropertiesModal.tsx`
+  - **Store Action**: `useDownloadStore.updateDownload()`
+  - **Expected**: Validates inputs, saves to store, syncs to DB.
 
-6. Clipboard actions lacked visible error handling.
-   - Copy failures were previously silent.
+## 5. Settings Window
 
-## Fixed
+- **Tab Navigation**
+  - **Location**: Top horizontal tabs.
+  - **Store Action**: `useSettingsStore.setActiveSettingsTab()`
+- **Downloads Settings**
+  - **Location**: "Downloads" tab.
+  - **Actions**: Change default connections, parallel downloads (IPC `set_concurrent_limit`), global speed limit (IPC `set_global_speed_limit`), max retries, notification toggles.
+- **Look and feel**
+  - **Location**: "Look and feel" tab.
+  - **Actions**: Theme switch, font size, density, dock badge toggle (IPC `update_dock_badge`), menu bar icon (IPC `toggle_tray_icon`).
+- **Network**
+  - **Location**: "Network" tab.
+  - **Actions**: Change proxy mode/host/port, custom user agent.
+- **Locations**
+  - **Location**: "Locations" tab.
+  - **Actions**:
+    - Browse Default Path
+    - Toggle "Ask where to save"
+    - Browse "All Categories Base" -> Tauri Picker -> IPC `create_category_directories` -> Rust `commands::create_category_directories`
+    - Browse specific category paths.
+    - Reset Defaults: `useSettingsStore.resetCategoryDirectories()`
+- **Site Logins**
+  - **Location**: "Site Logins" tab.
+  - **Actions**:
+    - Add Login: IPC `set_keychain_password` -> `useSettingsStore.addSiteLogin()`
+    - Delete Login (Trash icon): IPC `delete_keychain_password` -> `useSettingsStore.removeSiteLogin()`
+- **Engine**
+  - **Location**: "Engine" tab (when mounted).
+  - **Component**: `SettingsView.tsx` (`runEngineChecks`)
+  - **IPC**: `get_aria2_engine_status`, `get_ytdlp_engine_status`, `get_ffmpeg_engine_status`, `get_deno_engine_status`.
+  - **Expected**: Polls backend for binary status and updates UI. Re-triggered with "Refresh" button.
 
-### Main window
+## 6. Other Modals & Actions
 
-| Surface/action | Status after review | Notes |
-| --- | --- | --- |
-| Start/resume paused or failed download | Works | Store enqueues through `enqueue_download`; existing aria2 GID resume path is handled by backend. |
-| Pause active/queued/retrying download | Works | Frontend calls `pause_download`; backend removes pending task and pauses/removes active work as appropriate. |
-| Remove download | Works | Frontend calls `remove_download`, then removes local persisted item. |
-| Delete file with remove | Works | Uses `trash_download_assets` with backend ownership/path authorization. |
-| Redownload | Works | Creates a new queued item with preserved metadata and enqueues through queue manager. |
-| Open downloaded file | Works | Uses owned-path `open_downloaded_file`. |
-| Show in Finder | Works for completed files/partials | Uses owned-path `reveal_in_file_manager`; non-completed double-click/menu behavior opens properties. |
-| Copy URL/address | Fixed | Now reports clipboard errors. |
-| Copy file path | Fixed | Now uses the same effective path resolution as file actions and reports clipboard errors. |
-| Queue up/down ordering | Fixed | Sends lowercase `up`/`down` to match Rust-generated `QueueDirection`. |
-| Double-click completed download | Works | Opens file; otherwise opens Properties. |
-| Status/progress/speed/ETA updates | Works | Store listener handles progress/state events; existing media-size finalization behavior is preserved. |
-| Column resize/layout | Works | Local UI-only state; no backend side effect. |
+- **Delete Confirmation Modal**
+  - **Location**: Prompt when removing a download.
+  - **Component**: `DeleteConfirmationModal.tsx`
+  - **Actions**:
+    - Remove from list: `useDownloadStore.removeDownload()` -> IPC `db_delete_download`
+    - Delete file & remove: `useDownloadStore.removeDownload()` + IPC `trash_download_assets` -> Rust `commands::trash_download_assets`
+- **Duplicate Resolution Modal**
+  - **Location**: Triggered when adding a download that already exists.
+  - **Component**: `DuplicateResolutionModal.tsx`
+  - **Actions**: Select "Rename", "Replace", or "Skip".
+  - **Expected**: Modifies the batch of downloads added via `executeAddDownloads`.
+- **Quality Modal**
+  - **Location**: Triggered when an active media download requires format resolution.
+  - **Component**: `QualityModal.tsx`
+  - **Expected**: Approves formats via local store or cancels metadata request.
+- **Global Keyboard Shortcuts**
+  - **Location**: `App.tsx` (paste event listener)
+  - **Expected**: Pasting URLs anywhere outside inputs triggers `useDownloadStore.openAddModalWithUrls(text)`.
+- **System Sleep / Power**
+  - **Location**: "Power" tab.
+  - **Expected**: Interacts with IPC `set_prevent_sleep` -> Rust `commands::set_prevent_sleep`.
 
-### Add Download window
-
-| Surface/action | Status after review | Notes |
-| --- | --- | --- |
-| URL/multiple URL input | Works | Lines are parsed and invalid URLs surface per-item error state. |
-| Paste/deep-link/extension prefill | Works | App-level paste/deep-link/extension handlers open the modal with URLs. |
-| Metadata detection | Works | HTTP metadata and media metadata go through IPC. |
-| Refresh Metadata | Fixed | Button now re-runs the existing parser/metadata flow. |
-| Media format selection | Works | Selected format selector/ext is applied before enqueue. |
-| File name/category/destination detection | Works | Category-specific destination routing is preserved. |
-| Destination folder selection | Works | Uses Tauri directory picker. |
-| Auth/site-login credentials | Works | Keychain-backed site-login password lookup is preserved. |
-| Add paused / start queued | Works | Adds local item and enqueues when start is requested. |
-| Duplicate URL conflict | Fixed | `Replace` is no longer offered for URL-only duplicates. |
-| Duplicate file conflict | Works | Rename/replace/skip flows remain available for file conflicts. |
-| Cancel/close | Works | Modal state is reset through store. |
-
-### Download Properties
-
-| Surface/action | Status after review | Notes |
-| --- | --- | --- |
-| Opens for queued/downloading/paused/failed/completed | Works | Selected item is read live from store. |
-| Live progress/speed/ETA/size summary | Works | Summary uses current store item, not stale initial-only form state. |
-| Save editable queued/paused/failed settings | Works | Updates local persisted item used by resume/redownload/enqueue paths. |
-| Completed download settings for redownload | Works | Identity remains read-only; transfer settings can be saved for redownload. |
-| Active-transfer speed controls | Fixed | Controls are locked while transfer is active; copy now states that current backend options remain active until pause/stop. |
-| Browse destination | Works when not locked | Uses directory picker. |
-
-### Settings
-
-| Tab/action | Status after review | Notes |
-| --- | --- | --- |
-| Downloads tab settings | Fixed/Works | Bare global speed-limit values now normalize as KiB/s for live backend calls and newly queued downloads. |
-| Look and feel tab | Works | Theme, font size, row density, dock badge, menu bar icon persist and drive app effects. |
-| Network tab | Works | Proxy mode/host/port/user-agent values are used for enqueue payloads. |
-| Locations tab | Works | Default/category paths persist; bulk category creation calls backend. |
-| Site Logins tab | Works | Add/remove uses settings plus keychain password storage/deletion. |
-| Power tab | Works | Prevent-sleep setting drives backend keep-awake effect. |
-| Engine tab diagnostics | Works | Recheck calls registered engine status commands and surfaces errors/details. |
-| Integrations tab | Works | Token copy/regenerate and extension pairing token updates are wired; token remains keychain-backed. |
-| About tab updates | Works | Check Now calls update check and surfaces result via toast. |
-
-### Menus/context menus/dialog buttons
-
-| Surface/action | Status after review | Notes |
-| --- | --- | --- |
-| Download row context menu | Fixed/Works | Copy actions now resolve correctly and surface errors; start/pause/remove/redownload/properties remain wired. |
-| Sidebar queue context menu | Works | Start/pause/rename/remove queues are wired through store. |
-| Delete confirmation dialog | Works | Remove-only and remove+trash paths preserved. |
-| Duplicate resolution dialog | Fixed | Replacement is now file-conflict-only. |
-
-### Backend IPC coverage
-
-| Check | Status |
-| --- | --- |
-| Frontend IPC command names exist in Rust registration | Works |
-| Queue direction argument casing | Fixed |
-| Global speed-limit unit handling | Fixed in frontend and backend startup/live command handling |
-| File open/reveal/trash path authorization | Preserved |
-| Generic duplicate-check/delete path guards | Preserved; no security loosening introduced |
-
-## Not fixed / follow-up
-
-- Full packaged GUI/manual click-through was not launched in this pass; validation was code-trace plus `npm run build` and Rust tests.
-- Existing generic `check_file_exists` / `delete_file` remain scoped by `is_safe_path`, but they are broader than ownership-based open/reveal/trash commands. I did not loosen them. A future hardening pass should replace duplicate-file replacement with an explicit user-selected-destination trash command or ownership-aware pre-registration flow.
-- Per-download speed changes for already-running transfers are not implemented because the current backend has no active-transfer per-item speed-limit IPC. The UI now stops promising that behavior.
-
-## Validation
-
-- `npm run build`: pass
-- `cd src-tauri && cargo test --quiet`: pass
-
+## Likely Validation Methods
+- **UI State**: Checking Zustand store (`useDownloadStore`, `useSettingsStore`) and React DevTools.
+- **Rust Backend**: Monitoring standard output/stderr for `Invoke command` errors, and inspecting `src-tauri/src/commands.rs`.
+- **File System**: Checking disk for queue persistence and newly created directories (e.g. `create_category_directories`).

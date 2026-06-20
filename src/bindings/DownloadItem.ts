@@ -2,4 +2,4 @@
 import type { DownloadCategory } from "./DownloadCategory";
 import type { DownloadStatus } from "./DownloadStatus";
 
-export type DownloadItem = { id: string, url: string, fileName: string, status: DownloadStatus, fraction?: number, speed?: string, eta?: string, size?: string, category: DownloadCategory, dateAdded: string, connections?: number, speedLimit?: string, username?: string, password?: string, headers?: string, checksum?: string, cookies?: string, mirrors?: string, destination?: string, isMedia?: boolean, mediaFormatSelector?: string, queueId: string, };
+export type DownloadItem = { id: string, url: string, fileName: string, status: DownloadStatus, fraction?: number, speed?: string, eta?: string, size?: string, category: DownloadCategory, dateAdded: string, connections?: number, speedLimit?: string, username?: string, password?: string, headers?: string, checksum?: string, cookies?: string, mirrors?: string, destination?: string, isMedia?: boolean, mediaFormatSelector?: string, queueId: string, hasBeenDispatched?: boolean, };

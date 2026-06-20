@@ -66,6 +66,12 @@ export async function initDownloadListener() {
             mainStore.setPendingOrder([...mainStore.pendingOrder, payload.id]);
           }
         }
+
+        if (status === 'queued' || status === 'downloading' || status === 'processing' || status === 'retrying') {
+          mainStore.registerBackendIds([payload.id]);
+        } else if (status === 'completed' || status === 'failed') {
+          mainStore.unregisterBackendIds([payload.id]);
+        }
       }
     });
   }

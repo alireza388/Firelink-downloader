@@ -73,6 +73,7 @@ type CommandMap = {
   pause_download: { args: { id: string }; result: void };
   resume_download: { args: { id: string }; result: boolean };
   remove_download: { args: { id: string; filepath: string | null }; result: void };
+  detach_download_for_reconfigure: { args: { id: string }; result: void };
   update_dock_badge: { args: { count: number }; result: void };
   set_prevent_sleep: { args: { prevent: boolean }; result: void };
   perform_system_action: { args: { action: PostQueueAction }; result: void };
@@ -101,14 +102,11 @@ type CommandMap = {
     result: void;
   };
   db_delete_download: { args: { id: string }; result: void };
-  db_get_all_queues: { args: undefined; result: string[] };
-  db_save_queue: { args: { id: string; data: string }; result: void };
-  db_delete_queue: { args: { id: string }; result: void };
   create_category_directories: { args: { paths: string[] }; result: void };
   export_logs: { args: { destPath: string }; result: string };
   get_pending_order: { args: undefined; result: string[] };
   enqueue_download: { args: { item: any }; result: string };
-  enqueue_many: { args: { items: any[] }; result: void };
+  enqueue_many: { args: { items: any[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };
   move_in_queue: { args: { id: string; direction: 'up' | 'down' }; result: string[] };
   remove_from_queue: { args: { id: string }; result: boolean };
 };

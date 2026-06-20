@@ -25,6 +25,7 @@ const WRITE_BUFFER_CAPACITY: usize = 256 * 1024;
 pub enum DownloadCmd {
     Start(Box<DownloadPayload>),
     Pause(Uuid),
+    PauseWithAck(Uuid, tokio::sync::oneshot::Sender<()>),
     Cancel(Uuid),
     CaptureUrls(Vec<String>),
     FrontendReady(bool),
@@ -112,6 +113,13 @@ impl DownloadCoordinator {
     pub async fn pause_media(&self, id: String) -> Result<(), String> {
         self.media_tx
             .send(MediaCmd::Pause(id))
+            .await
+            .map_err(|_| "download coordinator is unavailable".to_string())
+    }
+
+    pub async fn pause_media_with_ack(&self, id: String, ack: tokio::sync::oneshot::Sender<()>) -> Result<(), String> {
+        self.media_tx
+            .send(MediaCmd::PauseWithAck(id, ack))
             .await
             .map_err(|_| "download coordinator is unavailable".to_string())
     }
@@ -243,6 +251,7 @@ enum MediaCmd {
         cancel_tx: watch::Sender<bool>,
     },
     Pause(String),
+    PauseWithAck(String, tokio::sync::oneshot::Sender<()>),
     Finished(String),
 }
 
@@ -281,6 +290,8 @@ async fn run_coordinator(
     let (worker_tx, mut worker_rx) = mpsc::channel(128);
     let mut active = HashMap::<Uuid, ActiveDownload>::new();
     let mut active_media = HashMap::<String, watch::Sender<bool>>::new();
+    let mut pending_acks = HashMap::<Uuid, tokio::sync::oneshot::Sender<()>>::new();
+    let mut pending_media_acks = HashMap::<String, tokio::sync::oneshot::Sender<()>>::new();
     let mut pending_captured_urls = Vec::<String>::new();
     let mut frontend_ready = false;
     let mut next_generation = 0_u64;
@@ -317,6 +328,14 @@ async fn run_coordinator(
                     DownloadCmd::Pause(id) => {
                         if let Some(download) = active.remove(&id) {
                             let _ = download.control_tx.send(DownloadControl::Pause).await;
+                        }
+                    }
+                    DownloadCmd::PauseWithAck(id, ack) => {
+                        if let Some(download) = active.remove(&id) {
+                            let _ = download.control_tx.send(DownloadControl::Pause).await;
+                            pending_acks.insert(id, ack);
+                        } else {
+                            let _ = ack.send(());
                         }
                     }
                     DownloadCmd::Cancel(id) => {
@@ -356,6 +375,10 @@ async fn run_coordinator(
                     active.remove(&id);
                 }
 
+                if let Some(ack) = pending_acks.remove(&id) {
+                    let _ = ack.send(());
+                }
+
                 match (is_current, outcome) {
                     (true, DownloadOutcome::Completed) => {
                         events.emit_completed(id);
@@ -381,8 +404,19 @@ async fn run_coordinator(
                             let _ = cancel_tx.send(true);
                         }
                     }
+                    MediaCmd::PauseWithAck(id, ack) => {
+                        if let Some(cancel_tx) = active_media.remove(&id) {
+                            let _ = cancel_tx.send(true);
+                            pending_media_acks.insert(id, ack);
+                        } else {
+                            let _ = ack.send(());
+                        }
+                    }
                     MediaCmd::Finished(id) => {
                         active_media.remove(&id);
+                        if let Some(ack) = pending_media_acks.remove(&id) {
+                            let _ = ack.send(());
+                        }
                     }
                 }
             }

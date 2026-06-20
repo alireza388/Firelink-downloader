@@ -95,6 +95,18 @@ pub struct DownloadItem {
     #[ts(optional)]
     pub media_format_selector: Option<String>,
     pub queue_id: String,
+    #[ts(optional)]
+    pub has_been_dispatched: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct EnqueueResult {
+    pub id: String,
+    pub success: bool,
+    #[ts(optional)]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

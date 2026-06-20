@@ -9,7 +9,6 @@ type LoginMode = 'matching' | 'custom' | 'none';
 export const PropertiesModal = () => {
   const selectedPropertiesDownloadId = useDownloadStore(state => state.selectedPropertiesDownloadId);
   const setSelectedPropertiesDownloadId = useDownloadStore(state => state.setSelectedPropertiesDownloadId);
-  const updateDownload = useDownloadStore(state => state.updateDownload);
   const item = useDownloadStore(state =>
     selectedPropertiesDownloadId
       ? state.downloads.find(d => d.id === selectedPropertiesDownloadId) ?? null
@@ -106,7 +105,7 @@ export const PropertiesModal = () => {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!url.trim()) {
       setErrorMessage("Enter a valid URL.");
       return;
@@ -130,17 +129,22 @@ export const PropertiesModal = () => {
       mirrors: mirrors.trim() || undefined,
     };
     
-    updateDownload(item.id, updates);
-    setSelectedPropertiesDownloadId(null);
+    try {
+      setErrorMessage('');
+      await useDownloadStore.getState().applyProperties(item.id, updates);
+      setSelectedPropertiesDownloadId(null);
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e));
+    }
   };
 
-  const isLocked = ['downloading', 'processing', 'completed'].includes(item.status);
-  const isTransferLocked = item.status === 'downloading' || item.status === 'processing';
+  const isLocked = ['downloading', 'processing', 'completed', 'retrying'].includes(item.status);
+  const isTransferLocked = item.status === 'downloading' || item.status === 'processing' || item.status === 'retrying';
 
   let statusColor = 'text-text-secondary';
   let StatusIcon = Info;
   if (item.status === 'completed') { statusColor = 'text-green-500'; StatusIcon = CheckCircle; }
-  else if (item.status === 'downloading') { statusColor = 'text-blue-500'; StatusIcon = Play; }
+  else if (item.status === 'downloading' || item.status === 'retrying') { statusColor = 'text-blue-500'; StatusIcon = Play; }
   else if (item.status === 'processing') { statusColor = 'text-sky-500'; StatusIcon = Play; }
   else if (item.status === 'paused') { statusColor = 'text-orange-500'; StatusIcon = Pause; }
   else if (item.status === 'failed') { statusColor = 'text-red-500'; StatusIcon = AlertCircle; }
@@ -339,7 +343,8 @@ export const PropertiesModal = () => {
             </button>
             <button 
               onClick={handleSave} 
-              className="app-button app-button-primary px-4 text-xs"
+              disabled={isTransferLocked}
+              className={`app-button app-button-primary px-4 text-xs ${isTransferLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <CheckCircle size={14} />
               Save

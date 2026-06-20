@@ -5,8 +5,8 @@ import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
 import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
-import { QualityModal } from './components/QualityModal';
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
+import { extractValidDownloadUrls } from './utils/url';
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { initDownloadListener } from './store/downloadStore';
@@ -165,7 +165,10 @@ function App() {
       }
       const text = e.clipboardData?.getData('text/plain');
       if (text && text.trim().length > 0) {
-        useDownloadStore.getState().openAddModalWithUrls(text.trim());
+        const urls = extractValidDownloadUrls(text);
+        if (urls.length > 0) {
+          useDownloadStore.getState().openAddModalWithUrls(urls.join('\n'));
+        }
       }
     };
     window.addEventListener('paste', handlePaste);
@@ -310,7 +313,6 @@ function App() {
       
       <AddDownloadsModal />
       <PropertiesModal />
-      <QualityModal />
       <DeleteConfirmationModal />
     </div>
   );

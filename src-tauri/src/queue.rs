@@ -86,6 +86,7 @@ pub trait SidecarSpawner: Send + Sync + 'static {
 
 /// The centralized concurrency gatekeeper. One instance lives in AppState.
 pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
+    registered_ids: Mutex<HashSet<String>>,
     pending: Mutex<VecDeque<QueuedTask>>,
     semaphore: Arc<Semaphore>,
     active_permits: Mutex<HashMap<String, OwnedSemaphorePermit>>,
@@ -136,6 +137,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         spawner: Arc<dyn SidecarSpawner>,
     ) -> Self {
         Self {
+            registered_ids: Mutex::new(HashSet::new()),
             pending: Mutex::new(VecDeque::new()),
             semaphore: Arc::new(Semaphore::new(capacity)),
             active_permits: Mutex::new(HashMap::new()),
@@ -164,12 +166,25 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .collect()
     }
 
-    /// Enqueue a task. Notifies the dispatcher. Emits download-state{queued}.
-    pub async fn push(&self, task: QueuedTask) {
+    /// Explicitly release a backend registry id (e.g. on un-resumable false paths, removals, or detach).
+    pub async fn release_registered_id(&self, id: &str) {
+        self.registered_ids.lock().await.remove(id);
+    }
+
+    /// Enqueue a task. Checks the centralized `registered_ids` for deduplication.
+    pub async fn push(&self, task: QueuedTask) -> Result<(), String> {
         let id = task.id.clone();
+        let mut registered = self.registered_ids.lock().await;
+        if registered.contains(&id) {
+            return Err("Duplicate task".to_string());
+        }
+        registered.insert(id.clone());
+        drop(registered);
+
         self.pending.lock().await.push_back(task);
         self.emit_state(id, DownloadStatus::Queued);
         self.notify.notify_one();
+        Ok(())
     }
 
     /// Pop the next task, or None if empty.
@@ -391,16 +406,20 @@ impl<R: tauri::Runtime> QueueManager<R> {
         }
     }
 
-    /// Called when a Media runner exits. Releases the permit and emits
+    /// Terminal handler for non-aria2 transfers. Emits state and frees the permit.
+    /// Does not emit or release anything on intentional MEDIA_RUN_CANCELLED.
+    /// Note: `id` is the frontend download UUID, which survives indefinitely as
     /// the terminal state.
     async fn finish_runner(self: Arc<Self>, id: &str, outcome: Result<(), String>) {
         match outcome {
             Ok(()) => {
                 self.emit_state(id, DownloadStatus::Completed);
+                self.release_registered_id(id).await;
             }
             Err(error) if error == MEDIA_RUN_CANCELLED => {}
             Err(error) => {
                 self.emit_failed(id, error);
+                self.release_registered_id(id).await;
             }
         }
         self.release_permit(id).await;
@@ -445,11 +464,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
                 self.emit_state(id, DownloadStatus::Completed);
+                self.release_registered_id(id).await;
             }
             PendingOutcome::Error(error) => {
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
                 self.emit_failed(id, error);
+                self.release_registered_id(id).await;
             }
         }
         self.release_permit(id).await;
@@ -736,15 +757,34 @@ impl<R: tauri::Runtime> QueueManager<R> {
     }
 
     /// Bulk enqueue by appending tasks. Used by startup and start-all.
-    pub async fn enqueue_many(&self, tasks: Vec<QueuedTask>) {
+    pub async fn enqueue_many(&self, tasks: Vec<QueuedTask>) -> Vec<crate::ipc::EnqueueResult> {
+        let mut results = Vec::new();
+        let mut registered = self.registered_ids.lock().await;
         let mut pending = self.pending.lock().await;
+
         for task in tasks {
             let id = task.id.clone();
+            if registered.contains(&id) {
+                results.push(crate::ipc::EnqueueResult {
+                    id: id.clone(),
+                    success: false,
+                    error: Some("Duplicate task".to_string()),
+                });
+                continue;
+            }
+            registered.insert(id.clone());
             pending.push_back(task);
-            self.emit_state(id, DownloadStatus::Queued);
+            self.emit_state(id.clone(), DownloadStatus::Queued);
+            results.push(crate::ipc::EnqueueResult {
+                id,
+                success: true,
+                error: None,
+            });
         }
         drop(pending);
+        drop(registered);
         self.notify.notify_one();
+        results
     }
 }
 

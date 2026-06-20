@@ -268,6 +268,7 @@ async fn enqueue_extension_download(
             is_media: Some(false),
             media_format_selector: None,
             queue_id: MAIN_QUEUE_ID.to_string(),
+            has_been_dispatched: Some(true),
         };
         let task = crate::queue::EnqueueItem {
             id,
@@ -292,12 +293,36 @@ async fn enqueue_extension_download(
             is_media: Some(false),
         }
         .into_task();
+
+        if let Err(e) = crate::download_ownership::register_expected(
+            app_handle,
+            &item.id,
+            item.destination.as_deref().unwrap_or(""),
+            &item.file_name,
+        ) {
+            log::warn!("extension: ownership registration failed: {}", e);
+            continue;
+        }
+
         created_items.push(item);
         tasks.push(task);
     }
 
-    state.queue_manager.enqueue_many(tasks).await;
-    let _ = app_handle.emit("extension-downloads-queued", created_items);
+    let results = state.queue_manager.enqueue_many(tasks).await;
+    let mut emitted_items = Vec::new();
+    
+    for (item, result) in created_items.into_iter().zip(results) {
+        if result.success {
+            emitted_items.push(item);
+        } else {
+            let _ = crate::download_ownership::remove(app_handle, &item.id);
+            state.queue_manager.release_registered_id(&item.id).await;
+        }
+    }
+
+    if !emitted_items.is_empty() {
+        let _ = app_handle.emit("extension-downloads-queued", emitted_items);
+    }
     Ok(())
 }
 

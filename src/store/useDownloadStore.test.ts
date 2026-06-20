@@ -12,16 +12,6 @@ vi.mock('@tauri-apps/plugin-log', () => ({
   error: vi.fn(),
 }));
 
-vi.mock('@tauri-apps/plugin-store', () => {
-  return {
-    LazyStore: class {
-      get = vi.fn().mockResolvedValue([]);
-      set = vi.fn();
-      save = vi.fn();
-    }
-  };
-});
-
 vi.mock('./useSettingsStore', () => ({
   useSettingsStore: {
     getState: vi.fn(() => ({

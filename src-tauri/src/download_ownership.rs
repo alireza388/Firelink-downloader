@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tauri_plugin_store::StoreExt;
-
-const STORE_NAME: &str = "store.bin";
-const OWNERSHIP_KEY: &str = "download_ownership";
+use tauri::Manager;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,23 +56,15 @@ pub fn set_primary_path(
         return Err("Download ownership path may not be a symlink".to_string());
     }
 
-    let mut records = load_records(app_handle)?;
-    records.retain(|record| record.id != id);
-    records.push(DownloadOwnershipRecord {
-        id: id.to_string(),
-        primary_path: path.to_string_lossy().to_string(),
-    });
-    save_records(app_handle, records)
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    crate::db::set_ownership(&connection, id, &path.to_string_lossy())
 }
 
 pub fn remove(app_handle: &tauri::AppHandle, id: &str) -> Result<(), String> {
-    let mut records = load_records(app_handle)?;
-    let before = records.len();
-    records.retain(|record| record.id != id);
-    if records.len() == before {
-        return Ok(());
-    }
-    save_records(app_handle, records)
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    crate::db::remove_ownership(&connection, id)
 }
 
 pub fn known_primary_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
@@ -96,43 +85,26 @@ pub fn known_primary_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>
 }
 
 fn load_records(app_handle: &tauri::AppHandle) -> Result<Vec<DownloadOwnershipRecord>, String> {
-    let store = app_handle
-        .store(STORE_NAME)
-        .map_err(|error| format!("Failed to load download ownership store: {error}"))?;
-    store
-        .get(OWNERSHIP_KEY)
-        .map(|value| serde_json::from_value::<Vec<DownloadOwnershipRecord>>(value.clone()))
-        .transpose()
-        .map_err(|error| format!("Invalid download ownership data: {error}"))
-        .map(|records| records.unwrap_or_default())
-}
-
-fn save_records(
-    app_handle: &tauri::AppHandle,
-    records: Vec<DownloadOwnershipRecord>,
-) -> Result<(), String> {
-    let store = app_handle
-        .store(STORE_NAME)
-        .map_err(|error| format!("Failed to load download ownership store: {error}"))?;
-    let value = serde_json::to_value(records)
-        .map_err(|error| format!("Failed to encode download ownership data: {error}"))?;
-    store.set(OWNERSHIP_KEY, value);
-    store
-        .save()
-        .map_err(|error| format!("Failed to save download ownership data: {error}"))
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    crate::db::load_ownership(&connection).map(|records| {
+        records
+            .into_iter()
+            .map(|(id, primary_path)| DownloadOwnershipRecord { id, primary_path })
+            .collect()
+    })
 }
 
 fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
-    let store = app_handle
-        .store(STORE_NAME)
-        .map_err(|error| format!("Failed to load download queue: {error}"))?;
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    let downloads = crate::db::load_downloads(&connection)?
+        .into_iter()
+        .map(|value| serde_json::from_str::<crate::ipc::DownloadItem>(&value))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Invalid download queue ownership data: {error}"))?;
+    drop(connection);
     let settings = crate::settings::load_settings(app_handle).ok();
-    let downloads = store
-        .get("download_queue")
-        .map(|value| serde_json::from_value::<Vec<crate::ipc::DownloadItem>>(value.clone()))
-        .transpose()
-        .map_err(|error| format!("Invalid download queue ownership data: {error}"))?
-        .unwrap_or_default();
 
     let mut paths = Vec::new();
     for download in downloads {

@@ -53,7 +53,7 @@ tokio-tungstenite = "0.29.0"
 futures-util = { version = "0.3.32", features = ["sink"] }
 chrono = "0.4.38"
 url = "2"
-tauri-plugin-store = "2.4.3"
+rusqlite = { version = "0.40.0", features = ["bundled"] }
 log = "0.4.32"
 tauri-plugin-log = "2"
 trash = "5"

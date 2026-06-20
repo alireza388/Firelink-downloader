@@ -4,20 +4,14 @@ use crate::ipc::{
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use tauri::AppHandle;
-use tauri_plugin_store::StoreExt;
-
-const SETTINGS_STORE: &str = "store.bin";
-const SETTINGS_KEY: &str = "settings";
+use tauri::{AppHandle, Manager};
 
 pub fn load_settings(app_handle: &AppHandle) -> Result<PersistedSettings, String> {
-    let store = app_handle
-        .store(SETTINGS_STORE)
-        .map_err(|error| format!("failed to open settings store: {error}"))?;
-    let stored = store
-        .get(SETTINGS_KEY)
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    let stored = crate::db::load_settings(&connection)?
         .ok_or_else(|| "settings are not persisted yet".to_string())?;
-    decode_stored_settings(&stored)
+    decode_stored_settings(&Value::String(stored))
 }
 
 pub fn decode_stored_settings(stored: &Value) -> Result<PersistedSettings, String> {
@@ -37,28 +31,15 @@ pub fn update_settings_state(
     app_handle: &AppHandle,
     update: impl FnOnce(&mut Map<String, Value>),
 ) -> Result<(), String> {
-    let store = app_handle
-        .store(SETTINGS_STORE)
-        .map_err(|error| format!("failed to open settings store: {error}"))?;
-    let stored = store
-        .get(SETTINGS_KEY)
+    let database = app_handle.state::<crate::db::DbState>();
+    let connection = database.lock()?;
+    let stored = crate::db::load_settings(&connection)?
         .ok_or_else(|| "settings are not persisted yet".to_string())?;
-    let was_string = stored.is_string();
-    let mut document = decode_document(&stored)?;
+    let mut document = decode_document(&Value::String(stored))?;
     update(settings_state_mut(&mut document)?);
-
-    let stored = if was_string {
-        Value::String(
-            serde_json::to_string(&document)
-                .map_err(|error| format!("failed to encode settings: {error}"))?,
-        )
-    } else {
-        document
-    };
-    store.set(SETTINGS_KEY, stored);
-    store
-        .save()
-        .map_err(|error| format!("failed to save settings: {error}"))
+    let stored = serde_json::to_string(&document)
+        .map_err(|error| format!("failed to encode settings: {error}"))?;
+    crate::db::save_settings(&connection, &stored)
 }
 
 fn decode_document(stored: &Value) -> Result<Value, String> {

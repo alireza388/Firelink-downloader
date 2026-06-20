@@ -2756,22 +2756,90 @@ fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, 
 
 #[tauri::command]
 fn set_keychain_password(id: String, password: String) -> Result<(), String> {
-    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
-    entry.set_password(&password).map_err(|e| e.to_string())?;
-    Ok(())
+    crate::db::set_keychain_password(&id, &password)
 }
 
 #[tauri::command]
 fn get_keychain_password(id: String) -> Result<String, String> {
-    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
-    entry.get_password().map_err(|e| e.to_string())
+    crate::db::get_keychain_password(&id)
 }
 
 #[tauri::command]
 fn delete_keychain_password(id: String) -> Result<(), String> {
-    let entry = keyring::Entry::new("com.firelink.app", &id).map_err(|e| e.to_string())?;
-    let _ = entry.delete_credential(); // Ignore error if it doesn't exist
-    Ok(())
+    crate::db::delete_keychain_password(&id)
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+struct PairingTokenHydration {
+    token: String,
+    token_changed: bool,
+}
+
+#[tauri::command]
+fn hydrate_extension_pairing_token(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<PairingTokenHydration, String> {
+    let mut connection = state.lock()?;
+    let (token, token_changed) = crate::db::hydrate_pairing_token(&mut connection)?;
+    Ok(PairingTokenHydration { token, token_changed })
+}
+
+#[tauri::command]
+fn acknowledge_pairing_token_change(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<(), String> {
+    let connection = state.lock()?;
+    crate::db::acknowledge_pairing_token_notice(&connection)
+}
+
+#[tauri::command]
+fn db_save_settings(state: tauri::State<'_, crate::db::DbState>, data: String) -> Result<(), String> {
+    let connection = state.lock()?;
+    crate::db::save_settings(&connection, &data)
+}
+
+#[tauri::command]
+fn db_load_settings(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Option<String>, String> {
+    let connection = state.lock()?;
+    crate::db::load_settings(&connection)
+}
+
+#[tauri::command]
+fn db_get_all_downloads(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<String>, String> {
+    let connection = state.lock()?;
+    crate::db::load_downloads(&connection)
+}
+
+#[tauri::command]
+fn db_replace_downloads(
+    state: tauri::State<'_, crate::db::DbState>,
+    data: String,
+) -> Result<(), String> {
+    let mut connection = state.lock()?;
+    crate::db::replace_downloads(&mut connection, &data)
+}
+
+#[tauri::command]
+fn db_get_all_queues(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<String>, String> {
+    let connection = state.lock()?;
+    crate::db::load_queues(&connection)
+}
+
+#[tauri::command]
+fn db_replace_queues(
+    state: tauri::State<'_, crate::db::DbState>,
+    data: String,
+) -> Result<(), String> {
+    let mut connection = state.lock()?;
+    crate::db::replace_queues(&mut connection, &data)
 }
 
 #[tauri::command]
@@ -3233,7 +3301,10 @@ pub fn run() {
                 .build(app)
                 .unwrap();
 
-            
+            let database = crate::db::init(app.handle())
+                .map_err(|error| format!("failed to initialize persistence: {error}"))?;
+            app.manage(database);
+
             let max_concurrent = {
                 crate::settings::load_settings(app.handle())
                     .map(|settings| settings.max_concurrent_downloads)
@@ -3534,7 +3605,6 @@ pub fn run() {
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -3554,6 +3624,7 @@ pub fn run() {
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
+            hydrate_extension_pairing_token, acknowledge_pairing_token_change,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
             set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
@@ -3561,6 +3632,8 @@ pub fn run() {
             commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories,
+            db_save_settings, db_load_settings, db_get_all_downloads, db_replace_downloads,
+            db_get_all_queues, db_replace_queues,
             export_logs
         ])
         .build(tauri::generate_context!())
@@ -3573,4 +3646,5 @@ pub fn run() {
         });
 }
 mod extension_server;
+mod db;
 mod scheduler;

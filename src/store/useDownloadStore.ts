@@ -1,10 +1,8 @@
 import { create } from 'zustand';
-import { LazyStore } from '@tauri-apps/plugin-store';
 import { info } from '@tauri-apps/plugin-log';
 import { homeDir } from '@tauri-apps/api/path';
 import { invokeCommand as invoke } from '../ipc';
 
-export const tauriStore = new LazyStore('store.bin');
 import type { DownloadItem } from '../bindings/DownloadItem';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
@@ -606,8 +604,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   initDB: async () => {
     try {
-      const queues = await tauriStore.get<Queue[]>('queues') || [];
-      const downloads = await tauriStore.get<DownloadItem[]>('download_queue') || [];
+      const queues = (await invoke('db_get_all_queues')).map(value => JSON.parse(value) as Queue);
+      const downloads = (await invoke('db_get_all_downloads')).map(
+        value => JSON.parse(value) as DownloadItem
+      );
       
       set(state => ({
         queues: queues.length > 0 ? queues : state.queues,
@@ -678,11 +678,18 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 }));
 
 let lastSavedDownloads = '';
+let downloadsSave = Promise.resolve();
+let queuesSave = Promise.resolve();
 
 useDownloadStore.subscribe(async (state, prevState) => {
   if (state.queues !== prevState.queues) {
-    await tauriStore.set('queues', state.queues);
-    await tauriStore.save();
+    const data = JSON.stringify(state.queues);
+    queuesSave = queuesSave
+      .then(() => invoke('db_replace_queues', { data }))
+      .catch(error => {
+        console.error('Failed to persist queues:', error);
+      });
+    await queuesSave;
   }
 
   if (state.downloads !== prevState.downloads) {
@@ -694,8 +701,12 @@ useDownloadStore.subscribe(async (state, prevState) => {
     const currentSerialized = JSON.stringify(staticDownloads);
     if (currentSerialized !== lastSavedDownloads) {
       lastSavedDownloads = currentSerialized;
-      await tauriStore.set('download_queue', staticDownloads);
-      await tauriStore.save();
+      downloadsSave = downloadsSave
+        .then(() => invoke('db_replace_downloads', { data: currentSerialized }))
+        .catch(error => {
+          console.error('Failed to persist downloads:', error);
+        });
+      await downloadsSave;
     }
   }
 });

@@ -4,7 +4,6 @@ import { listen as tauriListen, type Event, type EventCallback, type UnlistenFn 
 import type { DownloadCategory } from './bindings/DownloadCategory';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
 import type { DownloadStateEvent } from './bindings/DownloadStateEvent';
-import type { DownloadStatus } from './bindings/DownloadStatus';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
 import type { MediaCookieSource } from './bindings/MediaCookieSource';
 import type { MediaMetadata } from './bindings/MediaMetadata';
@@ -13,6 +12,7 @@ import type { EngineStatusItem } from './bindings/EngineStatusItem';
 import type { EngineStatusResult } from './bindings/EngineStatusResult';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
+import type { PairingTokenHydration } from './bindings/PairingTokenHydration';
 
 type StartDownloadArgs = {
   id: string;
@@ -88,6 +88,8 @@ type CommandMap = {
   delete_file: { args: { path: string }; result: void };
   toggle_tray_icon: { args: { show: boolean }; result: void };
   set_extension_pairing_token: { args: { token: string }; result: void };
+  hydrate_extension_pairing_token: { args: undefined; result: PairingTokenHydration };
+  acknowledge_pairing_token_change: { args: undefined; result: void };
   set_extension_frontend_ready: { args: { ready: boolean }; result: void };
   get_system_proxy: { args: undefined; result: string | null };
   get_file_category: { args: { filename: string }; result: DownloadCategory };
@@ -96,11 +98,9 @@ type CommandMap = {
   db_save_settings: { args: { data: string }; result: void };
   db_load_settings: { args: undefined; result: string | null };
   db_get_all_downloads: { args: undefined; result: string[] };
-  db_save_download: {
-    args: { id: string; status: DownloadStatus; queueId: string; data: string };
-    result: void;
-  };
-  db_delete_download: { args: { id: string }; result: void };
+  db_replace_downloads: { args: { data: string }; result: void };
+  db_get_all_queues: { args: undefined; result: string[] };
+  db_replace_queues: { args: { data: string }; result: void };
   create_category_directories: { args: { paths: string[] }; result: void };
   export_logs: { args: { destPath: string }; result: string };
   get_pending_order: { args: undefined; result: string[] };

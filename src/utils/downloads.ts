@@ -98,7 +98,7 @@ export const isMediaUrl = (rawUrl: string): boolean => {
  * Fields that may carry secrets and therefore must never reach the persisted
  * `download_queue` document. These are supplied in-memory for the active
  * session (see `enqueue_download` payloads) but are stripped at the
- * persistence boundary so `store.bin` contains no plaintext credentials.
+ * persistence boundary so the user-data database contains no plaintext credentials.
  */
 const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
 

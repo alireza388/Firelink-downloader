@@ -18,6 +18,7 @@ import DiagnosticsView from "./components/DiagnosticsView";
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
+  const [pairingTokenChanged, setPairingTokenChanged] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
     return Number.isFinite(stored) && stored >= 190 && stored <= 260 ? stored : 220;
@@ -38,6 +39,13 @@ function App() {
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef<string | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
+
+  const acknowledgePairingTokenChange = () => {
+    setPairingTokenChanged(false);
+    invoke('acknowledge_pairing_token_change').catch(error => {
+      console.error('Failed to acknowledge pairing token migration notice:', error);
+    });
+  };
 
   const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -67,13 +75,11 @@ function App() {
 
   useEffect(() => {
     useDownloadStore.getState().initDB();
-    // Hydrate the browser-extension pairing token from the OS keychain before
-    // the reactive push to the backend. If no token exists (fresh install or
-    // upgrade from a plaintext-persisting version) a new one is minted and
-    // stored, effectively rotating it away from any leaked plaintext.
-    useSettingsStore.getState().hydratePairingToken().catch(error => {
-      console.error('Failed to hydrate extension pairing token:', error);
-    });
+    useSettingsStore.getState().hydratePairingToken()
+      .then(setPairingTokenChanged)
+      .catch(error => {
+        console.error('Failed to hydrate extension pairing token:', error);
+      });
   }, []);
 
   useEffect(() => {
@@ -93,6 +99,7 @@ function App() {
   }, [showMenuBarIcon]);
 
   useEffect(() => {
+    if (!extensionPairingToken) return;
     invoke('set_extension_pairing_token', { token: extensionPairingToken }).catch(error => {
       console.error('Failed to configure browser extension pairing token:', error);
     });
@@ -296,6 +303,43 @@ function App() {
       <AddDownloadsModal />
       <PropertiesModal />
       <DeleteConfirmationModal />
+      {pairingTokenChanged && (
+        <div
+          className="app-toast fixed bottom-5 right-5 z-[80] max-w-[420px] p-4 text-[12px]"
+          role="status"
+        >
+          <p className="font-medium">
+            Browser extension disconnected because its pairing token changed.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              className="app-button px-3 py-1.5"
+              onClick={() => {
+                const token = useSettingsStore.getState().extensionPairingToken;
+                if (token) {
+                  void navigator.clipboard.writeText(token);
+                }
+                acknowledgePairingTokenChange();
+              }}
+            >
+              Copy new token
+            </button>
+            <button
+              type="button"
+              className="app-button px-3 py-1.5"
+              onClick={() => {
+                const settings = useSettingsStore.getState();
+                settings.setActiveSettingsTab('integrations');
+                settings.setActiveView('settings');
+                acknowledgePairingTokenChange();
+              }}
+            >
+              Open Integrations
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

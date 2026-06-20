@@ -14,14 +14,13 @@ import type { SettingsTab } from '../bindings/SettingsTab';
 import type { SiteLogin } from '../bindings/SiteLogin';
 import type { Theme } from '../bindings/Theme';
 
-import { tauriStore } from './useDownloadStore';
+let settingsSave = Promise.resolve();
 
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (name === 'firelink-settings') {
       try {
-        const data = await tauriStore.get<string>('settings');
-        return data || null;
+        return await invoke('db_load_settings');
       } catch (e) {
         console.error("Failed to load settings from DB", e);
         return null;
@@ -31,12 +30,12 @@ const tauriStorage: StateStorage = {
   },
   setItem: async (name: string, value: string): Promise<void> => {
     if (name === 'firelink-settings') {
-      try {
-        await tauriStore.set('settings', value);
-        await tauriStore.save();
-      } catch (e) {
-        console.error("Failed to save settings to DB", e);
-      }
+      settingsSave = settingsSave
+        .then(() => invoke('db_save_settings', { data: value }))
+        .catch(e => {
+          console.error("Failed to save settings to DB", e);
+        });
+      await settingsSave;
     }
   },
   removeItem: async (_name: string): Promise<void> => {
@@ -47,9 +46,8 @@ const tauriStorage: StateStorage = {
 /**
  * Keychain identifier for the browser-extension pairing token. The token is an
  * HMAC shared secret and is therefore persisted via the OS keychain rather
- * than the plaintext `store.bin` settings document. A fresh token is minted
- * when no prior entry exists (also covering upgrades from versions that
- * stored the token as plaintext, effectively rotating it on upgrade).
+ * than the user-data database. Legacy plaintext values are migrated into the
+ * Keychain before being removed from persisted settings.
  */
 const PAIRING_TOKEN_KEYCHAIN_ID = 'extension-pairing-token';
 
@@ -135,7 +133,7 @@ export interface SettingsState {
   removeSiteLogin: (id: string) => void;
   regeneratePairingToken: () => void;
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
-  hydratePairingToken: () => Promise<void>;
+  hydratePairingToken: () => Promise<boolean>;
 }
 
 const defaultDirectories = {
@@ -240,7 +238,7 @@ export const useSettingsStore = create<SettingsState>()(
       mediaCookieSource: 'none',
       downloadDirectories: { ...defaultDirectories },
       siteLogins: [],
-      extensionPairingToken: generateSecureToken(),
+      extensionPairingToken: '',
       autoCheckUpdates: true,
 
       setTheme: (theme) => { info('Settings updated: theme'); set({ theme }); },
@@ -305,30 +303,27 @@ export const useSettingsStore = create<SettingsState>()(
         });
       },
       hydratePairingToken: async () => {
-        const existing = useSettingsStore.getState().extensionPairingToken;
-        try {
-          const stored = await invoke('get_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID });
-          if (stored) {
-            set({ extensionPairingToken: stored });
-            return;
-          }
-        } catch {
-          // No prior token in the keychain (fresh install or upgrade from a
-          // version that stored plaintext). Fall through to mint + store.
-        }
-        const token = existing || generateSecureToken();
-        set({ extensionPairingToken: token });
-        try {
-          await invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token });
-        } catch (e) {
-          console.error('Failed to persist extension pairing token to keychain:', e);
-        }
+        const result = await invoke('hydrate_extension_pairing_token');
+        set({ extensionPairingToken: result.token });
+        return result.tokenChanged;
       },
       setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
     }),
     {
       name: 'firelink-settings',
       storage: createJSONStorage(() => tauriStorage),
+      version: 1,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState as SettingsState;
+        }
+        const persisted = persistedState as Partial<SettingsState>;
+        return {
+          ...persisted,
+          downloadDirectories: normalizeDownloadDirectories(persisted.downloadDirectories),
+          siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : []
+        } as SettingsState;
+      },
       partialize: (state): PersistedSettings => ({
         theme: state.theme,
         defaultDownloadPath: state.defaultDownloadPath,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   useDownloadStore,
-  MAIN_QUEUE_ID,
+  
   getSiteLogin,
   type AddDownloadAction
 } from '../store/useDownloadStore';
@@ -277,8 +277,6 @@ export const AddDownloadsModal = () => {
   } = useDownloadStore();
   const { baseDownloadFolder } = useSettingsStore();
 
-  const [selectedQueueId, setSelectedQueueId] = useState<string>(MAIN_QUEUE_ID);
-
   const [urls, setUrls] = useState('');
   const [metadataRefreshNonce, setMetadataRefreshNonce] = useState(0);
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
@@ -320,7 +318,6 @@ export const AddDownloadsModal = () => {
       setParsedItems([]);
       setSelectedItemIndex(null);
       setPendingUseSharedDestination(false);
-      setSelectedQueueId(queues.find(q => q.isMain)?.id || MAIN_QUEUE_ID);
       setUseAuth(false);
       setUsername('');
       setPassword('');
@@ -1006,21 +1003,10 @@ export const AddDownloadsModal = () => {
                   <Settings size={16} className="text-blue-500" /> Transfer Settings
                 </div>
                   <div className="flex flex-col gap-3">
-                    {queues.length > 1 && (
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-text-secondary font-medium">Queue for “Add to Queue”</label>
-                      <select value={selectedQueueId} onChange={e=>setSelectedQueueId(e.target.value)} className="add-download-control add-download-select w-32 px-2 py-1 text-xs" aria-label="Target queue">
-                        {queues.map(q => (
-                          <option key={q.id} value={q.id}>{q.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    )}
-
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-text-secondary font-medium">Connections per File</label>
                     <div className="flex items-center gap-2">
-                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24 accent-blue-500" disabled={parsedItems.some(i => i.isMedia)} aria-label="Connections per file" />
+                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className={`add-download-range w-24 accent-blue-500 cursor-pointer ${parsedItems.some(i => i.isMedia) ? 'opacity-50 pointer-events-none' : ''}`} aria-label="Connections per file" />
                       <span className="add-download-value text-xs text-text-primary font-mono w-6 text-center">{connections}</span>
                     </div>
                   </div>

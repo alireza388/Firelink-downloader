@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { CheckCircle2, AlertCircle, Info, XCircle, X } from 'lucide-react';
 
 export type ToastVariant = 'success' | 'info' | 'warning' | 'error';
 
@@ -25,13 +26,16 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t) as any);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 300); // Matches the exit animation duration
   }, []);
 
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <ToastContainer toasts={toasts as any} removeToast={removeToast} />
     </ToastContext.Provider>
   );
 };
@@ -42,16 +46,13 @@ export const useToast = () => {
   return context;
 };
 
-const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => void }> = ({ toast, removeToast }) => {
+const ToastItem: React.FC<{ toast: ToastMessage & { exiting?: boolean }; removeToast: (id: string) => void }> = ({ toast, removeToast }) => {
   const [isHovered, setIsHovered] = useState(false);
   
   useEffect(() => {
-    // Determine duration
     let timeoutDuration = toast.duration ?? 5000;
-    if (timeoutDuration < 5000) timeoutDuration = 5000; // at least 5 seconds
+    if (timeoutDuration < 5000) timeoutDuration = 5000;
     
-    // Don't auto-dismiss actionable or important errors (unless they specified a duration)
-    // Actually, "Do not auto-dismiss actionable or important errors"
     if (toast.isActionable || (toast.variant === 'error' && !toast.duration)) {
       return;
     }
@@ -69,36 +70,45 @@ const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => vo
 
   const role = toast.variant === 'error' ? 'alert' : 'status';
 
-  // Variant styling
   const variantStyles = {
-    success: 'border-[#10b981]/20 bg-[#064e3b]/95 text-[#34d399]',
-    info: 'border-[hsl(var(--border-modal))] bg-[hsl(var(--surface-overlay))] text-[hsl(var(--text-primary))]',
-    warning: 'border-[#eab308]/20 bg-[#713f12]/95 text-[#fde047]',
-    error: 'border-[#ef4444]/20 bg-[#7f1d1d]/95 text-[#f87171]',
+    success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shadow-emerald-500/10',
+    info: 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400 shadow-blue-500/10',
+    warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-amber-500/10',
+    error: 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 shadow-red-500/10',
   };
 
-  const style = variantStyles[toast.variant || 'info'];
+  const icons = {
+    success: <CheckCircle2 className="w-5 h-5 shrink-0" strokeWidth={2.5} />,
+    error: <XCircle className="w-5 h-5 shrink-0" strokeWidth={2.5} />,
+    warning: <AlertCircle className="w-5 h-5 shrink-0" strokeWidth={2.5} />,
+    info: <Info className="w-5 h-5 shrink-0" strokeWidth={2.5} />,
+  };
+
+  const variant = toast.variant || 'info';
+  const style = variantStyles[variant];
+  const Icon = icons[variant];
 
   return (
     <div
       role={role}
-      className={`app-toast-item pointer-events-auto flex items-center justify-between gap-4 rounded-xl border p-4 shadow-2xl backdrop-blur-[20px] transition-all duration-300 text-[13px] ${style}`}
-      style={{ animation: 'fade-in 200ms ease-out forwards' }}
+      className={`app-toast-item pointer-events-auto flex items-start gap-3 rounded-[16px] border px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.12),0_0_20px_var(--tw-shadow-color)] backdrop-blur-xl transition-all duration-300 text-[14px] leading-relaxed ${style} ${toast.exiting ? 'opacity-0 scale-95 translate-y-4' : 'opacity-100 scale-100 translate-y-0'}`}
+      style={{
+        transformOrigin: 'bottom center',
+        animation: toast.exiting ? 'none' : 'toast-slide-up 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards'
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onFocus={() => setIsHovered(true)}
       onBlur={() => setIsHovered(false)}
     >
-      <div className="font-medium">{toast.message}</div>
+      <div className="mt-0.5">{Icon}</div>
+      <div className="font-semibold flex-1 tracking-tight">{toast.message}</div>
       <button 
         onClick={() => removeToast(toast.id)}
-        className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+        className="shrink-0 ml-2 mt-0.5 opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded-full transition-all active:scale-90"
         aria-label="Dismiss notification"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
+        <X className="w-4 h-4" strokeWidth={2.5} />
       </button>
     </div>
   );
@@ -106,7 +116,13 @@ const ToastItem: React.FC<{ toast: ToastMessage; removeToast: (id: string) => vo
 
 const ToastContainer: React.FC<{ toasts: ToastMessage[]; removeToast: (id: string) => void }> = ({ toasts, removeToast }) => {
   return (
-    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col gap-3 pointer-events-none items-center">
+    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col gap-3 pointer-events-none items-center px-4">
+      <style>{`
+        @keyframes toast-slide-up {
+          from { opacity: 0; transform: translateY(24px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
       {toasts.map(toast => (
         <ToastItem key={toast.id} toast={toast} removeToast={removeToast} />
       ))}

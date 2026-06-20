@@ -13,6 +13,8 @@ interface DownloadItemProps {
   handleResume: (item: DownloadItemType) => void;
   handleDoubleClick: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
+  isSelected: boolean;
+  onClick: (e: React.MouseEvent, item: DownloadItemType) => void;
 }
 
 export const DownloadItem = React.memo<DownloadItemProps>(({
@@ -24,6 +26,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   handleResume,
   handleDoubleClick,
   getCategoryIcon,
+  isSelected,
+  onClick,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
   const pendingOrder = useDownloadStore(state => state.pendingOrder);
@@ -66,8 +70,9 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
   return (
     <div
-      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''}`}
+      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''} ${isSelected ? 'is-selected' : ''}`}
       style={{ gridTemplateColumns: tableGridTemplate }}
+      onClick={(e) => onClick(e, download)}
       onContextMenu={(e) => {
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, id: download.id });

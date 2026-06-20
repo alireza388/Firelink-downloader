@@ -14,10 +14,10 @@ export const DeleteConfirmationModal: React.FC = () => {
   };
 
   const handleRemoveFromList = async () => {
-    if (deleteModalState.downloadId) {
+    if (deleteModalState.downloadIds && deleteModalState.downloadIds.length > 0) {
       setIsRemoving(true);
       try {
-        await removeDownload(deleteModalState.downloadId, false);
+        await Promise.all(deleteModalState.downloadIds.map(id => removeDownload(id, false)));
       } catch (error) {
         setErrorMessage(`Remove failed: ${String(error)}`);
         setIsRemoving(false);
@@ -28,10 +28,10 @@ export const DeleteConfirmationModal: React.FC = () => {
   };
 
   const handleDeleteFile = async () => {
-    if (deleteModalState.downloadId) {
+    if (deleteModalState.downloadIds && deleteModalState.downloadIds.length > 0) {
       setIsRemoving(true);
       try {
-        await removeDownload(deleteModalState.downloadId, true);
+        await Promise.all(deleteModalState.downloadIds.map(id => removeDownload(id, true)));
       } catch (error) {
         setErrorMessage(`Delete failed: ${String(error)}`);
         setIsRemoving(false);
@@ -55,7 +55,7 @@ export const DeleteConfirmationModal: React.FC = () => {
         </div>
 
         <div className="px-5 py-6 flex-1 text-sm text-text-secondary leading-relaxed">
-          Are you sure you want to remove this item from the list? You can also choose to delete the underlying file from your hard drive.
+          {`Are you sure you want to remove ${deleteModalState.downloadIds?.length && deleteModalState.downloadIds.length > 1 ? 'these ' + deleteModalState.downloadIds.length + ' items' : 'this item'} from the list? You can also choose to delete the underlying file from your hard drive.`}
           {errorMessage && <div className="mt-3 text-xs text-red-400">{errorMessage}</div>}
         </div>
 

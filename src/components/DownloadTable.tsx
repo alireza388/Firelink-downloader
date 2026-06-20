@@ -3,7 +3,7 @@ import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command } from 'lucide-react';
+import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command, ChevronRight } from 'lucide-react';
 import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
 import {
@@ -16,13 +16,15 @@ interface DownloadTableProps {
 }
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
+  const { downloads, queues, updateDownload, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
   const { addToast } = useToast();
 
   const isMac = navigator.userAgent.includes('Mac');
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
   const columnMinimums = [0, 58, 92, 58, 48, 112];
   const tableGridTemplate = columnWidths.map((width, index) => `minmax(${columnMinimums[index]}px, ${width}fr)`).join(' ');
@@ -95,19 +97,21 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const revealDownloadFile = async (item: DownloadItem) => {
-    if (item.status !== 'completed') {
-      openProperties(item.id);
-      return;
+    let pathToReveal: string | null = null;
+    if (item.status === 'completed') {
+      pathToReveal = await getDownloadPath(item);
+    } else {
+      const settings = useSettingsStore.getState();
+      pathToReveal = item.destination || await resolveCategoryDestination(settings, item.category);
     }
 
-    const fullPath = await getDownloadPath(item);
-    if (!fullPath) {
+    if (!pathToReveal) {
       openProperties(item.id);
       return;
     }
 
     try {
-      await invoke('reveal_in_file_manager', { path: fullPath });
+      await invoke('reveal_in_file_manager', { path: pathToReveal });
     } catch (error) {
       console.error("Failed to show in Finder:", error);
       showInteractionError('Could not show download in Finder', error);
@@ -135,6 +139,44 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       default: return d.category === filter;
     }
   });
+  const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
+    if (e.metaKey || e.ctrlKey) {
+      const newSelected = new Set(selectedIds);
+      if (newSelected.has(item.id)) {
+        newSelected.delete(item.id);
+      } else {
+        newSelected.add(item.id);
+      }
+      setSelectedIds(newSelected);
+      setLastSelectedId(item.id);
+    } else if (e.shiftKey && lastSelectedId) {
+      const currentIndex = filteredDownloads.findIndex(d => d.id === item.id);
+      const lastIndex = filteredDownloads.findIndex(d => d.id === lastSelectedId);
+      
+      if (currentIndex !== -1 && lastIndex !== -1) {
+        const start = Math.min(currentIndex, lastIndex);
+        const end = Math.max(currentIndex, lastIndex);
+        
+        const newSelected = new Set(selectedIds);
+        for (let i = start; i <= end; i++) {
+          newSelected.add(filteredDownloads[i].id);
+        }
+        setSelectedIds(newSelected);
+      }
+    } else {
+      setSelectedIds(new Set([item.id]));
+      setLastSelectedId(item.id);
+    }
+  };
+
+  const handleContextMenu = (menu: { x: number; y: number; id: string }) => {
+    if (!selectedIds.has(menu.id)) {
+      setSelectedIds(new Set([menu.id]));
+      setLastSelectedId(menu.id);
+    }
+    setContextMenu(menu);
+  };
+
 
   const getFilterTitle = () => {
     if (filter.startsWith('queue:')) {
@@ -163,8 +205,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     useDownloadStore.getState().resumeDownload(item.id);
   };
 
-  const handleDelete = (id: string) => {
-    openDeleteModal(id);
+  const handleDelete = (ids: string | string[]) => {
+    openDeleteModal(ids);
   };
 
   const contextItem = contextMenu ? downloads.find(d => d.id === contextMenu.id) : null;
@@ -277,11 +319,13 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   downloadId={d.id}
                   index={index}
                   tableGridTemplate={tableGridTemplate}
-                  setContextMenu={setContextMenu}
+                  setContextMenu={handleContextMenu}
                   handlePause={handlePause}
                   handleResume={handleResume}
                   handleDoubleClick={handleDownloadDoubleClick}
                   getCategoryIcon={getCategoryIcon}
+                  isSelected={selectedIds.has(d.id)}
+                  onClick={handleItemClick}
                 />
               ))}
               {Array.from({ length: Math.max(0, 50 - filteredDownloads.length) }).map((_, i) => {
@@ -311,128 +355,224 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {contextItem.status === 'completed' && (
-            <button
-              onClick={async () => {
-                setContextMenu(null);
-                await openDownloadFile(contextItem);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-              Open
-            </button>
+          {selectedIds.size > 1 ? (
+            <>
+              {/* Multi-Select Context Menu */}
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  Array.from(selectedIds).forEach(id => {
+                    const item = downloads.find(d => d.id === id);
+                    if (item && (item.status === 'ready' || item.status === 'paused' || item.status === 'failed' || item.status === 'retrying')) {
+                      handleResume(item);
+                    }
+                  });
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+              >
+                Start/Resume
+              </button>
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <div className="group relative">
+                <button className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors flex justify-between items-center">
+                  Add to Queue
+                  <ChevronRight size={14} />
+                </button>
+                <div className="absolute left-full top-0 hidden group-hover:block ml-1 min-w-[150px] bg-bg-modal border border-border-modal rounded-lg shadow-lg py-1.5 z-50">
+                  {queues.map(q => (
+                    <button key={q.id} onClick={() => {
+                      setContextMenu(null);
+                      Array.from(selectedIds).forEach(id => {
+                         const item = downloads.find(d => d.id === id);
+                         if (item && item.status !== 'completed') {
+                           updateDownload(id, { queueId: q.id });
+                         }
+                      });
+                    }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
+                      {q.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  const urls = Array.from(selectedIds)
+                    .map(id => downloads.find(d => d.id === id)?.url)
+                    .filter(Boolean)
+                    .join('\n');
+                  navigator.clipboard.writeText(urls).catch(error => {
+                    showInteractionError('Could not copy addresses', error);
+                  });
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+              >
+                Copy Address
+              </button>
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  handleDelete(Array.from(selectedIds));
+                }}
+                className="w-full text-left px-3 py-2 text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                Remove
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Single-Select Context Menu */}
+              {contextItem.status === 'completed' && (
+                <button
+                  onClick={async () => {
+                    setContextMenu(null);
+                    await openDownloadFile(contextItem);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  Open
+                </button>
+              )}
+
+              <button
+                onClick={async () => {
+                  setContextMenu(null);
+                  await revealDownloadFile(contextItem);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+              >
+                Show in Finder
+              </button>
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              {(contextItem.status === 'downloading' || contextItem.status === 'queued' || contextItem.status === 'retrying') && (
+                <button
+                  onClick={() => {
+                    setContextMenu(null);
+                    handlePause(contextItem.id);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  Pause
+                </button>
+              )}
+
+              {(contextItem.status === 'ready' || contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
+                <button
+                  onClick={() => {
+                    setContextMenu(null);
+                    handleResume(contextItem);
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  {contextItem.status === 'ready' ? 'Start' : 'Resume'}
+                </button>
+              )}
+
+              {['completed', 'failed', 'paused'].includes(contextItem.status) && (
+                <button
+                  onClick={async () => {
+                    setContextMenu(null);
+                    try {
+                      await redownload(contextItem.id);
+                    } catch (error) {
+                      showInteractionError('Redownload failed', error);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  Redownload
+                </button>
+              )}
+
+              {contextItem.status !== 'completed' && (
+                <div className="group relative">
+                  <button className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors flex justify-between items-center">
+                    Add to Queue
+                    <ChevronRight size={14} />
+                  </button>
+                  <div className="absolute left-full top-0 hidden group-hover:block ml-1 min-w-[150px] bg-bg-modal border border-border-modal rounded-lg shadow-lg py-1.5 z-50">
+                    {queues.map(q => (
+                      <button key={q.id} onClick={() => {
+                        setContextMenu(null);
+                        updateDownload(contextItem.id, { queueId: q.id });
+                      }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
+                        {q.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  navigator.clipboard.writeText(contextItem.url).catch(error => {
+                    showInteractionError('Could not copy address', error);
+                  });
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+              >
+                Copy Address
+              </button>
+
+              {contextItem.status === 'completed' && (
+                <button
+                  onClick={async () => {
+                    setContextMenu(null);
+                    const fullPath = await getDownloadPath(contextItem);
+                    if (!fullPath) {
+                      showInteractionError('Could not copy file path', 'File name is missing');
+                      return;
+                    }
+                    try {
+                      await navigator.clipboard.writeText(fullPath);
+                    } catch (error) {
+                      showInteractionError('Could not copy file path', error);
+                    }
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  Copy File Path
+                </button>
+              )}
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  handleDelete(contextItem.id);
+                }}
+                className="w-full text-left px-3 py-2 text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                Remove
+              </button>
+
+              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+
+              <button
+                onClick={() => {
+                  setContextMenu(null);
+                  openProperties(contextItem.id);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+              >
+                Properties
+              </button>
+            </>
           )}
-
-          <button
-            onClick={async () => {
-              setContextMenu(null);
-              await revealDownloadFile(contextItem);
-            }}
-            className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-          >
-            Show in Finder
-          </button>
-
-          <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
-
-          {(contextItem.status === 'downloading' || contextItem.status === 'queued' || contextItem.status === 'retrying') && (
-            <button
-              onClick={() => {
-                setContextMenu(null);
-                handlePause(contextItem.id);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-              Pause
-            </button>
-          )}
-
-          {(contextItem.status === 'ready' || contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
-            <button
-              onClick={() => {
-                setContextMenu(null);
-                handleResume(contextItem);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-              {contextItem.status === 'ready' ? 'Start' : 'Resume'}
-            </button>
-          )}
-
-          {['completed', 'failed', 'paused'].includes(contextItem.status) && (
-            <button
-              onClick={async () => {
-                setContextMenu(null);
-                try {
-                  await redownload(contextItem.id);
-                } catch (error) {
-                  showInteractionError('Redownload failed', error);
-                }
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-              Redownload
-            </button>
-          )}
-
-          <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
-
-            <button
-              onClick={() => {
-                setContextMenu(null);
-                navigator.clipboard.writeText(contextItem.url).catch(error => {
-                  showInteractionError('Could not copy address', error);
-                });
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-            Copy Address
-          </button>
-
-          {contextItem.status === 'completed' && (
-            <button
-              onClick={async () => {
-                setContextMenu(null);
-                const fullPath = await getDownloadPath(contextItem);
-                if (!fullPath) {
-                  showInteractionError('Could not copy file path', 'File name is missing');
-                  return;
-                }
-                try {
-                  await navigator.clipboard.writeText(fullPath);
-                } catch (error) {
-                  showInteractionError('Could not copy file path', error);
-                }
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-            >
-              Copy File Path
-            </button>
-          )}
-
-          <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
-
-          <button
-            onClick={() => {
-              setContextMenu(null);
-              handleDelete(contextItem.id);
-            }}
-            className="w-full text-left px-3 py-2 text-red-400 hover:bg-red-500/10 transition-colors"
-          >
-            Remove
-          </button>
-
-          <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
-
-          <button
-              onClick={() => {
-                setContextMenu(null);
-                openProperties(contextItem.id);
-              }}
-            className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
-          >
-            Properties
-          </button>
         </div>
       )}
 

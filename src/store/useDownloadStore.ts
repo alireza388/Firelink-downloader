@@ -154,7 +154,7 @@ export type DownloadDraft = Omit<DownloadItem, 'status' | 'queueId' | 'hasBeenDi
 
 export type DeleteModalState = {
   isOpen: boolean;
-  downloadId?: string;
+  downloadIds?: string[];
 };
 
 interface DownloadState {
@@ -187,7 +187,7 @@ interface DownloadState {
   ) => void;
   handleExtensionDownload: (request: ExtensionDownloadRequest) => void;
   deleteModalState: DeleteModalState;
-  openDeleteModal: (downloadId?: string) => void;
+  openDeleteModal: (downloadIds?: string | string[]) => void;
   closeDeleteModal: () => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
   addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<void>;
@@ -258,7 +258,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   activeMetadataUrl: null,
   parsingError: null,
   deleteModalState: { isOpen: false },
-  openDeleteModal: (downloadId) => set({ deleteModalState: { isOpen: true, downloadId } }),
+  openDeleteModal: (downloadIds) => set({ 
+    deleteModalState: { 
+      isOpen: true, 
+      downloadIds: Array.isArray(downloadIds) ? downloadIds : (downloadIds ? [downloadIds] : undefined) 
+    } 
+  }),
   closeDeleteModal: () => set({ deleteModalState: { isOpen: false } }),
   toggleAddModal: (isOpen) => set({
     isAddModalOpen: isOpen,

@@ -1,5 +1,16 @@
-import { join } from '@tauri-apps/api/path';
+import { join, homeDir } from '@tauri-apps/api/path';
 import type { DownloadCategory } from '../bindings/DownloadCategory';
+
+export const expandTilde = async (path: string): Promise<string> => {
+  if (path.startsWith('~/') || path.startsWith('~\\')) {
+    const home = await homeDir();
+    return join(home, path.slice(2));
+  }
+  if (path === '~') {
+    return homeDir();
+  }
+  return path;
+};
 
 export const DOWNLOAD_CATEGORIES: DownloadCategory[] = [
   'Musics',
@@ -113,18 +124,22 @@ export const resolveCategoryDestination = async (
   category: DownloadCategory
 ): Promise<string> => {
   const override = settings.categoryDirectoryOverrides[category]?.trim();
-  if (override) return override;
+  if (override) return expandTilde(override);
 
   const base = settings.baseDownloadFolder.trim() || '~/Downloads';
+  const expandedBase = await expandTilde(base);
   const subfolder =
     normalizeCategorySubfolder(
       settings.categorySubfolders[category] || '',
       DEFAULT_CATEGORY_SUBFOLDERS[category]
     );
-  return join(base, subfolder);
+  return join(expandedBase, subfolder);
 };
 
 export const resolveDownloadFilePath = async (
   destination: string,
   fileName: string
-): Promise<string> => join(destination, fileName);
+): Promise<string> => {
+  const expandedDest = await expandTilde(destination);
+  return join(expandedDest, fileName);
+};

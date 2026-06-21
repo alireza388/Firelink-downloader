@@ -1491,6 +1491,18 @@
   font-size: 12px;
 }
 
+html[data-list-density="compact"] .download-row,
+html[data-list-density="compact"] .download-ghost-row {
+  height: 26px;
+  margin-block: 1px;
+}
+
+html[data-list-density="relaxed"] .download-row,
+html[data-list-density="relaxed"] .download-ghost-row {
+  height: 40px;
+  margin-block: 3px;
+}
+
 .download-row > div {
   min-width: 0;
   overflow: hidden;

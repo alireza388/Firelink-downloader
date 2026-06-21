@@ -16,6 +16,9 @@ import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
 import DiagnosticsView from "./components/DiagnosticsView";
 import { useToast } from "./contexts/ToastContext";
+import { openUrl } from '@tauri-apps/plugin-opener';
+
+let automaticUpdateCheckStarted = false;
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -29,6 +32,9 @@ function App() {
   const isSidebarVisible = useSettingsStore(state => state.isSidebarVisible);
   const activeView = useSettingsStore(state => state.activeView);
   const appFontSize = useSettingsStore(state => state.appFontSize);
+  const listRowDensity = useSettingsStore(state => state.listRowDensity);
+  const autoCheckUpdates = useSettingsStore(state => state.autoCheckUpdates);
+  const showNotifications = useSettingsStore(state => state.showNotifications);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
@@ -90,12 +96,20 @@ function App() {
                   <button
                     type="button"
                     className="app-button px-2 py-1 bg-surface-raised border border-border-color rounded"
-                    onClick={() => {
+                    onClick={async () => {
                       const token = useSettingsStore.getState().extensionPairingToken;
-                      if (token) {
-                        void navigator.clipboard.writeText(token);
+                      try {
+                        if (token) {
+                          await navigator.clipboard.writeText(token);
+                        }
+                        acknowledgePairingTokenChange();
+                      } catch (error) {
+                        addToast({
+                          message: `Could not copy pairing token: ${String(error)}`,
+                          variant: 'error',
+                          isActionable: true
+                        });
                       }
-                      acknowledgePairingTokenChange();
                     }}
                   >
                     Copy token
@@ -126,6 +140,50 @@ function App() {
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
   }, [appFontSize]);
+
+  useEffect(() => {
+    window.document.documentElement.setAttribute('data-list-density', listRowDensity);
+  }, [listRowDensity]);
+
+  useEffect(() => {
+    const checkForUpdate = () => {
+      if (!useSettingsStore.getState().autoCheckUpdates || automaticUpdateCheckStarted) return;
+      automaticUpdateCheckStarted = true;
+
+      invoke('check_for_updates')
+        .then(result => {
+          if (result.type !== 'UpdateAvailable') return;
+          addToast({
+            variant: 'info',
+            isActionable: true,
+            message: (
+              <div className="flex items-center gap-3">
+                <span>Firelink {result.update.version} is available.</span>
+                <button
+                  type="button"
+                  className="app-button px-2 py-1"
+                  onClick={() => {
+                    void openUrl(result.update.release_url);
+                  }}
+                >
+                  View release
+                </button>
+              </div>
+            )
+          });
+        })
+        .catch(error => {
+          automaticUpdateCheckStarted = false;
+          console.error('Automatic update check failed:', error);
+        });
+    };
+
+    if (useSettingsStore.persist.hasHydrated()) {
+      checkForUpdate();
+      return;
+    }
+    return useSettingsStore.persist.onFinishHydration(checkForUpdate);
+  }, [addToast, autoCheckUpdates]);
 
   useEffect(() => {
     invoke('set_concurrent_limit', { limit: maxConcurrentDownloads }).catch(console.error);
@@ -191,15 +249,22 @@ function App() {
   }, [downloads, schedulerRunning]);
 
   useEffect(() => {
-    // Request notification permissions
     const initNotifications = async () => {
+      if (!useSettingsStore.getState().showNotifications) return;
       let permissionGranted = await isPermissionGranted();
       if (!permissionGranted) {
         await requestPermission();
       }
     };
-    initNotifications();
-  }, []);
+
+    if (useSettingsStore.persist.hasHydrated()) {
+      void initNotifications();
+      return;
+    }
+    return useSettingsStore.persist.onFinishHydration(() => {
+      void initNotifications();
+    });
+  }, [showNotifications]);
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {

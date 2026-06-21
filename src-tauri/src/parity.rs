@@ -147,6 +147,7 @@ pub async fn create_category_directories(
     subfolders: std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
     let base = crate::resolve_path(&base_folder, &app_handle);
+    let mut errors = Vec::new();
 
     for subfolder in subfolders.values() {
         let normalized = subfolder.replace('\\', "/");
@@ -164,16 +165,19 @@ pub async fn create_category_directories(
         let expanded = base.join(relative);
         if !expanded.exists() {
             if let Err(e) = tokio::fs::create_dir_all(&expanded).await {
-                log::warn!(
-                    "Failed to create category directory '{}': {}",
-                    expanded.display(),
-                    e
-                );
+                errors.push(format!("{}: {}", expanded.display(), e));
             }
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to create one or more category directories ({})",
+            errors.join("; ")
+        ))
+    }
 }
 
 pub static SUPPORTED_DOMAINS: &[&str] = &[

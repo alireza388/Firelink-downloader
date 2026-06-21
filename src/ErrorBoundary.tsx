@@ -29,11 +29,20 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: '2rem', color: 'red', backgroundColor: '#222', height: '100vh', width: '100vw', whiteSpace: 'pre-wrap', overflow: 'auto' }}>
-          <h1>Something went wrong.</h1>
-          <p>{this.state.error?.toString()}</p>
-          <hr />
-          <p>{this.state.errorInfo?.componentStack}</p>
+        <div className="flex h-screen w-screen items-center justify-center bg-main-bg p-8 text-text-primary">
+          <div className="app-card max-w-lg space-y-4 p-6 text-center">
+            <h1 className="text-xl font-semibold">Firelink could not display this window.</h1>
+            <p className="text-sm text-text-secondary">
+              The error was written to Diagnostics. Reload the interface to reconnect to the running download service.
+            </p>
+            <button
+              type="button"
+              className="app-button app-button-primary px-4"
+              onClick={() => window.location.reload()}
+            >
+              Reload Firelink
+            </button>
+          </div>
         </div>
       );
     }

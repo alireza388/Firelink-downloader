@@ -137,7 +137,7 @@ export interface SettingsState {
   resetCategoryLocations: () => void;
   addSiteLogin: (login: SiteLogin) => void;
   removeSiteLogin: (id: string) => void;
-  regeneratePairingToken: () => void;
+  regeneratePairingToken: () => Promise<void>;
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
   hydratePairingToken: () => Promise<boolean>;
 }
@@ -286,12 +286,10 @@ export const useSettingsStore = create<SettingsState>()(
       removeSiteLogin: (id) => set((state) => ({
         siteLogins: state.siteLogins.filter((login) => login.id !== id)
       })),
-      regeneratePairingToken: () => {
+      regeneratePairingToken: async () => {
         const token = generateSecureToken();
+        await invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token });
         set({ extensionPairingToken: token });
-        invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token }).catch(e => {
-          console.error('Failed to persist regenerated extension pairing token to keychain:', e);
-        });
       },
       hydratePairingToken: async () => {
         const result = await invoke('hydrate_extension_pairing_token');

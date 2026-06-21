@@ -4,6 +4,7 @@ import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
 import { FileDown, Trash2, Terminal, Filter } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
+import { useToast } from '../contexts/ToastContext';
 
 interface LogEntry {
   level: 'Trace' | 'Debug' | 'Info' | 'Warn' | 'Error';
@@ -22,6 +23,7 @@ const getLevelStr = (level: number): LogEntry['level'] => {
 };
 
 export default function DiagnosticsView() {
+  const { addToast } = useToast();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -59,8 +61,10 @@ export default function DiagnosticsView() {
       });
       if (!path) return;
       await invoke('export_logs', { destPath: path });
+      addToast({ message: 'Diagnostics exported', variant: 'success' });
     } catch (e) {
       console.error('Export failed:', e);
+      addToast({ message: `Could not export diagnostics: ${String(e)}`, variant: 'error', isActionable: true });
     }
   };
 

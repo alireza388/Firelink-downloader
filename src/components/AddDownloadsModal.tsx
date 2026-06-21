@@ -15,6 +15,8 @@ import {
   resolveCategoryDestination,
   resolveDownloadFilePath
 } from '../utils/downloadLocations';
+import { isTransferLocked } from '../utils/downloadActions';
+import { useToast } from '../contexts/ToastContext';
 
 interface MediaFormat {
   name: string;
@@ -47,6 +49,7 @@ const formatBytes = (bytes: number) => {
 };
 
 export const AddDownloadsModal = () => {
+  const { addToast } = useToast();
   const {
     isAddModalOpen,
     pendingAddUrls,
@@ -58,7 +61,7 @@ export const AddDownloadsModal = () => {
     addDownload,
     queues
   } = useDownloadStore();
-  const { baseDownloadFolder } = useSettingsStore();
+  const { baseDownloadFolder, perServerConnections } = useSettingsStore();
 
   const [urls, setUrls] = useState('');
   const [metadataRefreshNonce, setMetadataRefreshNonce] = useState(0);
@@ -77,7 +80,7 @@ export const AddDownloadsModal = () => {
   // Right Form
   const [saveLocation, setSaveLocation] = useState(baseDownloadFolder);
   const [isSaveLocationManual, setIsSaveLocationManual] = useState(false);
-  const [connections, setConnections] = useState(16);
+  const [connections, setConnections] = useState(perServerConnections);
   const [speedLimitEnabled, setSpeedLimitEnabled] = useState(false);
   const [speedLimit, setSpeedLimit] = useState('1024');
   const [freeSpace, setFreeSpace] = useState('Unknown');
@@ -102,6 +105,7 @@ export const AddDownloadsModal = () => {
       setParsedItems([]);
       setSelectedItemIndex(null);
       setPendingUseSharedDestination(false);
+      setConnections(perServerConnections);
       setUseAuth(false);
       setUsername('');
       setPassword('');
@@ -126,7 +130,8 @@ export const AddDownloadsModal = () => {
     pendingAddReferer,
     pendingAddHeaders,
     pendingAddCookies,
-    baseDownloadFolder
+    baseDownloadFolder,
+    perServerConnections
   ]);
 
   useEffect(() => {
@@ -140,6 +145,21 @@ export const AddDownloadsModal = () => {
     window.addEventListener('pointerdown', closeMenu);
     return () => window.removeEventListener('pointerdown', closeMenu);
   }, [isActionMenuOpen]);
+
+  useEffect(() => {
+    if (!isActionMenuOpen && !showingDuplicates) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showingDuplicates) {
+        setShowingDuplicates(false);
+      } else {
+        setIsActionMenuOpen(false);
+        setIsQueueMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [isActionMenuOpen, showingDuplicates]);
 
   useEffect(() => {
     if (!saveLocation) return;
@@ -445,9 +465,12 @@ export const AddDownloadsModal = () => {
                      exists = storeHas || diskHas;
                      count++;
                  }
+                 if (exists) {
+                   throw new Error(`Could not find an available name for ${finalFile}.`);
+                 }
                  
                  itemsToAdd[idx] = { ...item, file: newName };
-            } else if (res.resolution === 'replace') {
+             } else if (res.resolution === 'replace') {
               if (conflict?.reason.type !== 'file') {
                 itemsToAdd[idx] = null;
                 continue;
@@ -479,16 +502,21 @@ export const AddDownloadsModal = () => {
           }
         }
 
-                 if (existingItem) {
-                     await store.removeDownload(existingItem.id);
+                 if (existingItem && isTransferLocked(existingItem.status)) {
+                   throw new Error(`Pause ${existingItem.fileName} before replacing it.`);
                  }
-                 
-                 try { await invoke('delete_file', { path: fullPath }); } catch(e) {}
+
+                 await invoke('delete_file', { path: fullPath });
+                 if (existingItem) {
+                   await store.removeDownload(existingItem.id);
+                 }
              }
          }
       }
 
       const resolvedItems = itemsToAdd.filter((item): item is ParsedDownloadItem => item !== null);
+      let addedCount = 0;
+      const failures: string[] = [];
 
       for (const item of resolvedItems) {
         try {
@@ -527,11 +555,25 @@ export const AddDownloadsModal = () => {
           mediaFormatSelector: formatSelector,
           size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
         }, action);
+        addedCount += 1;
         } catch (e) {
           console.error("Invalid URL or failed to add:", e);
+          failures.push(`${item.file}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
       toggleAddModal(false);
+      if (failures.length > 0) {
+        addToast({
+          message: `${addedCount} added, ${failures.length} failed. ${failures[0]}`,
+          variant: 'error',
+          isActionable: true
+        });
+      } else if (addedCount > 0) {
+        addToast({
+          message: `${addedCount} download${addedCount === 1 ? '' : 's'} added`,
+          variant: 'success'
+        });
+      }
   };
 
   const SummaryBox = ({ title, value, icon: Icon, color }: {
@@ -578,7 +620,14 @@ export const AddDownloadsModal = () => {
           conflicts={conflicts} 
           onConfirm={(resolutions) => {
             setShowingDuplicates(false);
-            executeAddDownloads(pendingAction, resolvedLocation, pendingUseSharedDestination, resolutions);
+            void executeAddDownloads(pendingAction, resolvedLocation, pendingUseSharedDestination, resolutions)
+              .catch(error => {
+                addToast({
+                  message: `Could not resolve duplicate downloads: ${String(error)}`,
+                  variant: 'error',
+                  isActionable: true
+                });
+              });
           }} 
           onCancel={() => setShowingDuplicates(false)} 
         />

@@ -3,6 +3,7 @@ import { useDownloadStore } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadStore';
 import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
+import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/downloadActions';
 
 interface DownloadItemProps {
   downloadId: string;
@@ -200,13 +201,13 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               </button>
             </>
           )}
-          {(download.status === 'downloading' || download.status === 'processing' || download.status === 'retrying') && (
+          {canPauseDownload(download.status) && (
             <button onClick={() => handlePause(download.id)} className="app-icon-button h-7 w-7" title="Pause">
               <Pause size={14} fill="currentColor" />
             </button>
           )}
-          {(download.status === 'ready' || download.status === 'paused') && (
-            <button onClick={() => handleResume(download)} className="app-icon-button h-7 w-7" title={download.status === 'ready' ? 'Start' : 'Resume'}>
+          {canStartDownload(download.status) && (
+            <button onClick={() => handleResume(download)} className="app-icon-button h-7 w-7" title={startActionLabel(download.status)}>
               <Play size={14} fill="currentColor" />
             </button>
           )}

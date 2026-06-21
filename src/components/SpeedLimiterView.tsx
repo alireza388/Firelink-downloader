@@ -78,8 +78,8 @@ export default function SpeedLimiterView() {
             <Gauge size={18} className="text-accent" /> Global Speed Limit
           </div>
           <p className="max-w-xl text-[12px] leading-relaxed text-text-muted">
-            This cap is shared across the configured concurrent download slots. A lower per-download limit still takes precedence.
-            Saving a new limit gracefully restarts active jobs so the change takes effect immediately.
+            This cap is shared by transfers running through the core downloader. A lower per-download limit still takes precedence.
+            Saving updates the core downloader immediately; media extraction keeps its existing per-download options.
           </p>
 
           <div className="mt-6 flex items-center gap-3">

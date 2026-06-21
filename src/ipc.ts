@@ -5,48 +5,13 @@ import type { DownloadCategory } from './bindings/DownloadCategory';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
 import type { DownloadStateEvent } from './bindings/DownloadStateEvent';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
-import type { MediaCookieSource } from './bindings/MediaCookieSource';
 import type { MediaMetadata } from './bindings/MediaMetadata';
 import type { MetadataResponse } from './bindings/MetadataResponse';
 import type { EngineStatusItem } from './bindings/EngineStatusItem';
-import type { EngineStatusResult } from './bindings/EngineStatusResult';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
 import type { PairingTokenHydration } from './bindings/PairingTokenHydration';
-
-type StartDownloadArgs = {
-  id: string;
-  url: string;
-  destination: string;
-  filename: string;
-  connections: number | null;
-  speedLimit: string | null;
-  username: string | null;
-  password: string | null;
-  headers: string | null;
-  checksum: string | null;
-  cookies: string | null;
-  mirrors: string | null;
-  userAgent: string | null;
-  maxTries: number | null;
-  proxy: string | null;
-};
-
-type StartMediaDownloadArgs = {
-  id: string;
-  url: string;
-  destination: string;
-  filename: string;
-  formatSelector: string | null;
-  cookieSource: Exclude<MediaCookieSource, 'none'> | null;
-  speedLimit: string | null;
-  username: string | null;
-  password: string | null;
-  headers: string | null;
-  proxy: string | null;
-  userAgent: string | null;
-  maxTries: number | null;
-};
+import type { EnqueueItem } from './bindings/EnqueueItem';
 
 type CommandMap = {
   fetch_metadata: {
@@ -57,18 +22,13 @@ type CommandMap = {
     args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null };
     result: MediaMetadata;
   };
- get_engine_status: { args: undefined; result: EngineStatusResult };
  get_aria2_engine_status: { args: undefined; result: EngineStatusItem };
  get_ytdlp_engine_status: { args: undefined; result: EngineStatusItem };
  get_ffmpeg_engine_status: { args: undefined; result: EngineStatusItem };
  get_deno_engine_status: { args: undefined; result: EngineStatusItem };
-  open_file: { args: { path: string }; result: void };
-  show_in_folder: { args: { path: string }; result: void };
   reveal_in_file_manager: { args: { path: string }; result: void };
   open_downloaded_file: { args: { path: string }; result: void };
   trash_download_assets: { args: { path: string; partialPaths: string[] }; result: void };
-  start_download: { args: StartDownloadArgs; result: void };
-  start_media_download: { args: StartMediaDownloadArgs; result: void };
   pause_download: { args: { id: string }; result: void };
   resume_download: { args: { id: string }; result: boolean };
   remove_download: { args: { id: string; filepath: string | null }; result: void };
@@ -88,13 +48,14 @@ type CommandMap = {
   delete_file: { args: { path: string }; result: void };
   toggle_tray_icon: { args: { show: boolean }; result: void };
   set_extension_pairing_token: { args: { token: string }; result: void };
+  get_extension_server_port: { args: undefined; result: number | null };
   hydrate_extension_pairing_token: { args: undefined; result: PairingTokenHydration };
   acknowledge_pairing_token_change: { args: undefined; result: void };
   set_extension_frontend_ready: { args: { ready: boolean }; result: void };
   get_system_proxy: { args: undefined; result: string | null };
   get_file_category: { args: { filename: string }; result: DownloadCategory };
   check_for_updates: { args: undefined; result: ReleaseCheckOutcome };
-  is_supported_media: { args: { url: string }; result: boolean };
+  get_supported_media_domains: { args: undefined; result: string[] };
   db_save_settings: { args: { data: string }; result: void };
   db_load_settings: { args: undefined; result: string | null };
   db_get_all_downloads: { args: undefined; result: string[] };
@@ -107,8 +68,8 @@ type CommandMap = {
   };
   export_logs: { args: { destPath: string }; result: string };
   get_pending_order: { args: undefined; result: string[] };
-  enqueue_download: { args: { item: any }; result: string };
-  enqueue_many: { args: { items: any[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };
+  enqueue_download: { args: { item: EnqueueItem }; result: string };
+  enqueue_many: { args: { items: EnqueueItem[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };
   move_in_queue: { args: { id: string; direction: 'up' | 'down' }; result: string[] };
   remove_from_queue: { args: { id: string }; result: boolean };
 };
@@ -135,6 +96,7 @@ type EventMap = {
   'download-failed': string;
   'extension-add-download': ExtensionDownload;
   'deep-link-add-download': string;
+  'tray-action': 'pause-all' | 'resume-all';
 };
 
 export function listenEvent<K extends keyof EventMap>(

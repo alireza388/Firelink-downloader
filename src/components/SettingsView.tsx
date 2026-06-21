@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { invokeCommand as invoke } from '../ipc';
 
 import { useToast, ToastVariant } from '../contexts/ToastContext';
@@ -126,34 +127,27 @@ const CategoryFolderInput = ({
         type="text"
         value={value}
         onFocus={() => setLocalValue(displayPath)}
-        onChange={(e) => {
-          const val = e.target.value;
-          setLocalValue(val);
+        onChange={(e) => setLocalValue(e.target.value)}
+        onBlur={() => {
+          const val = localValue ?? displayPath;
           const basePrefix = base + '/';
-          
+
           if (!val.trim()) {
             settings.setCategoryDirectoryOverride(category, undefined);
             settings.setCategorySubfolder(category, '');
           } else if (val.startsWith(basePrefix)) {
             settings.setCategoryDirectoryOverride(category, undefined);
-            settings.setCategorySubfolder(category, val.substring(basePrefix.length));
-          } else {
-            settings.setCategoryDirectoryOverride(category, val);
-          }
-        }}
-        onBlur={() => {
-          setLocalValue(null);
-          // Normalize subfolder if not an override
-          const currentOverride = settings.categoryDirectoryOverrides[category];
-          if (!currentOverride) {
             settings.setCategorySubfolder(
               category,
               normalizeCategorySubfolder(
-                settings.categorySubfolders[category] || '',
+                val.substring(basePrefix.length),
                 DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS]
               )
             );
+          } else {
+            settings.setCategoryDirectoryOverride(category, val.trim());
           }
+          setLocalValue(null);
         }}
         className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay"
         aria-label={`${category} subfolder`}
@@ -189,6 +183,7 @@ const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
 const [isRecheckingEngines, setIsRecheckingEngines] = useState(false);
 const engineRunId = useRef(0);
 const [appVersion, setAppVersion] = useState('0.7.3');
+const [extensionServerPort, setExtensionServerPort] = useState<number | null>(null);
 
   // Local state for adding site login
   const [loginPattern, setLoginPattern] = useState('');
@@ -203,6 +198,27 @@ const [appVersion, setAppVersion] = useState('0.7.3');
 useEffect(() => {
 getVersion().then(setAppVersion).catch(() => undefined);
 }, []);
+
+useEffect(() => {
+  if (settings.activeView !== 'settings' || activeTab !== 'integrations') return;
+
+  let active = true;
+  const refresh = () => {
+    invoke('get_extension_server_port')
+      .then(port => {
+        if (active) setExtensionServerPort(port);
+      })
+      .catch(() => {
+        if (active) setExtensionServerPort(null);
+      });
+  };
+  refresh();
+  const timer = window.setInterval(refresh, 3000);
+  return () => {
+    active = false;
+    window.clearInterval(timer);
+  };
+}, [settings.activeView, activeTab]);
 
 const runEngineChecks = useCallback((force = false) => {
 const runId = ++engineRunId.current;
@@ -309,7 +325,24 @@ runEngineChecks(false);
       if (result.type === 'UpToDate') {
         showToast(`Firelink ${result.latest_version} is up to date`, 'success');
       } else if (result.type === 'UpdateAvailable') {
-        showToast(`Firelink ${result.update.version} is available`, 'info');
+        addToast({
+          variant: 'info',
+          isActionable: true,
+          message: (
+            <div className="flex items-center gap-3">
+              <span>Firelink {result.update.version} is available.</span>
+              <button
+                type="button"
+                className="app-button px-2 py-1"
+                onClick={() => {
+                  void openUrl(result.update.release_url);
+                }}
+              >
+                View release
+              </button>
+            </div>
+          )
+        });
       } else {
         showToast('The update check returned an unexpected response', 'warning');
       }
@@ -363,6 +396,8 @@ runEngineChecks(false);
           });
         } catch (e) {
           console.error("Failed to create directories on disk:", e);
+          showToast(`Base folder saved, but category folders could not be created: ${String(e)}`, 'warning');
+          return;
         }
         showToast("Base download folder updated", 'success');
       }
@@ -400,9 +435,13 @@ runEngineChecks(false);
     showToast("Added site credential", 'success');
   };
 
-  const copyToken = () => {
-    navigator.clipboard.writeText(settings.extensionPairingToken);
-    showToast("Token copied to clipboard!", 'success');
+  const copyToken = async () => {
+    try {
+      await navigator.clipboard.writeText(settings.extensionPairingToken);
+      showToast("Token copied to clipboard!", 'success');
+    } catch (error) {
+      showToast(`Could not copy token: ${String(error)}`, 'error');
+    }
   };
 
   const activeTabLabel = settingsTabs.find(tab => tab.type === activeTab)?.label ?? 'Downloads';
@@ -486,18 +525,15 @@ runEngineChecks(false);
                 <div className="mac-settings-row">
                   <div className="settings-row-label">
                     <span>Global speed limit:</span>
-                    <small>0 = unlimited speed</small>
+                    <small>{settings.globalSpeedLimit || 'Unlimited'}</small>
                   </div>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={settings.globalSpeedLimit}
-                      onChange={(e) => settings.setGlobalSpeedLimit(e.target.value)}
-                      placeholder="0"
-                      className="app-control w-24 text-center font-mono pr-9"
-                    />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-muted pointer-events-none">KiB/s</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => settings.setActiveView('speedLimiter')}
+                    className="app-button px-3 text-xs"
+                  >
+                    Configure…
+                  </button>
                 </div>
                 <div className="mac-settings-row">
                   <div className="settings-row-label">
@@ -759,7 +795,7 @@ runEngineChecks(false);
 
               <div className="mac-settings-group">
                 <label className="mac-settings-row cursor-default">
-                  <span className="text-[13px] text-text-primary">Ask where to save each file</span>
+                  <span className="text-[13px] text-text-primary">Ask where to save when adding downloads</span>
                   <input
                     type="checkbox"
                     checked={settings.askWhereToSaveEachFile}
@@ -826,11 +862,11 @@ runEngineChecks(false);
                         onClick={async () => {
                           try {
                             await invoke('delete_keychain_password', { id: login.id });
-                          } catch (e) {
-                            console.warn("Could not delete password from keychain:", e);
+                            settings.removeSiteLogin(login.id);
+                            showToast("Deleted credential", 'success');
+                          } catch (error) {
+                            showToast(`Could not delete credential: ${String(error)}`, 'error');
                           }
-                          settings.removeSiteLogin(login.id);
-                          showToast("Deleted credential", 'success');
                         }}
                         className="p-1.5 hover:bg-item-hover rounded-md text-text-muted hover:text-red-500"
                         title="Delete credential"
@@ -1026,15 +1062,19 @@ className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-bg-modal hover:bg
                   </div>
                   <div className="space-y-2">
                     <button
-                      onClick={copyToken}
+                      onClick={() => void copyToken()}
                       className="w-full bg-accent hover:bg-accent text-white font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 shadow transition-colors"
                     >
                       <Copy size={11} /> Copy Token
                     </button>
                     <button
-                      onClick={() => {
-                        settings.regeneratePairingToken();
-                        showToast("Pairing token regenerated", 'success');
+                      onClick={async () => {
+                        try {
+                          await settings.regeneratePairingToken();
+                          showToast("Pairing token regenerated", 'success');
+                        } catch (error) {
+                          showToast(`Could not regenerate pairing token: ${String(error)}`, 'error');
+                        }
                       }}
                       className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 transition-colors"
                     >
@@ -1085,8 +1125,10 @@ className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-bg-modal hover:bg
               {/* Status Info */}
               <div className="border border-border-modal/70 rounded-lg p-3 bg-item-hover/10 flex justify-between items-center text-[12px]">
                 <span className="text-text-secondary font-medium">Extension Server Status:</span>
-                <span className="text-green-500 font-semibold flex items-center gap-1">
-                  ● Listening on 127.0.0.1:6412-6422 (Active)
+                <span className={`${extensionServerPort ? 'text-green-500' : 'text-orange-400'} font-semibold flex items-center gap-1`}>
+                  {extensionServerPort
+                    ? `● Listening on 127.0.0.1:${extensionServerPort}`
+                    : '● Server unavailable'}
                 </span>
               </div>
             </div>

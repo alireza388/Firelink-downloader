@@ -59,8 +59,8 @@ describe('useDownloadStore', () => {
   it('Start Queue dispatches exactly once for mixed dispatched/undispatched items', async () => {
     useDownloadStore.setState({
       downloads: [
-        { id: '1', url: 'http://test1', fileName: 'f1', status: 'queued', category: 'General', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
-        { id: '2', url: 'http://test2', fileName: 'f2', status: 'queued', category: 'General', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+        { id: '1', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
+        { id: '2', url: 'http://test2', fileName: 'f2', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
       ] as any[],
       backendRegisteredIds: new Set(['1']), // 1 is already registered, so it skips dispatch
     });
@@ -82,7 +82,7 @@ describe('useDownloadStore', () => {
   it('resumeDownload unregisters ID and re-dispatches if un-resumable', async () => {
     useDownloadStore.setState({
       downloads: [
-        { id: '1', url: 'http://test1', fileName: 'f1', status: 'paused', category: 'General', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
+        { id: '1', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'paused', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
       ] as any[],
       backendRegisteredIds: new Set(['1']),
     });
@@ -102,7 +102,7 @@ describe('useDownloadStore', () => {
     expect(useDownloadStore.getState().backendRegisteredIds.has('1')).toBe(true); // Re-registered by dispatchItem
   });
 
-  it('adds to the list without assigning a queue or dispatching', async () => {
+  it('adds to the list in the main queue without dispatching', async () => {
     await useDownloadStore.getState().addDownload({
       id: 'list-1',
       url: 'https://example.com/list.bin',
@@ -113,7 +113,7 @@ describe('useDownloadStore', () => {
 
     const item = useDownloadStore.getState().downloads[0];
     expect(item.status).toBe('ready');
-    expect(item.queueId).toBeUndefined();
+    expect(item.queueId).toBe('00000000-0000-0000-0000-000000000001');
     expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
   });
 
@@ -133,7 +133,7 @@ describe('useDownloadStore', () => {
     expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
   });
 
-  it('starts immediately without assigning a user queue', async () => {
+  it('starts immediately in the main queue', async () => {
     vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
       if (cmd === 'get_pending_order') return ['start-1'];
       return undefined;
@@ -148,7 +148,7 @@ describe('useDownloadStore', () => {
     }, { type: 'start-now' });
 
     const item = useDownloadStore.getState().downloads[0];
-    expect(item.queueId).toBeUndefined();
+    expect(item.queueId).toBe('00000000-0000-0000-0000-000000000001');
     expect(item.hasBeenDispatched).toBe(true);
     expect(ipc.invokeCommand).toHaveBeenCalledWith(
       'enqueue_download',
@@ -156,6 +156,83 @@ describe('useDownloadStore', () => {
         item: expect.objectContaining({ id: 'start-1' })
       })
     );
+  });
+
+  it('starts and pauses all items regardless of legacy missing queue ids', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'ready', url: 'http://ready', fileName: 'ready', status: 'ready', category: 'Other', dateAdded: '' },
+        { id: 'active', url: 'http://active', fileName: 'active', status: 'processing', category: 'Other', dateAdded: '' },
+      ] as any[],
+    });
+
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['ready'];
+      return undefined;
+    });
+
+    expect(await useDownloadStore.getState().startAll()).toBe(1);
+    expect(await useDownloadStore.getState().pauseAll()).toBe(2);
+
+    const calls = vi.mocked(ipc.invokeCommand).mock.calls;
+    expect(calls.some(call => call[0] === 'enqueue_download')).toBe(true);
+    expect(calls.some(call => call[0] === 'pause_download' && (call[1] as any).id === 'active')).toBe(true);
+  });
+
+  it('migrates legacy downloads without queue ids into the main queue', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'legacy',
+          url: 'https://example.com/legacy.bin',
+          fileName: 'legacy.bin',
+          status: 'ready',
+          category: 'Other',
+          dateAdded: ''
+        })];
+      }
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+
+    expect(useDownloadStore.getState().downloads[0].queueId)
+      .toBe('00000000-0000-0000-0000-000000000001');
+  });
+
+  it('pauses queued, downloading, processing, and retrying queue items', async () => {
+    useDownloadStore.setState({
+      downloads: ['queued', 'downloading', 'processing', 'retrying'].map((status, index) => ({
+        id: `${index}`,
+        url: `https://example.com/${index}`,
+        fileName: `${index}.bin`,
+        status,
+        category: 'Other',
+        dateAdded: '',
+        queueId: 'queue-a'
+      })) as any[]
+    });
+    vi.mocked(ipc.invokeCommand).mockResolvedValue(undefined as never);
+
+    expect(await useDownloadStore.getState().pauseQueue('queue-a')).toBe(4);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(call => call[0] === 'pause_download')
+    ).toHaveLength(4);
+  });
+
+  it('assigns selected unfinished downloads to a queue without moving completed items', () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'ready', status: 'ready', queueId: 'old' },
+        { id: 'done', status: 'completed', queueId: 'old' }
+      ] as any[]
+    });
+
+    useDownloadStore.getState().assignToQueue(['ready', 'done'], 'new');
+
+    expect(useDownloadStore.getState().downloads.find(item => item.id === 'ready')?.queueId).toBe('new');
+    expect(useDownloadStore.getState().downloads.find(item => item.id === 'done')?.queueId).toBe('old');
   });
 
   it('preserves extension request headers and cookies for the Add modal', () => {

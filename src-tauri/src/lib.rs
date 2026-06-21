@@ -1225,6 +1225,7 @@ pub struct AppState {
     pub download_coordinator: download::DownloadCoordinator,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
+    pub extension_server_port: extension_server::SharedServerPort,
     pub extension_server_shutdown: tokio::sync::watch::Sender<bool>,
     pub aria2_port: u16,
     pub aria2_secret: String,
@@ -3007,53 +3008,74 @@ async fn export_logs(app_handle: tauri::AppHandle, dest_path: String) -> Result<
 
 #[tauri::command]
 fn toggle_tray_icon(app_handle: tauri::AppHandle, show: bool) -> Result<(), String> {
-    use tauri::tray::TrayIconBuilder;
-    use tauri::menu::{Menu, MenuItem};
-
     if show {
-        if app_handle.tray_by_id("main").is_none() {
-            let quit_i = MenuItem::with_id(&app_handle, "quit", "Quit", true, None::<&str>).map_err(|e| e.to_string())?;
-            let show_i = MenuItem::with_id(&app_handle, "show", "Show Firelink", true, None::<&str>).map_err(|e| e.to_string())?;
-            let menu = Menu::with_items(&app_handle, &[&show_i, &quit_i]).map_err(|e| e.to_string())?;
-
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png"))
-                .map_err(|e| e.to_string())?;
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    "show" => {
-                        restore_main_window(app);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        restore_main_window(tray.app_handle());
-                    }
-                })
-                .build(&app_handle)
-                .map_err(|e| e.to_string())?;
-        }
+        build_main_tray(&app_handle)
     } else {
-        if let Some(_tray) = app_handle.tray_by_id("main") {
+        if app_handle.tray_by_id("main").is_some() {
             let _ = app_handle.remove_tray_by_id("main");
         }
+        Ok(())
     }
+}
+
+fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    if app_handle.tray_by_id("main").is_some() {
+        return Ok(());
+    }
+
+    let show_i = MenuItem::with_id(app_handle, "show", "Show Firelink", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let pause_all_i = MenuItem::with_id(app_handle, "pause_all", "Pause All", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let resume_all_i = MenuItem::with_id(app_handle, "resume_all", "Resume All", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let quit_i = MenuItem::with_id(app_handle, "quit", "Quit", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(
+        app_handle,
+        &[&show_i, &pause_all_i, &resume_all_i, &quit_i],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png"))
+        .map_err(|e| e.to_string())?;
+    TrayIconBuilder::with_id("main")
+        .icon(tray_icon)
+        .icon_as_template(true)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => restore_main_window(app),
+            "pause_all" => {
+                use tauri::Emitter;
+                let _ = app.emit("tray-action", "pause-all");
+            }
+            "resume_all" => {
+                use tauri::Emitter;
+                let _ = app.emit("tray-action", "resume-all");
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                restore_main_window(tray.app_handle());
+            }
+        })
+        .build(app_handle)
+        .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -3072,6 +3094,15 @@ fn set_extension_pairing_token(
         .map_err(|_| "Extension pairing token lock is unavailable".to_string())?;
     *pairing_token = token;
     Ok(())
+}
+
+#[tauri::command]
+fn get_extension_server_port(state: tauri::State<'_, AppState>) -> Option<u16> {
+    state
+        .extension_server_port
+        .read()
+        .ok()
+        .and_then(|port| *port)
 }
 
 #[tauri::command]
@@ -3429,6 +3460,8 @@ pub fn run() {
     let server_pairing_token = extension_pairing_token.clone();
     let extension_frontend_ready = Arc::new(AtomicBool::new(false));
     let server_frontend_ready = extension_frontend_ready.clone();
+    let extension_server_port = Arc::new(RwLock::new(None));
+    let server_extension_port = extension_server_port.clone();
     let (extension_server_shutdown_tx, extension_server_shutdown_rx) = tokio::sync::watch::channel(false);
 
     let aria2_port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -3447,48 +3480,8 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard::new())
         .setup(move |app| {
-            use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent};
-            use tauri::menu::{Menu, MenuItem};
-
-            let show_i = MenuItem::with_id(app, "show", "Show Firelink", true, None::<&str>).unwrap();
-            let pause_all_i = MenuItem::with_id(app, "pause_all", "Pause All", true, None::<&str>).unwrap();
-            let resume_all_i = MenuItem::with_id(app, "resume_all", "Resume All", true, None::<&str>).unwrap();
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>).unwrap();
-            let menu = Menu::with_items(app, &[&show_i, &pause_all_i, &resume_all_i, &quit_i]).unwrap();
-
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png")).unwrap();
-            let _tray = TrayIconBuilder::with_id("main")
-                .icon(tray_icon)
-                .icon_as_template(true)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => { restore_main_window(app); }
-                    "pause_all" => { 
-                        use tauri::Emitter;
-                        let _ = app.emit("tray-action", "pause-all");
-                    }
-                    "resume_all" => { 
-                        use tauri::Emitter;
-                        let _ = app.emit("tray-action", "resume-all");
-                    }
-                    "quit" => { app.exit(0); }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        restore_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)
-                .unwrap();
+            build_main_tray(app.handle())
+                .map_err(|error| format!("failed to create tray menu: {error}"))?;
 
             let database = crate::db::init(app.handle())
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
@@ -3513,6 +3506,7 @@ pub fn run() {
                 download_coordinator: download::DownloadCoordinator::spawn(app.handle().clone()),
                 extension_pairing_token,
                 extension_frontend_ready,
+                extension_server_port,
                 extension_server_shutdown: extension_server_shutdown_tx.clone(),
                 aria2_port,
                 aria2_secret: aria2_secret.clone(),
@@ -3768,6 +3762,7 @@ pub fn run() {
                     ext_app_handle,
                     server_pairing_token.clone(),
                     server_frontend_ready.clone(),
+                    server_extension_port.clone(),
                     extension_server_shutdown_rx,
                 ).await {
                     eprintln!("Browser extension server unavailable: {error}");
@@ -3815,7 +3810,7 @@ pub fn run() {
             set_keychain_password, get_keychain_password, delete_keychain_password,
             hydrate_extension_pairing_token, acknowledge_pairing_token_change,
             check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
-            set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
+            get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
             enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,

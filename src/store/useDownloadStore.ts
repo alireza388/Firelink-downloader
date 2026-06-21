@@ -1,20 +1,19 @@
 import { create } from 'zustand';
 import { info } from '@tauri-apps/plugin-log';
-import { homeDir } from '@tauri-apps/api/path';
 import { invokeCommand as invoke } from '../ipc';
 
 import type { DownloadItem } from '../bindings/DownloadItem';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
-import type { MediaMetadata } from '../bindings/MediaMetadata';
 import { useSettingsStore } from './useSettingsStore';
 import { isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
-import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 import {
+  expandTilde,
   resolveCategoryDestination,
   resolveDownloadFilePath
 } from '../utils/downloadLocations';
+import { canPauseDownload, canStartDownload } from '../utils/downloadActions';
 
 export type { DownloadCategory } from '../utils/downloads';
 
@@ -31,6 +30,8 @@ export async function dispatchItem(id: string): Promise<boolean> {
       if (state.backendRegisteredIds.has(id)) return true;
 
       const settings = useSettingsStore.getState();
+      const destination = item.destination ||
+        await resolveCategoryDestination(settings, item.category);
       const login = getSiteLogin(item.url, settings);
       let keychainPassword = null;
       if (login) {
@@ -42,7 +43,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
       const enqueueItem = {
         id: item.id,
         url: item.url,
-        destination: item.destination,
+        destination,
         filename: item.fileName,
         connections: item.connections || settings.perServerConnections || null,
         speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
@@ -126,13 +127,7 @@ const syncSystemIntegrations = () => {
 };
 
 const resolveDownloadPath = async (destination: string, fileName: string) => {
-  let resolvedDestination = destination;
-  if (destination.startsWith('~/')) {
-    resolvedDestination = await resolveDownloadFilePath(await homeDir(), destination.slice(2));
-  } else if (destination === '~') {
-    resolvedDestination = await homeDir();
-  }
-  return resolveDownloadFilePath(resolvedDestination, fileName);
+  return resolveDownloadFilePath(await expandTilde(destination), fileName);
 };
 
 const effectiveDestinationForItem = async (
@@ -165,8 +160,6 @@ interface DownloadState {
   backendRegisteredIds: Set<string>;
   registerBackendIds: (ids: string[]) => void;
   unregisterBackendIds: (ids: string[]) => void;
-  activeDownloadId: string | null;
-  setActiveDownloadId: (id: string | null) => void;
   applyProperties: (id: string, updates: Partial<DownloadItem>) => Promise<void>;
   moveInQueue: (id: string, direction: 'up' | 'down') => Promise<void>;
   removeFromQueue: (id: string) => Promise<void>;
@@ -197,17 +190,14 @@ interface DownloadState {
   resumeDownload: (id: string) => Promise<void>;
   startQueue: (queueId: string) => Promise<number>;
   pauseQueue: (queueId: string) => Promise<number>;
+  startAll: () => Promise<number>;
+  pauseAll: () => Promise<number>;
+  assignToQueue: (ids: string[], queueId: string) => void;
   addQueue: (name: string) => void;
   renameQueue: (id: string, name: string) => void;
   removeQueue: (id: string) => void;
   initDB: () => Promise<void>;
   
-  isParsing: boolean;
-  activeMetadata: MediaMetadata | null;
-  activeMetadataUrl: string | null;
-  parsingError: string | null;
-  fetchMetadataAction: (url: string) => Promise<void>;
-  clearMetadata: () => void;
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
@@ -215,8 +205,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
   pendingOrder: [],
   setPendingOrder: (order) => set({ pendingOrder: order }),
-  activeDownloadId: null,
-  setActiveDownloadId: (id) => set({ activeDownloadId: id }),
   moveInQueue: async (id, direction) => {
     try {
       const order = await invoke('move_in_queue', { id, direction });
@@ -253,10 +241,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddHeaders: '',
   pendingAddCookies: '',
   selectedPropertiesDownloadId: null,
-  isParsing: false,
-  activeMetadata: null,
-  activeMetadataUrl: null,
-  parsingError: null,
   deleteModalState: { isOpen: false },
   openDeleteModal: (downloadIds) => set({ 
     deleteModalState: { 
@@ -298,24 +282,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     );
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),
-  clearMetadata: () => set({ isParsing: false, activeMetadata: null, activeMetadataUrl: null, parsingError: null }),
-  fetchMetadataAction: async (url) => {
-    set({ isParsing: true, parsingError: null, activeMetadata: null, activeMetadataUrl: url });
-    try {
-      const settings = useSettingsStore.getState();
-      const metadata = await fetchMediaMetadataDeduped({
-        url,
-        cookieBrowser: settings.mediaCookieSource === 'none' ? null : settings.mediaCookieSource,
-        username: null,
-        password: null
-      });
-      set({ isParsing: false, activeMetadata: metadata });
-      info(`Media metadata parsed for ${url}: found ${metadata.formats.length} formats`);
-    } catch (e) {
-      set({ isParsing: false, parsingError: String(e) });
-      info(`Media metadata parsing failed for ${url}: ${e}`);
-    }
-  },
   addDownload: async (item, action) => {
     const settings = useSettingsStore.getState();
     const destPath = await effectiveDestinationForItem(item, settings);
@@ -323,7 +289,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       ...item,
       destination: destPath,
       status: action.type === 'add-to-queue' ? 'queued' : 'ready',
-      queueId: action.type === 'add-to-queue' ? action.queueId : undefined,
+      queueId: action.type === 'add-to-queue' ? action.queueId : MAIN_QUEUE_ID,
       hasBeenDispatched: false
     };
     set((state) => ({ downloads: [...state.downloads, ownedItem] }));
@@ -427,7 +393,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     set((state) => ({
       downloads: state.downloads.filter(d => d.id !== id),
-      pendingOrder: state.pendingOrder.filter(x => x !== id)
+      pendingOrder: state.pendingOrder.filter(x => x !== id),
+      backendRegisteredIds: new Set(
+        Array.from(state.backendRegisteredIds).filter(registeredId => registeredId !== id)
+      )
     }));
     info(`Download ${id} removed`);
     syncSystemIntegrations();
@@ -483,7 +452,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       destination: destPath,
       isMedia: targetItem.isMedia,
       mediaFormatSelector,
-      queueId: targetItem.queueId
+      queueId: targetItem.queueId || MAIN_QUEUE_ID,
+      hasBeenDispatched: false
     };
 
     set((state) => ({
@@ -533,13 +503,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   startQueue: async (queueId) => {
     const runnable = get().downloads
-      .filter(item => item.queueId === queueId && (item.status === 'queued' || item.status === 'paused' || item.status === 'failed'));
+      .filter(item => item.queueId === queueId && (item.status === 'queued' || canStartDownload(item.status)));
 
     if (runnable.length === 0) return 0;
 
     let dispatchedCount = 0;
     const promises = runnable.map(async (item) => {
-      if (item.status === 'failed' || !item.hasBeenDispatched) {
+      if (item.status === 'ready' || item.status === 'failed' || !item.hasBeenDispatched) {
         if (await dispatchItem(item.id)) {
           get().updateDownload(item.id, { hasBeenDispatched: true, status: 'queued' });
           dispatchedCount++;
@@ -561,7 +531,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   pauseQueue: async (queueId) => {
     const activeIds = get().downloads
-      .filter(item => item.queueId === queueId && item.status === 'downloading')
+      .filter(item => item.queueId === queueId && canPauseDownload(item.status))
       .map(item => item.id);
 
     if (activeIds.length === 0) return 0;
@@ -577,6 +547,43 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     info(`Queue ${queueId} paused, ${pausedCount} items paused`);
     syncSystemIntegrations();
     return pausedCount;
+  },
+  startAll: async () => {
+    set(state => ({
+      downloads: state.downloads.map(item =>
+        item.queueId ? item : { ...item, queueId: MAIN_QUEUE_ID }
+      )
+    }));
+    const queueIds = new Set(
+      get().downloads
+        .filter(item => item.status === 'queued' || canStartDownload(item.status))
+        .map(item => item.queueId || MAIN_QUEUE_ID)
+    );
+    const results = await Promise.all(Array.from(queueIds, queueId => get().startQueue(queueId)));
+    return results.reduce((total, count) => total + count, 0);
+  },
+  pauseAll: async () => {
+    const activeIds = get().downloads
+      .filter(item => canPauseDownload(item.status))
+      .map(item => item.id);
+    if (activeIds.length === 0) return 0;
+
+    const results = await Promise.allSettled(
+      activeIds.map(id => invoke('pause_download', { id }))
+    );
+    const pausedCount = results.filter(result => result.status === 'fulfilled').length;
+    syncSystemIntegrations();
+    return pausedCount;
+  },
+  assignToQueue: (ids, queueId) => {
+    const selectedIds = new Set(ids);
+    set(state => ({
+      downloads: state.downloads.map(item =>
+        selectedIds.has(item.id) && item.status !== 'completed'
+          ? { ...item, queueId }
+          : item
+      )
+    }));
   },
   addQueue: (name) => {
     const id = crypto.randomUUID();
@@ -615,7 +622,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       
       set(state => ({
         queues: queues.length > 0 ? queues : state.queues,
-        downloads: downloads.length > 0 ? downloads : state.downloads
+        downloads: downloads.length > 0
+          ? downloads.map(download => ({
+              ...download,
+              queueId: download.queueId || MAIN_QUEUE_ID
+            }))
+          : state.downloads
       }));
       
       // Reset interrupted active downloads to queued.
@@ -666,9 +678,24 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               is_media: item.isMedia || false
             });
           }
-          await invoke('enqueue_many', { items: itemsToEnqueue });
+          const results = await invoke('enqueue_many', { items: itemsToEnqueue });
+          const registeredIds = results.filter(result => result.success).map(result => result.id);
+          const failedIds = new Set(results.filter(result => !result.success).map(result => result.id));
           const order = await invoke('get_pending_order');
-          set({ pendingOrder: order });
+          set(state => ({
+            pendingOrder: order,
+            backendRegisteredIds: new Set([
+              ...state.backendRegisteredIds,
+              ...registeredIds
+            ]),
+            downloads: state.downloads.map(download =>
+              failedIds.has(download.id)
+                ? { ...download, status: 'failed' as const }
+                : registeredIds.includes(download.id)
+                  ? { ...download, hasBeenDispatched: true }
+                  : download
+            )
+          }));
         } catch (e) {
           console.error("Failed to auto-resume active downloads:", e);
         }

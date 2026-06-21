@@ -27,6 +27,7 @@ const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
 pub type SharedFrontendReady = Arc<AtomicBool>;
+pub type SharedServerPort = Arc<RwLock<Option<u16>>>;
 type ReplayCache = Arc<Mutex<HashMap<String, u64>>>;
 
 #[derive(Clone)]
@@ -67,6 +68,7 @@ pub async fn start_server(
     app_handle: AppHandle,
     pairing_token: SharedExtensionToken,
     frontend_ready: SharedFrontendReady,
+    server_port: SharedServerPort,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
     let state = ServerState {
@@ -91,10 +93,13 @@ pub async fn start_server(
         .with_state(state);
 
     let (port, listener) = bind_extension_listener().await?;
+    if let Ok(mut current_port) = server_port.write() {
+        *current_port = Some(port);
+    }
 
     log::info!("Browser extension server bound to 127.0.0.1:{port}");
 
-    axum::serve(listener, app)
+    let server_result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             if *shutdown_rx.borrow() {
                 return;
@@ -102,9 +107,13 @@ pub async fn start_server(
             let _ = shutdown_rx.changed().await;
         })
         .await
-        .map_err(|e| format!("Server error: {}", e))?;
+        .map_err(|e| format!("Server error: {}", e));
 
-    Ok(())
+    if let Ok(mut current_port) = server_port.write() {
+        *current_port = None;
+    }
+
+    server_result
 }
 
 async fn bind_extension_listener() -> Result<(u16, tokio::net::TcpListener), String> {

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
+use ts_rs::TS;
 use serde_json;
 use log;
 
@@ -997,7 +998,8 @@ impl SidecarSpawner for ProductionSpawner {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
 pub struct EnqueueItem {
     pub id: String,
     pub url: String,

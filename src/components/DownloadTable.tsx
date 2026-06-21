@@ -10,13 +10,22 @@ import {
   resolveCategoryDestination,
   resolveDownloadFilePath
 } from '../utils/downloadLocations';
+import {
+  canPauseDownload,
+  canRedownload,
+  canStartDownload,
+  startActionLabel
+} from '../utils/downloadActions';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
 }
 
+const DEFAULT_COLUMN_WIDTHS = [340, 100, 220, 100, 80, 170];
+const COLUMN_WIDTHS_STORAGE_KEY = 'firelink-download-column-widths';
+
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, queues, updateDownload, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
+  const { downloads, queues, assignToQueue, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
   const { isSidebarVisible, toggleSidebar } = useSettingsStore();
   const { addToast } = useToast();
 
@@ -25,7 +34,18 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [columnWidths, setColumnWidths] = useState([340, 100, 220, 100, 80, 170]);
+  const [columnWidths, setColumnWidths] = useState(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY) || 'null');
+      return Array.isArray(stored) &&
+        stored.length === DEFAULT_COLUMN_WIDTHS.length &&
+        stored.every(value => typeof value === 'number' && Number.isFinite(value))
+        ? stored
+        : DEFAULT_COLUMN_WIDTHS;
+    } catch {
+      return DEFAULT_COLUMN_WIDTHS;
+    }
+  });
   const columnMinimums = [0, 58, 92, 58, 48, 112];
   const tableGridTemplate = columnWidths.map((width, index) => `minmax(${columnMinimums[index]}px, ${width}fr)`).join(' ');
 
@@ -53,9 +73,20 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   useEffect(() => {
     const handleCloseMenu = () => setContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null);
+    };
     window.addEventListener('click', handleCloseMenu);
-    return () => window.removeEventListener('click', handleCloseMenu);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('keydown', handleEscape);
+    };
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
 
 
   const showInteractionError = (message: string, error: unknown) => {
@@ -97,13 +128,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
   const revealDownloadFile = async (item: DownloadItem) => {
-    let pathToReveal: string | null = null;
-    if (item.status === 'completed') {
-      pathToReveal = await getDownloadPath(item);
-    } else {
-      const settings = useSettingsStore.getState();
-      pathToReveal = item.destination || await resolveCategoryDestination(settings, item.category);
-    }
+    const pathToReveal = await getDownloadPath(item);
 
     if (!pathToReveal) {
       openProperties(item.id);
@@ -198,6 +223,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       await invoke('pause_download', { id });
     } catch (e) {
       console.error("Failed to pause:", e);
+      showInteractionError('Could not pause download', e);
     }
   };
 
@@ -249,7 +275,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             disabled={filteredDownloads.length === 0}
             onClick={() => {
               filteredDownloads
-                .filter(d => d.status === 'ready' || d.status === 'paused')
+                .filter(d => canStartDownload(d.status))
                 .forEach(d => handleResume(d));
             }}
             title="Resume All"
@@ -261,7 +287,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             className="main-control-button" 
             disabled={filteredDownloads.length === 0}
             onClick={() => {
-              filteredDownloads.filter(d => d.status === 'downloading').forEach(d => handlePause(d.id));
+              filteredDownloads.filter(d => canPauseDownload(d.status)).forEach(d => handlePause(d.id));
             }}
             title="Pause All"
           >
@@ -348,6 +374,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       {/* Floating Context Menu */}
       {contextMenu && contextItem && (
         <div
+          role="menu"
           className="app-modal fixed z-50 min-w-[180px] overflow-hidden py-1.5 text-[12px] font-medium text-text-primary"
           style={{
              top: Math.min(contextMenu.y, window.innerHeight - 300),
@@ -363,7 +390,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   setContextMenu(null);
                   Array.from(selectedIds).forEach(id => {
                     const item = downloads.find(d => d.id === id);
-                    if (item && (item.status === 'ready' || item.status === 'paused' || item.status === 'failed' || item.status === 'retrying')) {
+                    if (item && canStartDownload(item.status)) {
                       handleResume(item);
                     }
                   });
@@ -384,12 +411,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   {queues.map(q => (
                     <button key={q.id} onClick={() => {
                       setContextMenu(null);
-                      Array.from(selectedIds).forEach(id => {
-                         const item = downloads.find(d => d.id === id);
-                         if (item && item.status !== 'completed') {
-                           updateDownload(id, { queueId: q.id });
-                         }
-                      });
+                      assignToQueue(Array.from(selectedIds), q.id);
                     }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
                       {q.name}
                     </button>
@@ -454,7 +476,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
               <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
 
-              {(contextItem.status === 'downloading' || contextItem.status === 'queued' || contextItem.status === 'retrying') && (
+              {canPauseDownload(contextItem.status) && (
                 <button
                   onClick={() => {
                     setContextMenu(null);
@@ -466,7 +488,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 </button>
               )}
 
-              {(contextItem.status === 'ready' || contextItem.status === 'paused' || contextItem.status === 'failed' || contextItem.status === 'retrying') && (
+              {canStartDownload(contextItem.status) && (
                 <button
                   onClick={() => {
                     setContextMenu(null);
@@ -474,11 +496,11 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   }}
                   className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
                 >
-                  {contextItem.status === 'ready' ? 'Start' : 'Resume'}
+                  {startActionLabel(contextItem.status)}
                 </button>
               )}
 
-              {['completed', 'failed', 'paused'].includes(contextItem.status) && (
+              {canRedownload(contextItem.status) && (
                 <button
                   onClick={async () => {
                     setContextMenu(null);
@@ -504,7 +526,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                     {queues.map(q => (
                       <button key={q.id} onClick={() => {
                         setContextMenu(null);
-                        updateDownload(contextItem.id, { queueId: q.id });
+                        assignToQueue([contextItem.id], q.id);
                       }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
                         {q.name}
                       </button>

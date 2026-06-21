@@ -32,8 +32,15 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
   useEffect(() => {
     const handleCloseMenu = () => setContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null);
+    };
     window.addEventListener('click', handleCloseMenu);
-    return () => window.removeEventListener('click', handleCloseMenu);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('keydown', handleEscape);
+    };
   }, []);
 
   useEffect(() => {
@@ -247,6 +254,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 
       {contextMenu && (
         <div
+          role="menu"
           className="fixed z-50 w-48 py-1 rounded-xl shadow-lg border border-border-modal bg-bg-context-menu backdrop-blur-xl animate-fade-in text-[13px] text-text-primary overflow-hidden"
           style={{ 
             top: Math.min(contextMenu.y, window.innerHeight - 200), 

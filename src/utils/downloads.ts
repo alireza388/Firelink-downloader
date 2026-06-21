@@ -3,7 +3,7 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { DownloadItem } from '../bindings/DownloadItem';
 export type { DownloadCategory } from '../bindings/DownloadCategory';
 
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand as invoke } from '../ipc';
 
 let MEDIA_DOMAINS = [
   'youtube.com',
@@ -47,7 +47,7 @@ export const normalizeSpeedLimitForBackend = (value?: string | null): string | n
 
 export const initMediaDomains = async () => {
   try {
-    const domains = await invoke<string[]>('get_supported_media_domains');
+    const domains = await invoke('get_supported_media_domains');
     if (domains && domains.length > 0) {
       MEDIA_DOMAINS = domains;
     }

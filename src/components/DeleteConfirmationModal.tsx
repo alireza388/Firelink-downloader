@@ -13,33 +13,36 @@ export const DeleteConfirmationModal: React.FC = () => {
     closeDeleteModal();
   };
 
-  const handleRemoveFromList = async () => {
-    if (deleteModalState.downloadIds && deleteModalState.downloadIds.length > 0) {
-      setIsRemoving(true);
+  const removeMany = async (deleteFile: boolean) => {
+    const ids = deleteModalState.downloadIds ?? [];
+    if (ids.length === 0) {
+      closeDeleteModal();
+      return;
+    }
+
+    setIsRemoving(true);
+    setErrorMessage('');
+    let succeeded = 0;
+    const failures: string[] = [];
+    for (const id of ids) {
       try {
-        await Promise.all(deleteModalState.downloadIds.map(id => removeDownload(id, false)));
+        await removeDownload(id, deleteFile);
+        succeeded += 1;
       } catch (error) {
-        setErrorMessage(`Remove failed: ${String(error)}`);
-        setIsRemoving(false);
-        return;
+        failures.push(String(error));
       }
+    }
+
+    if (failures.length > 0) {
+      setErrorMessage(`${succeeded} removed, ${failures.length} failed: ${failures[0]}`);
+      setIsRemoving(false);
+      return;
     }
     closeDeleteModal();
   };
 
-  const handleDeleteFile = async () => {
-    if (deleteModalState.downloadIds && deleteModalState.downloadIds.length > 0) {
-      setIsRemoving(true);
-      try {
-        await Promise.all(deleteModalState.downloadIds.map(id => removeDownload(id, true)));
-      } catch (error) {
-        setErrorMessage(`Delete failed: ${String(error)}`);
-        setIsRemoving(false);
-        return;
-      }
-    }
-    closeDeleteModal();
-  };
+  const handleRemoveFromList = () => removeMany(false);
+  const handleDeleteFile = () => removeMany(true);
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">

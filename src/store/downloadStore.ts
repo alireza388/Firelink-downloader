@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { DownloadProgressEvent } from '../bindings/DownloadProgressEvent';
-import type { DownloadStateEvent } from '../bindings/DownloadStateEvent';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
+import { listenEvent as listen } from '../ipc';
 
 interface DownloadProgressState {
   progressMap: Record<string, DownloadProgressEvent>;
@@ -28,7 +28,7 @@ let unlistenTray: UnlistenFn | null = null;
 
 export async function initDownloadListener() {
   if (unlistenProgress) return;
-  unlistenProgress = await listen<DownloadProgressEvent>('download-progress', (event) => {
+  unlistenProgress = await listen('download-progress', (event) => {
     const payload = event.payload;
     useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
 
@@ -46,7 +46,7 @@ export async function initDownloadListener() {
   });
 
   if (!unlistenState) {
-    unlistenState = await listen<DownloadStateEvent>('download-state', (event) => {
+    unlistenState = await listen('download-state', (event) => {
       const payload = event.payload;
       const mainStore = useDownloadStore.getState();
       const current = mainStore.downloads.find(d => d.id === payload.id);
@@ -77,18 +77,12 @@ export async function initDownloadListener() {
   }
 
   if (!unlistenTray) {
-    unlistenTray = await listen<string>('tray-action', (event) => {
+    unlistenTray = await listen('tray-action', (event) => {
       const mainStore = useDownloadStore.getState();
       if (event.payload === 'pause-all') {
-        const uniqueQueues = Array.from(new Set(
-          mainStore.downloads.map(d => d.queueId).filter((id): id is string => Boolean(id))
-        ));
-        uniqueQueues.forEach(qid => mainStore.pauseQueue(qid));
+        void mainStore.pauseAll();
       } else if (event.payload === 'resume-all') {
-        const uniqueQueues = Array.from(new Set(
-          mainStore.downloads.map(d => d.queueId).filter((id): id is string => Boolean(id))
-        ));
-        uniqueQueues.forEach(qid => mainStore.startQueue(qid));
+        void mainStore.startAll();
       }
     });
   }

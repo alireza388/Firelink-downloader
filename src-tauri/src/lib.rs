@@ -2440,13 +2440,20 @@ async fn remove_download(
         log::info!("aria2 remove [{}]: gid {} stopped and forgotten", id, gid);
     } else {
         drop(retry_add_guard);
-        if let Ok(download_id) = Uuid::parse_str(&id) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+            state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
+        } else if let Ok(download_id) = Uuid::parse_str(&id) {
             state
                 .download_coordinator
                 .send(download::DownloadCmd::Cancel(download_id))
                 .await?;
+            let _ = tx.send(());
+        } else {
+            let _ = tx.send(());
         }
-        state.download_coordinator.pause_media(id.clone()).await?;
+        let _ = rx.await;
+
         if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state.queue_manager.release_permit(&id).await;
         }
@@ -2471,6 +2478,25 @@ async fn remove_download(
                 let p_aria2 = std::path::Path::new(&aria2_path);
                 if p_aria2.exists() {
                     let _ = tokio::fs::remove_file(p_aria2).await;
+                }
+
+                if let Some(parent) = p.parent() {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        let stem_with_dot = format!("{}.", stem);
+                        if let Ok(mut entries) = tokio::fs::read_dir(parent).await {
+                            while let Ok(Some(entry)) = entries.next_entry().await {
+                                if let Ok(file_name) = entry.file_name().into_string() {
+                                    if file_name.starts_with(&stem_with_dot) && 
+                                       (file_name.ends_with(".part") || file_name.ends_with(".ytdl") || file_name.ends_with(".aria2")) {
+                                        let path_to_remove = entry.path();
+                                        if is_safe_path(&path_to_remove, &app_handle) {
+                                            let _ = tokio::fs::remove_file(path_to_remove).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

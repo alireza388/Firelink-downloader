@@ -218,10 +218,13 @@ function App() {
   useEffect(() => {
     const unlisten = listen('schedule-trigger', async (event) => {
       const state = useSettingsStore.getState();
-      if (event.payload === 'start') {
+      const payload = event.payload as any;
+      if (payload.action === 'start') {
+        state.setSchedulerLastStartKey(payload.key);
         const started = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
         state.setSchedulerRunning(started > 0);
-      } else if (event.payload === 'stop') {
+      } else if (payload.action === 'stop') {
+        state.setSchedulerLastStopKey(payload.key);
         await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
         state.setSchedulerRunning(false);
       }

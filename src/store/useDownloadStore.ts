@@ -383,8 +383,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       try {
         await invoke('remove_download', { id, filepath: null });
       } catch (e) {
-        console.error("Failed to terminate download on deletion:", e);
-        throw e;
+        console.error("Failed to terminate download on backend during deletion, but will still remove from UI:", e);
       }
     }
 

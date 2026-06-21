@@ -35,8 +35,10 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                         state.insert("schedulerLastStartKey".to_string(), serde_json::json!(key));
                         state.insert("schedulerRunning".to_string(), serde_json::json!(true));
                     });
-
-                    let _ = app_handle.emit("schedule-trigger", "start");
+                    let _ = app_handle.emit("schedule-trigger", serde_json::json!({
+                        "action": "start",
+                        "key": key
+                    }));
                 }
 
                 if scheduler.stop_time_enabled
@@ -48,8 +50,10 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                         state.insert("schedulerLastStopKey".to_string(), serde_json::json!(key));
                         state.insert("schedulerRunning".to_string(), serde_json::json!(false));
                     });
-
-                    let _ = app_handle.emit("schedule-trigger", "stop");
+                    let _ = app_handle.emit("schedule-trigger", serde_json::json!({
+                        "action": "stop",
+                        "key": key
+                    }));
                 }
             }
         }

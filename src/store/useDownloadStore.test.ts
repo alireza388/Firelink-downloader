@@ -102,20 +102,6 @@ describe('useDownloadStore', () => {
     expect(useDownloadStore.getState().backendRegisteredIds.has('1')).toBe(true); // Re-registered by dispatchItem
   });
 
-  it('adds to the list in the main queue without dispatching', async () => {
-    await useDownloadStore.getState().addDownload({
-      id: 'list-1',
-      url: 'https://example.com/list.bin',
-      fileName: 'list.bin',
-      category: 'Other',
-      dateAdded: ''
-    }, { type: 'add-to-list' });
-
-    const item = useDownloadStore.getState().downloads[0];
-    expect(item.status).toBe('ready');
-    expect(item.queueId).toBe('00000000-0000-0000-0000-000000000001');
-    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
-  });
 
   it('adds to the selected queue without dispatching', async () => {
     await useDownloadStore.getState().addDownload({

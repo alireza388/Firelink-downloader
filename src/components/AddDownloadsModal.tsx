@@ -5,7 +5,7 @@ import {
   type AddDownloadAction
 } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
-import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, ListPlus, Rows3, type LucideIcon } from 'lucide-react';
+import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, type LucideIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
@@ -73,7 +73,6 @@ export const AddDownloadsModal = () => {
   const [pendingAction, setPendingAction] = useState<AddDownloadAction>({ type: 'start-now' });
   const [pendingUseSharedDestination, setPendingUseSharedDestination] = useState(false);
   const [resolvedLocation, setResolvedLocation] = useState('');
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [isQueueMenuOpen, setIsQueueMenuOpen] = useState(false);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
@@ -119,7 +118,6 @@ export const AddDownloadsModal = () => {
       ].filter(Boolean).join('\n'));
       setCookies(pendingAddCookies);
       setMirrors('');
-      setIsActionMenuOpen(false);
       setIsQueueMenuOpen(false);
     } else {
       setUrls('');
@@ -135,31 +133,29 @@ export const AddDownloadsModal = () => {
   ]);
 
   useEffect(() => {
-    if (!isActionMenuOpen) return;
+    if (!isQueueMenuOpen) return;
     const closeMenu = (event: PointerEvent) => {
       if (!actionMenuRef.current?.contains(event.target as Node)) {
-        setIsActionMenuOpen(false);
         setIsQueueMenuOpen(false);
       }
     };
     window.addEventListener('pointerdown', closeMenu);
     return () => window.removeEventListener('pointerdown', closeMenu);
-  }, [isActionMenuOpen]);
+  }, [isQueueMenuOpen]);
 
   useEffect(() => {
-    if (!isActionMenuOpen && !showingDuplicates) return;
+    if (!isQueueMenuOpen && !showingDuplicates) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (showingDuplicates) {
         setShowingDuplicates(false);
       } else {
-        setIsActionMenuOpen(false);
         setIsQueueMenuOpen(false);
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [isActionMenuOpen, showingDuplicates]);
+  }, [isQueueMenuOpen, showingDuplicates]);
 
   useEffect(() => {
     if (!saveLocation) return;
@@ -945,68 +941,34 @@ export const AddDownloadsModal = () => {
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsActionMenuOpen(open => !open);
-                    setIsQueueMenuOpen(false);
-                  }}
+                  onClick={() => setIsQueueMenuOpen(open => !open)}
                   disabled={parsedItems.length === 0}
                   className="add-download-button add-download-button-secondary px-4 text-xs"
-                  aria-label="Add to..."
+                  aria-label="Add to queue"
                   aria-haspopup="menu"
-                  aria-expanded={isActionMenuOpen}
+                  aria-expanded={isQueueMenuOpen}
                 >
-                  Add to... <ChevronDown size={14} className="ml-1" />
+                  Add to queue <ChevronDown size={14} className="ml-1" />
                 </button>
-                {isActionMenuOpen && (
+                {isQueueMenuOpen && (
                   <div
                     role="menu"
                     className="app-modal absolute bottom-full right-0 z-[70] mb-2 min-w-[200px] overflow-visible py-1.5 text-xs"
                   >
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsActionMenuOpen(false);
-                        void handleAction({ type: 'add-to-list' });
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
-                    >
-                      <Rows3 size={14} />
-                      <span>Add to List</span>
-                    </button>
-                    <div className="group relative">
+                    {queues.map(queue => (
                       <button
+                        key={queue.id}
                         type="button"
                         role="menuitem"
-                        aria-haspopup="menu"
-                        aria-expanded={isQueueMenuOpen}
-                        onClick={() => setIsQueueMenuOpen(open => !open)}
-                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-item-hover"
+                        onClick={() => {
+                          setIsQueueMenuOpen(false);
+                          void handleAction({ type: 'add-to-queue', queueId: queue.id });
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
                       >
-                        <div className="flex items-center gap-2">
-                          <ListPlus size={14} />
-                          <span>Add to Queue</span>
-                        </div>
-                        <ChevronRight size={14} />
+                        <span className="truncate">{queue.name}</span>
                       </button>
-                      <div className={`app-modal absolute bottom-0 right-[calc(100%+4px)] z-[80] min-w-[160px] py-1.5 ${isQueueMenuOpen ? 'block' : 'hidden group-hover:block'}`}>
-                        {queues.map(queue => (
-                          <button
-                            key={queue.id}
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setIsActionMenuOpen(false);
-                              setIsQueueMenuOpen(false);
-                              void handleAction({ type: 'add-to-queue', queueId: queue.id });
-                            }}
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-item-hover"
-                          >
-                            <span className="truncate">{queue.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 )}
               </div>

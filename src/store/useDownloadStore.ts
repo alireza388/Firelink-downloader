@@ -143,7 +143,6 @@ export type { DownloadItem, Queue };
 export type ExtensionDownloadRequest = ExtensionDownload;
 export type AddDownloadAction =
   | { type: 'start-now' }
-  | { type: 'add-to-list' }
   | { type: 'add-to-queue'; queueId: string };
 export type DownloadDraft = Omit<DownloadItem, 'status' | 'queueId' | 'hasBeenDispatched'>;
 
@@ -305,8 +304,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         get().updateDownload(item.id, { hasBeenDispatched: true });
       }
       info(`Download ${item.id} started`);
-    } else {
-      info(`Download ${item.id} added to list`);
     }
   },
   applyProperties: async (id, updates) => {

@@ -154,7 +154,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   const filteredDownloads = downloads.filter((d: DownloadItem) => {
     if (filter.startsWith('queue:')) {
-      return d.queueId === filter.replace('queue:', '');
+      return d.queueId === filter.replace('queue:', '') && d.status !== 'completed';
     }
     switch (filter) {
       case 'all': return true;
@@ -375,7 +375,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       {contextMenu && contextItem && (
         <div
           role="menu"
-          className="app-modal fixed z-50 min-w-[180px] overflow-hidden py-1.5 text-[12px] font-medium text-text-primary"
+          className="app-modal fixed z-50 min-w-[180px] overflow-visible py-1.5 text-[12px] font-medium text-text-primary"
           style={{
              top: Math.min(contextMenu.y, window.innerHeight - 300),
              left: Math.min(contextMenu.x, window.innerWidth - 200)

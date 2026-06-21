@@ -54,7 +54,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   const getCount = (filter: SidebarFilter) => {
     if (filter.startsWith('queue:')) {
       const qid = filter.replace('queue:', '');
-      return downloads.filter(d => d.queueId === qid).length;
+      return downloads.filter(d => d.queueId === qid && d.status !== 'completed').length;
     }
     switch (filter) {
       case 'all': return downloads.length;

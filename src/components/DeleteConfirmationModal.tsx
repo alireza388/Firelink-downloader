@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { AlertTriangle } from 'lucide-react';
 
@@ -6,6 +6,13 @@ export const DeleteConfirmationModal: React.FC = () => {
   const { deleteModalState, closeDeleteModal, removeDownload } = useDownloadStore();
   const [errorMessage, setErrorMessage] = useState('');
   const [isRemoving, setIsRemoving] = useState(false);
+
+  useEffect(() => {
+    if (deleteModalState.isOpen) {
+      setIsRemoving(false);
+      setErrorMessage('');
+    }
+  }, [deleteModalState.isOpen]);
 
   if (!deleteModalState.isOpen) return null;
 
@@ -38,6 +45,7 @@ export const DeleteConfirmationModal: React.FC = () => {
       setIsRemoving(false);
       return;
     }
+    setIsRemoving(false);
     closeDeleteModal();
   };
 

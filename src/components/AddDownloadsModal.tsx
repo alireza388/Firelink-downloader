@@ -264,7 +264,7 @@ export const AddDownloadsModal = () => {
               password: keychainPassword
             });
             updatedItems[i] = {
-              url,
+              url: meta.url || url,
               file: lines.length === 1 && pendingAddFilename ? pendingAddFilename : meta.filename,
               size: meta.size,
               sizeBytes: meta.size_bytes,

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct MetadataResponse {
+    url: String,
     filename: String,
     size: String,
     #[ts(type = "number")]
@@ -849,7 +850,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
         }
     }
 
-    Ok(MetadataResponse { filename, size: size_str, size_bytes })
+    Ok(MetadataResponse { url: current_url, filename, size: size_str, size_bytes })
 }
 
 const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);

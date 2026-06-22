@@ -69,6 +69,7 @@ type CommandMap = {
   };
   export_logs: { args: { destPath: string }; result: string };
   read_logs: { args: { limit: number }; result: string[] };
+  clear_logs: { args: undefined; result: void };
   toggle_log_pause: { args: { pause: boolean }; result: void };
   is_log_paused: { args: undefined; result: boolean };
   get_pending_order: { args: { queueId: string | null }; result: string[] };

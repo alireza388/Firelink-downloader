@@ -3184,6 +3184,14 @@ async fn read_logs(app_handle: tauri::AppHandle, limit: usize) -> Result<Vec<Str
 }
 
 #[tauri::command]
+async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
+    for file in log_files(&app_handle).await? {
+        let _ = tokio::fs::write(&file, "").await;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn export_logs(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4081,6 +4089,15 @@ pub fn run() {
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
                 ])
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+                .filter(|metadata| {
+                    let target = metadata.target();
+                    !target.starts_with("webview::")
+                        && !target.starts_with("hyper")
+                        && !target.starts_with("reqwest")
+                        && !target.starts_with("rustls")
+                        && !target.starts_with("h2")
+                        && !target.starts_with("tower")
+                })
                 .max_file_size(10_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
@@ -4116,7 +4133,7 @@ pub fn run() {
             parity::create_category_directories,
             db_save_settings, db_load_settings, db_get_all_downloads, db_replace_downloads,
             db_get_all_queues, db_replace_queues,
-            read_logs, export_logs, toggle_log_pause, is_log_paused
+            read_logs, export_logs, toggle_log_pause, is_log_paused, clear_logs
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

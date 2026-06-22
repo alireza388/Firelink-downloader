@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
 import { attachLogger } from '@tauri-apps/plugin-log';
-import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info } from 'lucide-react';
+import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 
@@ -16,6 +16,7 @@ export default function LogsView() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
   const [isPaused, setIsPaused] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rawLineCountRef = useRef(0);
 
@@ -86,6 +87,35 @@ export default function LogsView() {
     }
   }, [logs]);
 
+  useEffect(() => {
+    const handleCloseMenu = () => setContextMenu(null);
+    const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    window.addEventListener('click', handleCloseMenu);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const selection = window.getSelection()?.toString();
+    if (selection && selection.trim().length > 0) {
+      setContextMenu({ x: e.clientX, y: e.clientY, text: selection });
+    } else {
+      setContextMenu(null);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (contextMenu?.text) {
+      await navigator.clipboard.writeText(contextMenu.text);
+      addToast({ message: 'Copied to clipboard', variant: 'success' });
+    }
+    setContextMenu(null);
+  };
+
   const handleExport = async () => {
     try {
       const path = await save({
@@ -101,8 +131,9 @@ export default function LogsView() {
     }
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     setLogs([]);
+    await invoke('clear_logs').catch(console.error);
   };
 
   const severityClass = (level: string) => {
@@ -181,7 +212,12 @@ export default function LogsView() {
       </div>
 
       {/* Console */}
-      <div ref={scrollRef} className="logs-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5] select-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
+      <div
+        ref={scrollRef}
+        onContextMenu={handleContextMenu}
+        className="logs-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5] select-text"
+        style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+      >
         {logs.length === 0 && (
           <div className="text-text-muted italic select-none">No persisted log entries are available yet.</div>
         )}
@@ -192,6 +228,22 @@ export default function LogsView() {
           </div>
         ))}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[100] bg-bg-secondary border border-border-modal rounded-md shadow-lg py-1 min-w-[120px]"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 120), top: Math.min(contextMenu.y, window.innerHeight - 40) }}
+        >
+          <button
+            className="w-full text-left px-3 py-1.5 flex items-center hover:bg-item-hover text-[12px] text-text-primary"
+            onClick={handleCopy}
+          >
+            <Copy size={13} className="mr-2 text-text-secondary" />
+            Copy
+          </button>
+        </div>
+      )}
     </div>
   );
 }

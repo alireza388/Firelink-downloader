@@ -125,6 +125,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               />
             </div>
             <span 
+            key={`status-${download.status}`}
             ref={statusTextRef}
             title={
               (download.status === 'queued' || download.status === 'staged') && queueIndex !== -1
@@ -165,6 +166,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       
       <div className="download-cell-truncate">
         <span
+          key={`speed-${download.status}`}
           ref={speedTextRef}
           className="tabular-nums"
           title={download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
@@ -175,6 +177,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
       <div className="download-cell-truncate">
         <span
+          key={`eta-${download.status}`}
           ref={etaTextRef}
           className="tabular-nums"
           title={download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}

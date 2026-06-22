@@ -110,8 +110,13 @@ export default function LogsView() {
 
   const handleCopy = async () => {
     if (contextMenu?.text) {
-      await navigator.clipboard.writeText(contextMenu.text);
-      addToast({ message: 'Copied to clipboard', variant: 'success' });
+      try {
+        await navigator.clipboard.writeText(contextMenu.text);
+        addToast({ message: 'Copied to clipboard', variant: 'success' });
+      } catch (err) {
+        console.error('Clipboard write error:', err);
+        addToast({ message: 'Failed to copy to clipboard', variant: 'error' });
+      }
     }
     setContextMenu(null);
   };

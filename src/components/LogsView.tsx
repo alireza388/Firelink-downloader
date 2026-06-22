@@ -237,11 +237,13 @@ export default function LogsView() {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-[100] bg-bg-secondary border border-border-modal rounded-md shadow-lg py-1 min-w-[120px]"
-          style={{ left: Math.min(contextMenu.x, window.innerWidth - 120), top: Math.min(contextMenu.y, window.innerHeight - 40) }}
+          role="menu"
+          className="app-modal fixed z-50 min-w-[150px] overflow-visible py-1.5 text-[12px] font-medium text-text-primary"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 150), top: Math.min(contextMenu.y, window.innerHeight - 50) }}
+          onClick={(e) => e.stopPropagation()}
         >
           <button
-            className="w-full text-left px-3 py-1.5 flex items-center hover:bg-item-hover text-[12px] text-text-primary"
+            className="w-full text-left px-3 py-2 flex items-center hover:bg-item-hover transition-colors"
             onClick={handleCopy}
           >
             <Copy size={13} className="mr-2 text-text-secondary" />

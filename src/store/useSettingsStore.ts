@@ -19,6 +19,7 @@ import {
 } from '../utils/downloadLocations';
 
 let settingsSave = Promise.resolve();
+const DEFAULT_SCHEDULER_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
@@ -80,6 +81,7 @@ export interface SettingsState {
   activeSettingsTab: SettingsTab;
   scheduler: SchedulerSettings;
   schedulerRunning: boolean;
+  schedulerActiveDownloadIds: string[];
   schedulerLastStartKey: string;
   schedulerLastStopKey: string;
   lastCustomSpeedLimitKiB: number;
@@ -112,6 +114,7 @@ export interface SettingsState {
   setActiveSettingsTab: (tab: SettingsTab) => void;
   setScheduler: (settings: SchedulerSettings) => void;
   setSchedulerRunning: (running: boolean) => void;
+  setSchedulerActiveDownloadIds: (ids: string[]) => void;
   setSchedulerLastStartKey: (key: string) => void;
   setSchedulerLastStopKey: (key: string) => void;
   setLastCustomSpeedLimitKiB: (limit: number) => void;
@@ -187,9 +190,11 @@ export const useSettingsStore = create<SettingsState>()(
         stopTime: '08:00',
         everyday: true,
         selectedDays: [0, 1, 2, 3, 4, 5, 6],
+        selectedQueueIds: [DEFAULT_SCHEDULER_QUEUE_ID],
         postQueueAction: 'none'
       },
       schedulerRunning: false,
+      schedulerActiveDownloadIds: [],
       schedulerLastStartKey: '',
       schedulerLastStopKey: '',
       lastCustomSpeedLimitKiB: 1024,
@@ -231,6 +236,7 @@ export const useSettingsStore = create<SettingsState>()(
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
       setScheduler: (scheduler) => set({ scheduler }),
       setSchedulerRunning: (schedulerRunning) => set({ schedulerRunning }),
+      setSchedulerActiveDownloadIds: (schedulerActiveDownloadIds) => set({ schedulerActiveDownloadIds }),
       setSchedulerLastStartKey: (schedulerLastStartKey) => set({ schedulerLastStartKey }),
       setSchedulerLastStopKey: (schedulerLastStopKey) => set({ schedulerLastStopKey }),
       setLastCustomSpeedLimitKiB: (lastCustomSpeedLimitKiB) => set({ lastCustomSpeedLimitKiB }),
@@ -301,7 +307,7 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'firelink-settings',
       storage: createJSONStorage(() => tauriStorage),
-      version: 2,
+      version: 3,
       migrate: (persistedState) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as SettingsState;
@@ -316,6 +322,15 @@ export const useSettingsStore = create<SettingsState>()(
         return {
           ...persisted,
           ...locations,
+          scheduler: persisted.scheduler
+            ? {
+                ...persisted.scheduler,
+                selectedQueueIds: Array.isArray(persisted.scheduler.selectedQueueIds)
+                  && persisted.scheduler.selectedQueueIds.length > 0
+                  ? persisted.scheduler.selectedQueueIds
+                  : [DEFAULT_SCHEDULER_QUEUE_ID]
+              }
+            : persisted.scheduler,
           siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : []
         } as SettingsState;
       },
@@ -360,6 +375,14 @@ export const useSettingsStore = create<SettingsState>()(
         ...currentState,
         ...persisted,
         ...locations,
+        scheduler: {
+          ...currentState.scheduler,
+          ...persisted.scheduler,
+          selectedQueueIds: Array.isArray(persisted.scheduler?.selectedQueueIds)
+            && persisted.scheduler.selectedQueueIds.length > 0
+            ? persisted.scheduler.selectedQueueIds
+            : currentState.scheduler.selectedQueueIds
+        },
         appFontSize: persisted.appFontSize || currentState.appFontSize,
         listRowDensity: persisted.listRowDensity || currentState.listRowDensity,
         siteLogins: Array.isArray(persisted.siteLogins)

@@ -14,11 +14,20 @@ import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
-import DiagnosticsView from "./components/DiagnosticsView";
+import LogsView from "./components/LogsView";
 import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
 
 let automaticUpdateCheckStarted = false;
+const processingScheduleKeys = new Set<string>();
+
+const getScheduledQueueIds = () => {
+  const downloadState = useDownloadStore.getState();
+  const availableQueueIds = new Set(downloadState.queues.map(queue => queue.id));
+  const selectedQueueIds = useSettingsStore.getState().scheduler.selectedQueueIds
+    .filter(queueId => availableQueueIds.has(queueId));
+  return selectedQueueIds.length > 0 ? selectedQueueIds : [MAIN_QUEUE_ID];
+};
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
@@ -40,9 +49,12 @@ function App() {
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
   const downloads = useDownloadStore(state => state.downloads);
   const activeDownloadCount = downloads.filter(download => download.status === 'downloading').length;
-  const queuedCount = downloads.filter(download => download.status === 'queued').length;
+  const queuedCount = downloads.filter(download =>
+    download.status === 'queued' || download.status === 'staged'
+  ).length;
   const doneCount = downloads.filter(download => download.status === 'completed').length;
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
+  const schedulerActiveDownloadIds = useSettingsStore(state => state.schedulerActiveDownloadIds);
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef<string | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
@@ -218,15 +230,28 @@ function App() {
   useEffect(() => {
     const unlisten = listen('schedule-trigger', async (event) => {
       const state = useSettingsStore.getState();
-      const payload = event.payload as any;
-      if (payload.action === 'start') {
-        state.setSchedulerLastStartKey(payload.key);
-        const started = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
-        state.setSchedulerRunning(started > 0);
-      } else if (payload.action === 'stop') {
-        state.setSchedulerLastStopKey(payload.key);
-        await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
-        state.setSchedulerRunning(false);
+      const payload = event.payload;
+      if (processingScheduleKeys.has(payload.key)) return;
+      processingScheduleKeys.add(payload.key);
+      try {
+        if (payload.action === 'start') {
+          const startedResults = await Promise.all(
+            getScheduledQueueIds().map(queueId => useDownloadStore.getState().startQueue(queueId))
+          );
+          const acceptedIds = startedResults.flat();
+          state.setSchedulerActiveDownloadIds(acceptedIds);
+          state.setSchedulerRunning(acceptedIds.length > 0);
+          await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
+        } else if (payload.action === 'stop') {
+          await Promise.all(
+            getScheduledQueueIds().map(queueId => useDownloadStore.getState().pauseQueue(queueId))
+          );
+          state.setSchedulerActiveDownloadIds([]);
+          state.setSchedulerRunning(false);
+          await invoke('ack_schedule_trigger', { action: 'stop', key: payload.key });
+        }
+      } finally {
+        processingScheduleKeys.delete(payload.key);
       }
     });
     
@@ -237,19 +262,32 @@ function App() {
 
   useEffect(() => {
     if (!schedulerRunning) return;
+    if (schedulerActiveDownloadIds.length === 0) return;
+    const scheduledIds = new Set(schedulerActiveDownloadIds);
     const hasPendingScheduledWork = downloads.some(download =>
-      isActiveDownloadStatus(download.status)
+      scheduledIds.has(download.id) && isActiveDownloadStatus(download.status)
     );
     if (hasPendingScheduledWork) return;
 
     const settings = useSettingsStore.getState();
+    const scheduledItems = schedulerActiveDownloadIds.map(id =>
+      downloads.find(download => download.id === id)
+    );
+    const hasFailures = scheduledItems.some(item => !item || item.status === 'failed');
+    settings.setSchedulerActiveDownloadIds([]);
     settings.setSchedulerRunning(false);
-    if (settings.scheduler.postQueueAction !== 'none') {
+    if (hasFailures) {
+      addToast({
+        message: 'Scheduled downloads finished with failures. The post-queue system action was skipped.',
+        variant: 'warning',
+        isActionable: true
+      });
+    } else if (settings.scheduler.postQueueAction !== 'none') {
       invoke('perform_system_action', { action: settings.scheduler.postQueueAction }).catch(error => {
         console.error('Scheduled post action failed:', error);
       });
     }
-  }, [downloads, schedulerRunning]);
+  }, [addToast, downloads, schedulerRunning, schedulerActiveDownloadIds]);
 
   useEffect(() => {
     const initNotifications = async () => {
@@ -395,7 +433,7 @@ function App() {
           {activeView === 'settings' && <SettingsView />}
           {activeView === 'scheduler' && <SchedulerView />}
           {activeView === 'speedLimiter' && <SpeedLimiterView />}
-          {activeView === 'diagnostics' && <DiagnosticsView />}
+          {activeView === 'logs' && <LogsView />}
         </div>
         
         {/* Status Bar */}

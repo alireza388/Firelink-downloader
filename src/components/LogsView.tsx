@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { attachLogger } from '@tauri-apps/plugin-log';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
 import { FileDown, Trash2, Terminal, Filter } from 'lucide-react';
@@ -11,39 +10,46 @@ interface LogEntry {
   message: string;
 }
 
-const getLevelStr = (level: number): LogEntry['level'] => {
-  switch (level) {
-    case 1: return 'Trace';
-    case 2: return 'Debug';
-    case 3: return 'Info';
-    case 4: return 'Warn';
-    case 5: return 'Error';
-    default: return 'Debug';
-  }
-};
-
-export default function DiagnosticsView() {
+export default function LogsView() {
   const { addToast } = useToast();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rawLineCountRef = useRef(0);
+  const clearedThroughRef = useRef(0);
+  const lastSnapshotRef = useRef('');
   const MAX_LOG_LINES = 2000;
 
   useEffect(() => {
     let active = true;
-    const unlistenPromise = attachLogger((logRecord) => {
-      if (!active) return;
-      const level = getLevelStr(logRecord.level);
-      const message = logRecord.message;
-      if (message.includes('[download]') && message.includes('%')) return;
-      setLogs(prev => {
-        const next = [...prev, { level, message }];
-        return next.length > MAX_LOG_LINES ? next.slice(-MAX_LOG_LINES) : next;
-      });
-    });
+    const refresh = async () => {
+      try {
+        const lines = await invoke('read_logs', { limit: MAX_LOG_LINES });
+        if (!active) return;
+        if (lines.length < clearedThroughRef.current) {
+          clearedThroughRef.current = 0;
+        }
+        const snapshot = `${lines.length}:${lines[lines.length - 1] || ''}`;
+        if (snapshot === lastSnapshotRef.current) return;
+        lastSnapshotRef.current = snapshot;
+        rawLineCountRef.current = lines.length;
+        setLogs(lines.slice(clearedThroughRef.current).map(message => {
+          const level = message.includes('[ERROR]') ? 'Error'
+            : message.includes('[WARN]') ? 'Warn'
+              : message.includes('[INFO]') ? 'Info'
+                : message.includes('[TRACE]') ? 'Trace'
+                  : 'Debug';
+          return { level, message };
+        }));
+      } catch {
+        if (active) setLogs([]);
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(refresh, 2000);
     return () => {
       active = false;
-      void unlistenPromise.then(unlisten => unlisten()).catch(() => undefined);
+      window.clearInterval(interval);
     };
   }, []);
 
@@ -56,19 +62,22 @@ export default function DiagnosticsView() {
   const handleExport = async () => {
     try {
       const path = await save({
-        defaultPath: 'Firelink-Diagnostics.log',
+        defaultPath: 'Firelink-Support-Logs.log',
         filters: [{ name: 'Log Files', extensions: ['log'] }],
       });
       if (!path) return;
       await invoke('export_logs', { destPath: path });
-      addToast({ message: 'Diagnostics exported', variant: 'success' });
+      addToast({ message: 'Support logs exported', variant: 'success' });
     } catch (e) {
       console.error('Export failed:', e);
-      addToast({ message: `Could not export diagnostics: ${String(e)}`, variant: 'error', isActionable: true });
+      addToast({ message: `Could not export logs: ${String(e)}`, variant: 'error', isActionable: true });
     }
   };
 
-  const handleClear = () => setLogs([]);
+  const handleClear = () => {
+    clearedThroughRef.current = rawLineCountRef.current;
+    setLogs([]);
+  };
 
   const severityClass = (level: string) => {
     switch (level) {
@@ -80,14 +89,14 @@ export default function DiagnosticsView() {
   };
 
   return (
-    <div className="diagnostics-view flex-1 flex flex-col h-full overflow-hidden">
+    <div className="logs-view flex-1 flex flex-col h-full overflow-hidden">
       <WindowDragRegion />
 
       {/* Toolbar */}
-      <div className="diagnostics-toolbar flex items-center justify-between px-4 py-2 shrink-0">
+      <div className="logs-toolbar flex items-center justify-between px-4 py-2 shrink-0">
         <div className="flex items-center gap-2 text-text-secondary">
           <Terminal size={16} strokeWidth={1.8} />
-          <span className="text-[13px] font-semibold text-text-primary">Diagnostics Console</span>
+          <span className="text-[13px] font-semibold text-text-primary">Logs</span>
           <span className="text-[11px] text-text-muted">({logs.length} entries)</span>
         </div>
         <div className="flex items-center gap-3">
@@ -110,7 +119,7 @@ export default function DiagnosticsView() {
           <button
             onClick={handleClear}
             className="app-icon-button"
-            title="Clear console"
+            title="Clear displayed logs"
           >
             <Trash2 size={14} />
           </button>
@@ -126,9 +135,9 @@ export default function DiagnosticsView() {
       </div>
 
       {/* Console */}
-      <div ref={scrollRef} className="diagnostics-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5]">
+      <div ref={scrollRef} className="logs-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5]">
         {logs.length === 0 && (
-          <div className="text-text-muted italic select-none">Waiting for log entries...</div>
+          <div className="text-text-muted italic select-none">No persisted log entries are available yet.</div>
         )}
         {logs.filter(entry => levelFilter === 'All' || entry.level === levelFilter).map((entry, i) => (
           <div key={i} className={`log-line ${severityClass(entry.level)}`}>

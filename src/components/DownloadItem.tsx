@@ -31,9 +31,20 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   onClick,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
-  const pendingOrder = useDownloadStore(state => state.pendingOrder);
+  const queueItems = useDownloadStore(state => {
+    const item = state.downloads.find(candidate => candidate.id === downloadId);
+    if (!item) return [];
+    const queueId = item.queueId;
+    return state.downloads
+      .filter(candidate =>
+        candidate.queueId === queueId &&
+        candidate.status !== 'completed'
+      )
+      .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
+      .map(candidate => candidate.id);
+  });
   const moveInQueue = useDownloadStore(state => state.moveInQueue);
-  const queueIndex = pendingOrder.indexOf(downloadId);
+  const queueIndex = queueItems.indexOf(downloadId);
 
   const progressBarRef = useRef<HTMLDivElement>(null);
   const statusTextRef = useRef<HTMLSpanElement>(null);
@@ -106,7 +117,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 className={`download-progress-fill ${
                   download.status === 'paused' ? 'paused' : 
                   download.status === 'processing' ? 'processing' :
-                  download.status === 'queued' ? 'queued' :
+                  download.status === 'queued' || download.status === 'staged' ? 'queued' :
                   download.status === 'retrying' ? 'retrying' : ''
                 }`}
                 style={{ width: `${(download.fraction || 0) * 100}%` }}
@@ -115,8 +126,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
             <span 
             ref={statusTextRef}
             title={
-              download.status === 'queued' && queueIndex !== -1
-                ? `Queued #${queueIndex + 1}`
+              (download.status === 'queued' || download.status === 'staged') && queueIndex !== -1
+                ? `${download.status === 'staged' ? 'In queue' : 'Queued'} #${queueIndex + 1}`
                 : download.status === 'downloading'
                   ? `${((download.fraction || 0) * 100).toFixed(0)}%`
                   : download.status === 'processing'
@@ -128,14 +139,16 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               download.status === 'failed' ? 'download-status-failed' :
                 download.status === 'processing' ? 'download-status-processing' :
                 download.status === 'downloading' ? 'download-status-downloading' : 
-                download.status === 'queued' ? 'download-status-queued' :
+                download.status === 'queued' || download.status === 'staged' ? 'download-status-queued' :
                 download.status === 'retrying' ? 'download-status-retrying' : ''
               }`}
             >
-              {download.status === 'queued' && queueIndex !== -1 ? (
+              {(download.status === 'queued' || download.status === 'staged') && queueIndex !== -1 ? (
                 <>
-                  <Clock size={12} className="animate-pulse shrink-0" />
-                  <span className="truncate">Queued #{queueIndex + 1}</span>
+                  <Clock size={12} className={download.status === 'queued' ? 'animate-pulse shrink-0' : 'shrink-0'} />
+                  <span className="truncate">
+                    {download.status === 'staged' ? 'In queue' : 'Queued'} #{queueIndex + 1}
+                  </span>
                 </>
               ) : download.status === 'downloading' ? (
                 `${((download.fraction || 0) * 100).toFixed(0)}%`
@@ -181,7 +194,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto"
           onDoubleClick={(e) => e.stopPropagation()}
         >
-          {download.status === 'queued' && queueIndex !== -1 && (
+          {(download.status === 'queued' || download.status === 'staged') && queueIndex !== -1 && (
             <>
               <button 
                 onClick={() => moveInQueue(download.id, 'up')}
@@ -193,7 +206,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               </button>
               <button 
                 onClick={() => moveInQueue(download.id, 'down')}
-                disabled={queueIndex === pendingOrder.length - 1}
+                disabled={queueIndex === queueItems.length - 1}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Down"
               >

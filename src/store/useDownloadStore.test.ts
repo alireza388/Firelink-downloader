@@ -71,12 +71,40 @@ describe('useDownloadStore', () => {
     });
 
     const dispatched = await useDownloadStore.getState().startQueue('MAIN');
-    expect(dispatched).toBe(2); // Both items counted as dispatched/handled
+    expect(dispatched).toEqual(['1', '2']);
 
     const calls = vi.mocked(ipc.invokeCommand).mock.calls;
     const enqueues = calls.filter(c => c[0] === 'enqueue_download');
     expect(enqueues.length).toBe(1);
     expect((enqueues[0] as any)[1].item.id).toBe('2');
+  });
+
+  it('does not overwrite a downloading event received while starting a queue', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: '1', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+      ] as any[],
+    });
+
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'enqueue_download') {
+        useDownloadStore.getState().updateDownload('1', {
+          status: 'downloading',
+          speed: '1 MB/s',
+          eta: '10s'
+        });
+      }
+      if (cmd === 'get_pending_order') return ['1'];
+      return undefined;
+    });
+
+    expect(await useDownloadStore.getState().startQueue('MAIN')).toEqual(['1']);
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'downloading',
+      speed: '1 MB/s',
+      eta: '10s',
+      hasBeenDispatched: true
+    });
   });
 
   it('resumeDownload unregisters ID and re-dispatches if un-resumable', async () => {
@@ -113,9 +141,9 @@ describe('useDownloadStore', () => {
     }, { type: 'add-to-queue', queueId: 'queue-b' });
 
     const item = useDownloadStore.getState().downloads[0];
-    expect(item.status).toBe('queued');
+    expect(item.status).toBe('staged');
     expect(item.queueId).toBe('queue-b');
-    expect(useDownloadStore.getState().pendingOrder).toContain('queue-1');
+    expect(item.queuePosition).toBe(0);
     expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
   });
 
@@ -207,7 +235,7 @@ describe('useDownloadStore', () => {
     ).toHaveLength(4);
   });
 
-  it('assigns selected unfinished downloads to a queue without moving completed items', () => {
+  it('assigns selected unfinished downloads to a queue without moving completed items', async () => {
     useDownloadStore.setState({
       downloads: [
         { id: 'ready', status: 'ready', queueId: 'old' },
@@ -215,10 +243,48 @@ describe('useDownloadStore', () => {
       ] as any[]
     });
 
-    useDownloadStore.getState().assignToQueue(['ready', 'done'], 'new');
+    await useDownloadStore.getState().assignToQueue(['ready', 'done'], 'new');
 
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'ready')?.queueId).toBe('new');
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'done')?.queueId).toBe('old');
+  });
+
+  it('retains the UI item when backend removal fails', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'active', url: 'https://example.com/file', fileName: 'file', status: 'downloading', category: 'Other', dateAdded: '', queueId: 'main' }
+      ] as any[]
+    });
+    vi.mocked(ipc.invokeCommand).mockRejectedValueOnce(new Error('writer did not stop'));
+
+    await expect(useDownloadStore.getState().removeDownload('active', true))
+      .rejects.toThrow('writer did not stop');
+    expect(useDownloadStore.getState().downloads.map(download => download.id))
+      .toEqual(['active']);
+  });
+
+  it('starts staged queue items in their persisted queue order', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'later', url: 'https://example.com/later', fileName: 'later', status: 'staged', category: 'Other', dateAdded: '', queueId: 'queue-a', queuePosition: 1 },
+        { id: 'first', url: 'https://example.com/first', fileName: 'first', status: 'staged', category: 'Other', dateAdded: '', queueId: 'queue-a', queuePosition: 0 }
+      ] as any[]
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'get_pending_order') {
+        return [(args as { queueId: string }).queueId === 'queue-a' ? 'first' : 'later'];
+      }
+      return undefined;
+    });
+
+    expect(await useDownloadStore.getState().startQueue('queue-a')).toEqual(['first', 'later']);
+    const enqueuedIds = vi.mocked(ipc.invokeCommand).mock.calls
+      .filter(call => call[0] === 'enqueue_download')
+      .map(call => (call[1] as any).item.id);
+    expect(enqueuedIds).toEqual(['first', 'later']);
+    expect((vi.mocked(ipc.invokeCommand).mock.calls.find(call =>
+      call[0] === 'enqueue_download'
+    )?.[1] as any).item.queue_id).toBe('queue-a');
   });
 
   it('preserves extension request headers and cookies for the Add modal', () => {

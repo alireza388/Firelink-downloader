@@ -7,7 +7,7 @@ pub async fn reveal_in_file_manager(
     app_handle: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
-    let primary = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+    let primary = authorize_download_path(&app_handle, &path)?;
     let path = existing_download_asset(&primary).ok_or_else(|| {
         format!(
             "Downloaded file or partial file is missing: {}",
@@ -28,7 +28,7 @@ pub async fn open_downloaded_file(
     app_handle: tauri::AppHandle,
     path: String,
 ) -> Result<(), String> {
-    let path = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
+    let path = authorize_download_path(&app_handle, &path)?;
     if !path.exists() {
         return Err(format!("Downloaded file is missing: {}", path.display()));
     }
@@ -41,52 +41,11 @@ pub async fn open_downloaded_file(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn trash_download_assets(
-    app_handle: tauri::AppHandle,
-    path: String,
-    partial_paths: Vec<String>,
-) -> Result<(), String> {
-    let primary = authorize_download_path(&app_handle, &path, DownloadAsset::Primary)?;
-    let partials = partial_paths
-        .iter()
-        .map(|partial| authorize_download_path(&app_handle, partial, DownloadAsset::Partial))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if primary.exists() {
-        trash::delete(&primary).map_err(|e| format!("Failed to trash primary file: {}", e))?;
-    }
-
-    for partial in partials {
-        if partial.exists() {
-            trash::delete(&partial).map_err(|e| format!("Failed to trash partial file: {}", e))?;
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-enum DownloadAsset {
-    Primary,
-    Partial,
-}
-
 fn authorize_download_path(
     app_handle: &tauri::AppHandle,
     requested: &str,
-    asset: DownloadAsset,
 ) -> Result<PathBuf, String> {
-    let known_paths = known_download_paths(app_handle)?;
-    let allowed_paths = match asset {
-        DownloadAsset::Primary => known_paths,
-        DownloadAsset::Partial => known_paths
-            .iter()
-            .flat_map(|path| [append_suffix(path, ".aria2"), append_suffix(path, ".part")])
-            .collect(),
-    };
-
-    authorize_exact_path(Path::new(requested), &allowed_paths)
+    authorize_exact_path(Path::new(requested), &known_download_paths(app_handle)?)
 }
 
 fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {

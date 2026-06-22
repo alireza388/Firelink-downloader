@@ -438,7 +438,12 @@ async fn cancel_removes_partial_file_without_terminal_success_event() {
         .await
         .unwrap();
     wait_for_progress(&mut events, id, 256 * 1024).await;
-    coordinator.send(DownloadCmd::Cancel(id)).await.unwrap();
+    let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
+    coordinator
+        .send(DownloadCmd::CancelWithAck(id, cancelled_tx))
+        .await
+        .unwrap();
+    cancelled_rx.await.unwrap();
 
     tokio::time::timeout(TEST_TIMEOUT, async {
         while output_path.exists() {

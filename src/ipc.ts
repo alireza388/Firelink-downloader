@@ -12,6 +12,7 @@ import type { PostQueueAction } from './bindings/PostQueueAction';
 import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
 import type { PairingTokenHydration } from './bindings/PairingTokenHydration';
 import type { EnqueueItem } from './bindings/EnqueueItem';
+import type { EnqueueAccepted } from './bindings/EnqueueAccepted';
 
 type CommandMap = {
   fetch_metadata: {
@@ -28,14 +29,14 @@ type CommandMap = {
  get_deno_engine_status: { args: undefined; result: EngineStatusItem };
   reveal_in_file_manager: { args: { path: string }; result: void };
   open_downloaded_file: { args: { path: string }; result: void };
-  trash_download_assets: { args: { path: string; partialPaths: string[] }; result: void };
   pause_download: { args: { id: string }; result: void };
   resume_download: { args: { id: string }; result: boolean };
-  remove_download: { args: { id: string; filepath: string | null }; result: void };
+  remove_download: { args: { id: string; deleteAssets: boolean }; result: void };
   detach_download_for_reconfigure: { args: { id: string }; result: void };
   update_dock_badge: { args: { count: number }; result: void };
   set_prevent_sleep: { args: { prevent: boolean }; result: void };
   perform_system_action: { args: { action: PostQueueAction }; result: void };
+  ack_schedule_trigger: { args: { action: 'start' | 'stop'; key: string }; result: void };
   set_concurrent_limit: { args: { limit: number }; result: void };
   set_global_speed_limit: { args: { limit: string | null }; result: void };
   request_automation_permission: { args: undefined; result: void };
@@ -67,10 +68,11 @@ type CommandMap = {
     result: void;
   };
   export_logs: { args: { destPath: string }; result: string };
-  get_pending_order: { args: undefined; result: string[] };
-  enqueue_download: { args: { item: EnqueueItem }; result: string };
+  read_logs: { args: { limit: number }; result: string[] };
+  get_pending_order: { args: { queueId: string | null }; result: string[] };
+  enqueue_download: { args: { item: EnqueueItem }; result: EnqueueAccepted };
   enqueue_many: { args: { items: EnqueueItem[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };
-  move_in_queue: { args: { id: string; direction: 'up' | 'down' }; result: string[] };
+  move_in_queue: { args: { id: string; queueId: string; direction: 'up' | 'down' }; result: string[] };
   remove_from_queue: { args: { id: string }; result: boolean };
 };
 
@@ -83,13 +85,13 @@ export function invokeCommand<K extends CommandName>(
   ...args: CommandArgs<K> extends undefined ? [] : [args: CommandArgs<K>]
 ): Promise<CommandResult<K>> {
   return tauriInvoke<CommandResult<K>>(command, args[0]).catch(err => {
-    logError(`Invoke command ${command} failed: ${err}`);
+    void logError(`Invoke command ${command} failed: ${err}`).catch(() => undefined);
     throw err;
   });
 }
 
 type EventMap = {
-  'schedule-trigger': 'start' | 'stop';
+  'schedule-trigger': { action: 'start' | 'stop'; key: string };
   'download-progress': DownloadProgressEvent;
   'download-state': DownloadStateEvent;
   'download-complete': string;

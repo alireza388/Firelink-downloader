@@ -37,6 +37,7 @@ pub enum TaskKind {
 #[derive(Debug, Clone)]
 pub struct QueuedTask {
     pub id: String,
+    pub queue_id: String,
     pub kind: TaskKind,
     pub payload: SpawnPayload,
 }
@@ -158,11 +159,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
     }
 
     /// Current pending order, as id list. Returned by move_in_queue.
-    pub async fn pending_order(&self) -> Vec<String> {
+    pub async fn pending_order(&self, queue_id: Option<&str>) -> Vec<String> {
         self.pending
             .lock()
             .await
             .iter()
+            .filter(|task| queue_id.is_none_or(|queue_id| task.queue_id == queue_id))
             .map(|t| t.id.clone())
             .collect()
     }
@@ -721,26 +723,38 @@ impl<R: tauri::Runtime> QueueManager<R> {
     pub async fn move_in_queue(
         &self,
         id: &str,
+        queue_id: &str,
         direction: QueueDirection,
     ) -> Vec<String> {
         let mut pending = self.pending.lock().await;
-        let pos = pending.iter().position(|t| t.id == id);
-        if let Some(pos) = pos {
+        let queue_positions = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(index, task)| (task.queue_id == queue_id).then_some(index))
+            .collect::<Vec<_>>();
+        let queue_pos = queue_positions
+            .iter()
+            .position(|index| pending[*index].id == id);
+        if let Some(queue_pos) = queue_pos {
             let target = match direction {
-                QueueDirection::Up => pos.checked_sub(1),
+                QueueDirection::Up => queue_pos.checked_sub(1),
                 QueueDirection::Down => {
-                    if pos + 1 < pending.len() {
-                        Some(pos + 1)
+                    if queue_pos + 1 < queue_positions.len() {
+                        Some(queue_pos + 1)
                     } else {
                         None
                     }
                 }
             };
             if let Some(target) = target {
-                pending.swap(pos, target);
+                pending.swap(queue_positions[queue_pos], queue_positions[target]);
             }
         }
-        pending.iter().map(|t| t.id.clone()).collect()
+        pending
+            .iter()
+            .filter(|task| task.queue_id == queue_id)
+            .map(|task| task.id.clone())
+            .collect()
     }
 
     /// Remove a task from pending if present (used by remove_download).
@@ -765,10 +779,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
         for task in tasks {
             let id = task.id.clone();
+            let filename = task.payload.filename.clone();
             if registered.contains(&id) {
                 results.push(crate::ipc::EnqueueResult {
                     id: id.clone(),
                     success: false,
+                    filename: None,
                     error: Some("Duplicate task".to_string()),
                 });
                 continue;
@@ -779,6 +795,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             results.push(crate::ipc::EnqueueResult {
                 id,
                 success: true,
+                filename: Some(filename),
                 error: None,
             });
         }
@@ -814,11 +831,7 @@ impl SidecarSpawner for ProductionSpawner {
             "dir".to_string(),
             serde_json::json!(resolved_dest.to_string_lossy().to_string()),
         );
-        let safe_filename = std::path::Path::new(&payload.filename.replace('\\', "/"))
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("download")
-            .to_string();
+        let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
         options.insert("out".to_string(), serde_json::json!(safe_filename));
         let conn = payload.connections.unwrap_or(1);
         options.insert("split".to_string(), serde_json::json!(conn.to_string()));
@@ -880,11 +893,7 @@ impl SidecarSpawner for ProductionSpawner {
                 log::warn!("aria2 addUri failed, falling back to native: {}", e);
                 let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
                 let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
-                let safe_filename = std::path::Path::new(&payload.filename.replace('\\', "/"))
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("download")
-                    .to_string();
+                let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
                 state
                     .download_coordinator
                     .send(crate::download::DownloadCmd::Start(Box::new(
@@ -969,11 +978,7 @@ impl SidecarSpawner for ProductionSpawner {
         let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
         let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
         let resolved_dest = crate::resolve_path(&payload.destination, &self.app_handle);
-        let safe_filename = std::path::Path::new(&payload.filename.replace('\\', "/"))
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("download")
-            .to_string();
+        let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
         let output_path = resolved_dest.join(safe_filename);
         let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &output_path);
         state
@@ -1002,6 +1007,7 @@ impl SidecarSpawner for ProductionSpawner {
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct EnqueueItem {
     pub id: String,
+    pub queue_id: String,
     pub url: String,
     pub destination: String,
     pub filename: String,
@@ -1032,6 +1038,7 @@ impl EnqueueItem {
         let id = self.id.clone();
         QueuedTask {
             id,
+            queue_id: self.queue_id,
             kind,
             payload: SpawnPayload {
                 url: self.url,

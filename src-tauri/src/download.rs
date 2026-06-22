@@ -26,7 +26,7 @@ pub enum DownloadCmd {
     Start(Box<DownloadPayload>),
     Pause(Uuid),
     PauseWithAck(Uuid, tokio::sync::oneshot::Sender<()>),
-    Cancel(Uuid),
+    CancelWithAck(Uuid, tokio::sync::oneshot::Sender<()>),
     CaptureUrls(Vec<String>),
     FrontendReady(bool),
 }
@@ -338,9 +338,12 @@ async fn run_coordinator(
                             let _ = ack.send(());
                         }
                     }
-                    DownloadCmd::Cancel(id) => {
+                    DownloadCmd::CancelWithAck(id, ack) => {
                         if let Some(download) = active.remove(&id) {
                             let _ = download.control_tx.send(DownloadControl::Cancel).await;
+                            pending_acks.insert(id, ack);
+                        } else {
+                            let _ = ack.send(());
                         }
                     }
                     DownloadCmd::CaptureUrls(urls) => {

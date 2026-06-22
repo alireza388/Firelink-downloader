@@ -243,6 +243,7 @@ fn default_settings() -> PersistedSettings {
             stop_time: "08:00".to_string(),
             everyday: true,
             selected_days: vec![0, 1, 2, 3, 4, 5, 6],
+            selected_queue_ids: vec!["00000000-0000-0000-0000-000000000001".to_string()],
             post_queue_action: PostQueueAction::None,
         },
         scheduler_last_start_key: String::new(),
@@ -299,6 +300,10 @@ mod tests {
         assert!(settings.scheduler.enabled);
         assert_eq!(settings.scheduler.start_time, "06:30");
         assert_eq!(settings.scheduler.selected_days, vec![1, 3, 5]);
+        assert_eq!(
+            settings.scheduler.selected_queue_ids,
+            vec!["00000000-0000-0000-0000-000000000001"]
+        );
         assert_eq!(settings.base_download_folder, "~/Downloads");
     }
 

@@ -9,7 +9,7 @@ import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database,
 import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
-import { categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
+import { canonicalizeDownloadFileName, categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
 import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 import {
   resolveCategoryDestination,
@@ -72,8 +72,10 @@ export const AddDownloadsModal = () => {
   const [showingDuplicates, setShowingDuplicates] = useState(false);
   const [pendingAction, setPendingAction] = useState<AddDownloadAction>({ type: 'start-now' });
   const [pendingUseSharedDestination, setPendingUseSharedDestination] = useState(false);
+  const [pendingDestinationOverrides, setPendingDestinationOverrides] = useState<Record<number, string>>({});
   const [resolvedLocation, setResolvedLocation] = useState('');
   const [isQueueMenuOpen, setIsQueueMenuOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
   // Right Form
@@ -104,7 +106,10 @@ export const AddDownloadsModal = () => {
       setParsedItems([]);
       setSelectedItemIndex(null);
       setPendingUseSharedDestination(false);
+      setPendingDestinationOverrides({});
       setConnections(perServerConnections);
+      setSpeedLimitEnabled(false);
+      setSpeedLimit('1024');
       setUseAuth(false);
       setUsername('');
       setPassword('');
@@ -119,6 +124,7 @@ export const AddDownloadsModal = () => {
       setCookies(pendingAddCookies);
       setMirrors('');
       setIsQueueMenuOpen(false);
+      setIsSubmitting(false);
     } else {
       setUrls('');
     }
@@ -211,8 +217,8 @@ export const AddDownloadsModal = () => {
             const mediaData = await fetchMediaMetadataDeduped({
               url,
               cookieBrowser: browserArg,
-              username: login?.username || null,
-              password: keychainPassword
+              username: useAuth ? username.trim() || null : login?.username || null,
+              password: useAuth ? password || null : keychainPassword
             });
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
@@ -235,7 +241,7 @@ export const AddDownloadsModal = () => {
               });
               updatedItems[i] = {
                 url,
-                file: `${mediaData.title}.${mediaData.formats[0].ext}`,
+                file: canonicalizeDownloadFileName(`${mediaData.title}.${mediaData.formats[0].ext}`),
                 size: mappedFormats[0].detail,
                 sizeBytes: mappedFormats[0].bytes,
                 status: 'Ready',
@@ -260,12 +266,14 @@ export const AddDownloadsModal = () => {
             const meta = await invoke('fetch_metadata', {
               url,
               userAgent: settingsStore.customUserAgent || null,
-              username: login?.username || null,
-              password: keychainPassword
+              username: useAuth ? username.trim() || null : login?.username || null,
+              password: useAuth ? password || null : keychainPassword
             });
             updatedItems[i] = {
               url: meta.url || url,
-              file: lines.length === 1 && pendingAddFilename ? pendingAddFilename : meta.filename,
+              file: canonicalizeDownloadFileName(
+                lines.length === 1 && pendingAddFilename ? pendingAddFilename : meta.filename
+              ),
               size: meta.size,
               sizeBytes: meta.size_bytes,
               status: 'Ready'
@@ -301,7 +309,15 @@ export const AddDownloadsModal = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [urls, pendingAddFilename, isSaveLocationManual, metadataRefreshNonce]);
+  }, [
+    urls,
+    pendingAddFilename,
+    isSaveLocationManual,
+    metadataRefreshNonce,
+    useAuth,
+    username,
+    password
+  ]);
 
   if (!isAddModalOpen) return null;
 
@@ -327,25 +343,41 @@ export const AddDownloadsModal = () => {
   };
 
   const handleAction = async (action: AddDownloadAction) => {
+    if (isSubmitting || parsedItems.length === 0 || parsedItems.some(item => item.status !== 'Ready')) {
+      return;
+    }
+    if (speedLimitEnabled && (!Number.isFinite(Number(speedLimit)) || Number(speedLimit) <= 0)) {
+      addToast({ message: 'Speed limit must be greater than zero', variant: 'error', isActionable: true });
+      return;
+    }
+    setIsSubmitting(true);
     let finalLocation = saveLocation;
     let useSharedDestination = isSaveLocationManual;
+    const destinationOverrides: Record<number, string> = {};
     const settings = useSettingsStore.getState();
     if (settings.askWhereToSaveEachFile && parsedItems.length > 0) {
-      try {
-        const selected = await open({
-          directory: true,
-          multiple: false,
-          defaultPath: finalLocation.startsWith('~') ? undefined : finalLocation
-        });
-        if (selected && typeof selected === 'string') {
-          finalLocation = selected;
-          useSharedDestination = true;
-          setIsSaveLocationManual(true);
-        } else {
-          return; // Cancelled
+      for (const [index, item] of parsedItems.entries()) {
+        try {
+          const suggestedLocation = isSaveLocationManual
+            ? finalLocation
+            : await categoryLocationForFile(item.file);
+          const selected = await open({
+            directory: true,
+            multiple: false,
+            title: `Choose a folder for ${item.file}`,
+            defaultPath: suggestedLocation.startsWith('~') ? undefined : suggestedLocation
+          });
+          if (selected && typeof selected === 'string') {
+            destinationOverrides[index] = selected;
+          } else {
+            setIsSubmitting(false);
+            return;
+          }
+        } catch (e) {
+          console.error("Failed to select folder:", e);
+          setIsSubmitting(false);
+          return;
         }
-      } catch (e) {
-        console.error("Failed to select folder:", e);
       }
     }
 
@@ -355,7 +387,7 @@ export const AddDownloadsModal = () => {
 
     for (let i = 0; i < parsedItems.length; i++) {
       const item = parsedItems[i];
-      let finalFile = item.file;
+      let finalFile = canonicalizeDownloadFileName(item.file);
       if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
         const selectedFormat = item.formats[item.selectedFormat];
         const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -363,7 +395,7 @@ export const AddDownloadsModal = () => {
       }
       const itemLocation = useSharedDestination
         ? finalLocation
-        : await categoryLocationForFile(finalFile);
+        : destinationOverrides[i] || await categoryLocationForFile(finalFile);
 
       const isUrlDupe = store.downloads.some(d => d.url === item.url && d.status !== 'failed' && d.status !== 'completed');
       if (isUrlDupe) {
@@ -400,14 +432,26 @@ export const AddDownloadsModal = () => {
       setConflicts(newConflicts);
       setPendingAction(action);
       setPendingUseSharedDestination(useSharedDestination);
+      setPendingDestinationOverrides(destinationOverrides);
       setShowingDuplicates(true);
+      setIsSubmitting(false);
       return;
     }
 
-    await executeAddDownloads(action, finalLocation, useSharedDestination);
+    try {
+      await executeAddDownloads(action, finalLocation, useSharedDestination, undefined, destinationOverrides);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const executeAddDownloads = async (action: AddDownloadAction, finalLocation: string, useSharedDestination: boolean, resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[]) => {
+  const executeAddDownloads = async (
+    action: AddDownloadAction,
+    finalLocation: string,
+    useSharedDestination: boolean,
+    resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[],
+    destinationOverrides: Record<number, string> = {}
+  ) => {
       let itemsToAdd: Array<ParsedDownloadItem | null> = [...parsedItems];
 
       if (resolutions) {
@@ -420,7 +464,7 @@ export const AddDownloadsModal = () => {
              if (res.resolution === 'skip') {
                  itemsToAdd[idx] = null;
              } else if (res.resolution === 'rename') {
-                 let finalFile = item.file;
+                 let finalFile = canonicalizeDownloadFileName(item.file);
         if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
           const selectedFormat = item.formats[item.selectedFormat];
           const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -428,7 +472,7 @@ export const AddDownloadsModal = () => {
         }
         const itemLocation = useSharedDestination
           ? finalLocation
-          : await categoryLocationForFile(finalFile);
+          : destinationOverrides[idx] || await categoryLocationForFile(finalFile);
                  
                  let count = 1;
                  const base = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -471,7 +515,7 @@ export const AddDownloadsModal = () => {
                 itemsToAdd[idx] = null;
                 continue;
               }
-              let finalFile = item.file;
+              let finalFile = canonicalizeDownloadFileName(item.file);
         if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
           const selectedFormat = item.formats[item.selectedFormat];
           const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
@@ -479,7 +523,7 @@ export const AddDownloadsModal = () => {
         }
         const itemLocation = useSharedDestination
           ? finalLocation
-          : await categoryLocationForFile(finalFile);
+          : destinationOverrides[idx] || await categoryLocationForFile(finalFile);
         const fullPath = await resolveDownloadFilePath(itemLocation, finalFile);
 
         const store = useDownloadStore.getState();
@@ -510,14 +554,14 @@ export const AddDownloadsModal = () => {
          }
       }
 
-      const resolvedItems = itemsToAdd.filter((item): item is ParsedDownloadItem => item !== null);
       let addedCount = 0;
       const failures: string[] = [];
 
-      for (const item of resolvedItems) {
+      for (const [itemIndex, item] of itemsToAdd.entries()) {
+        if (!item) continue;
         try {
           const id = crypto.randomUUID();
-          let finalFile = item.file;
+          let finalFile = canonicalizeDownloadFileName(item.file);
           let formatSelector = undefined;
 
           if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
@@ -546,7 +590,9 @@ export const AddDownloadsModal = () => {
             : undefined,
           cookies: cookies.trim() || undefined,
           mirrors: mirrors.trim() || undefined,
-          destination: useSharedDestination ? finalLocation : undefined,
+          destination: useSharedDestination
+            ? finalLocation
+            : destinationOverrides[itemIndex],
           isMedia: item.isMedia,
           mediaFormatSelector: formatSelector,
           size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
@@ -598,16 +644,20 @@ export const AddDownloadsModal = () => {
     selectedItem.size = format.detail || 'Unknown';
     selectedItem.sizeBytes = format.bytes || 0;
     const baseName = selectedItem.file.substring(0, selectedItem.file.lastIndexOf('.')) || selectedItem.file;
-    selectedItem.file = `${baseName}.${format.ext}`;
+    selectedItem.file = canonicalizeDownloadFileName(`${baseName}.${format.ext}`);
     setParsedItems(newItems);
   };
 
   const requiredBytes = parsedItems.reduce((acc, item) => acc + (item.sizeBytes || 0), 0);
+  const hasApproximateSize = parsedItems.some(item =>
+    item.formats?.[item.selectedFormat ?? -1]?.isApproximate
+  );
   const requiredStr = requiredBytes > 0
-    ? (requiredBytes < 1024 * 1024 ? `${(requiredBytes / 1024).toFixed(1)} KB`
+    ? `${hasApproximateSize ? '~' : ''}${requiredBytes < 1024 * 1024 ? `${(requiredBytes / 1024).toFixed(1)} KB`
        : requiredBytes < 1024 * 1024 * 1024 ? `${(requiredBytes / 1024 / 1024).toFixed(1)} MB`
-       : `${(requiredBytes / 1024 / 1024 / 1024).toFixed(2)} GB`)
+       : `${(requiredBytes / 1024 / 1024 / 1024).toFixed(2)} GB`}`
     : 'Unknown';
+  const canSubmit = parsedItems.length > 0 && parsedItems.every(item => item.status === 'Ready');
 
   return (
     <>
@@ -616,14 +666,22 @@ export const AddDownloadsModal = () => {
           conflicts={conflicts} 
           onConfirm={(resolutions) => {
             setShowingDuplicates(false);
-            void executeAddDownloads(pendingAction, resolvedLocation, pendingUseSharedDestination, resolutions)
+            setIsSubmitting(true);
+            void executeAddDownloads(
+              pendingAction,
+              resolvedLocation,
+              pendingUseSharedDestination,
+              resolutions,
+              pendingDestinationOverrides
+            )
               .catch(error => {
                 addToast({
                   message: `Could not resolve duplicate downloads: ${String(error)}`,
                   variant: 'error',
                   isActionable: true
                 });
-              });
+              })
+              .finally(() => setIsSubmitting(false));
           }} 
           onCancel={() => setShowingDuplicates(false)} 
         />
@@ -652,7 +710,9 @@ export const AddDownloadsModal = () => {
                   onChange={(e) => setUrls(e.target.value)}
                 />
                 <div className="flex justify-between items-center px-1">
-                  <span className="text-[11px] text-text-muted font-medium">{parsedItems.length} valid link(s) detected</span>
+                  <span className="text-[11px] text-text-muted font-medium">
+                    {parsedItems.filter(item => item.status === 'Ready').length} ready, {parsedItems.filter(item => item.status === 'Error').length} failed
+                  </span>
                     <button
                       type="button"
                       onClick={() => setMetadataRefreshNonce(value => value + 1)}
@@ -836,7 +896,7 @@ export const AddDownloadsModal = () => {
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-text-secondary font-medium">Connections per File</label>
                     <div className="flex items-center gap-2">
-                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24 accent-blue-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50" disabled={parsedItems.some(i => i.isMedia)} aria-label="Connections per file" />
+                      <input type="range" min="1" max="16" value={connections} onChange={e=>setConnections(Number(e.target.value))} className="add-download-range w-24 accent-blue-500 cursor-pointer" aria-label="Connections per file" />
                       <span className="add-download-value text-xs text-text-primary font-mono w-6 text-center">{connections}</span>
                     </div>
                   </div>
@@ -924,7 +984,11 @@ export const AddDownloadsModal = () => {
         {/* Footer */}
         <div className="add-download-footer p-4 flex items-center shrink-0">
           <div className="text-[11px] text-text-muted font-medium flex-1">
-            {parsedItems.length === 0 ? "Paste one or more links." : `Ready to add ${parsedItems.length} download(s).`}
+            {parsedItems.length === 0
+              ? 'Paste one or more links.'
+              : canSubmit
+                ? `Ready to add ${parsedItems.length} download(s).`
+                : 'Wait for metadata or remove links that failed validation.'}
           </div>
           <div className="flex gap-2.5">
             <button onClick={() => toggleAddModal(false)} className="add-download-button add-download-button-cancel px-4 text-xs">
@@ -933,7 +997,7 @@ export const AddDownloadsModal = () => {
             <div ref={actionMenuRef} className="relative flex gap-2.5">
               <button
                 onClick={() => handleAction({ type: 'start-now' })}
-                disabled={parsedItems.length === 0}
+                disabled={!canSubmit || isSubmitting}
                 className="add-download-button add-download-button-primary px-5 text-xs"
               >
                 <Play size={12} fill="currentColor" /> Start Downloads
@@ -942,7 +1006,7 @@ export const AddDownloadsModal = () => {
                 <button
                   type="button"
                   onClick={() => setIsQueueMenuOpen(open => !open)}
-                  disabled={parsedItems.length === 0}
+                  disabled={!canSubmit || isSubmitting}
                   className="add-download-button add-download-button-secondary px-4 text-xs"
                   aria-label="Add to queue"
                   aria-haspopup="menu"

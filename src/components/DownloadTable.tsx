@@ -338,7 +338,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             </div>
 
             <div className="download-table-body">
-            <div className="h-full overflow-auto flex flex-col">
+            <div className="download-table-list">
               {filteredDownloads.map((d, index) => (
                 <DownloadItemComponent
                   key={d.id}
@@ -354,16 +354,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   onClick={handleItemClick}
                 />
               ))}
-              {Array.from({ length: Math.max(0, 50 - filteredDownloads.length) }).map((_, i) => {
-                const globalIndex = filteredDownloads.length + i;
-                return (
-                  <div
-                    key={`ghost-${i}`}
-                    className={`download-ghost-row ${globalIndex % 2 !== 0 ? 'striped' : ''}`}
-                  />
-                );
-              })}
-              <div className="flex-1 bg-transparent pointer-events-none"></div>
+              <div className="flex-1 min-h-0 bg-transparent pointer-events-none" />
             </div>
             </div>
             </div>
@@ -411,7 +402,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   {queues.map(q => (
                     <button key={q.id} onClick={() => {
                       setContextMenu(null);
-                      assignToQueue(Array.from(selectedIds), q.id);
+                      void assignToQueue(Array.from(selectedIds), q.id).catch(error => {
+                        showInteractionError('Could not move downloads to queue', error);
+                      });
                     }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
                       {q.name}
                     </button>
@@ -526,7 +519,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                     {queues.map(q => (
                       <button key={q.id} onClick={() => {
                         setContextMenu(null);
-                        assignToQueue([contextItem.id], q.id);
+                        void assignToQueue([contextItem.id], q.id).catch(error => {
+                          showInteractionError('Could not move download to queue', error);
+                        });
                       }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
                         {q.name}
                       </button>

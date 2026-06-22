@@ -665,6 +665,14 @@ fn aggregate_media_fraction(
 }
 
 async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
+    cleanup_media_artifacts(out_path, true).await;
+}
+
+async fn cleanup_media_sidecars(out_path: &std::path::Path) {
+    cleanup_media_artifacts(out_path, false).await;
+}
+
+async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: bool) {
     let Some(parent) = out_path.parent() else {
         return;
     };
@@ -676,7 +684,9 @@ async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
         .and_then(|name| name.to_str())
         .unwrap_or(base_name);
 
-    let _ = tokio::fs::remove_file(out_path).await;
+    if remove_primary {
+        let _ = tokio::fs::remove_file(out_path).await;
+    }
 
     let Ok(mut entries) = tokio::fs::read_dir(parent).await else {
         return;
@@ -1425,7 +1435,7 @@ async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppSt
         .ok_or_else(|| "aria2 returned an invalid version response".to_string())
 }
 
-// ── get_engine_status: Structured engine diagnostics ──────────────
+// ── get_engine_status: Structured engine status ──────────────
 
 async fn run_sidecar_version(
     app_handle: &tauri::AppHandle,
@@ -1915,11 +1925,7 @@ pub(crate) async fn start_media_download_internal(
     max_tries: Option<i32>,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let safe_filename = std::path::Path::new(&filename.replace('\\', "/"))
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download")
-        .to_string();
+    let safe_filename = crate::download_ownership::canonical_download_filename(&filename);
 
 
     let resolved_dest = resolve_path(&destination, &app_handle);
@@ -2413,11 +2419,10 @@ async fn remove_download(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
-    filepath: Option<String>,
+    delete_assets: bool,
 ) -> Result<(), String> {
     log::info!("remove_download called for id: {}", id);
-    let _ = crate::download_ownership::remove(&app_handle, &id);
-    state.queue_manager.release_registered_id(&id).await;
+    let primary_path = crate::download_ownership::primary_path_for_id(&app_handle, &id)?;
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
@@ -2447,9 +2452,8 @@ async fn remove_download(
         } else if let Ok(download_id) = Uuid::parse_str(&id) {
             state
                 .download_coordinator
-                .send(download::DownloadCmd::Cancel(download_id))
+                .send(download::DownloadCmd::CancelWithAck(download_id, tx))
                 .await?;
-            let _ = tx.send(());
         } else {
             let _ = tx.send(());
         }
@@ -2468,41 +2472,61 @@ async fn remove_download(
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
 
-    if let Some(path) = filepath {
-        if !path.is_empty() {
-            let p = std::path::Path::new(&path);
-            if is_safe_path(p, &app_handle) {
-                if p.exists() {
-                    let _ = tokio::fs::remove_file(p).await;
-                }
-                let aria2_path = format!("{}.aria2", path);
-                let p_aria2 = std::path::Path::new(&aria2_path);
-                if p_aria2.exists() {
-                    let _ = tokio::fs::remove_file(p_aria2).await;
-                }
+    if delete_assets {
+        if let Some(path) = primary_path.as_deref() {
+            remove_download_assets(path, &app_handle).await?;
+        }
+    } else if let Some(path) = primary_path.as_deref() {
+        remove_partial_download_assets(path, &app_handle).await?;
+    }
 
-                if let Some(parent) = p.parent() {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        let stem_with_dot = format!("{}.", stem);
-                        if let Ok(mut entries) = tokio::fs::read_dir(parent).await {
-                            while let Ok(Some(entry)) = entries.next_entry().await {
-                                if let Ok(file_name) = entry.file_name().into_string() {
-                                    if file_name.starts_with(&stem_with_dot) && 
-                                       (file_name.ends_with(".part") || file_name.ends_with(".ytdl") || file_name.ends_with(".aria2")) {
-                                        let path_to_remove = entry.path();
-                                        if is_safe_path(&path_to_remove, &app_handle) {
-                                            let _ = tokio::fs::remove_file(path_to_remove).await;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    crate::download_ownership::remove(&app_handle, &id)?;
+    state.queue_manager.release_registered_id(&id).await;
+    Ok(())
+}
+
+async fn remove_download_assets(
+    primary: &std::path::Path,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    if !is_safe_path(primary, app_handle) {
+        return Err("Download asset path is outside an allowed download location".to_string());
+    }
+
+    if primary.exists() {
+        trash::delete(primary)
+            .map_err(|error| format!("failed to move downloaded file to Trash: {error}"))?;
+    }
+
+    for suffix in [".aria2", ".part", ".ytdl"] {
+        let candidate = std::path::PathBuf::from(format!("{}{}", primary.display(), suffix));
+        if candidate.exists() && is_safe_path(&candidate, app_handle) {
+            tokio::fs::remove_file(&candidate)
+                .await
+                .map_err(|error| format!("failed to remove '{}': {error}", candidate.display()))?;
         }
     }
 
+    cleanup_media_processing_artifacts(primary).await;
+    Ok(())
+}
+
+async fn remove_partial_download_assets(
+    primary: &std::path::Path,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    if !is_safe_path(primary, app_handle) {
+        return Err("Download asset path is outside an allowed download location".to_string());
+    }
+    for suffix in [".aria2", ".part", ".ytdl"] {
+        let candidate = std::path::PathBuf::from(format!("{}{}", primary.display(), suffix));
+        if candidate.exists() && is_safe_path(&candidate, app_handle) {
+            tokio::fs::remove_file(&candidate)
+                .await
+                .map_err(|error| format!("failed to remove '{}': {error}", candidate.display()))?;
+        }
+    }
+    cleanup_media_sidecars(primary).await;
     Ok(())
 }
 
@@ -2703,17 +2727,43 @@ fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn get_pending_order(state: tauri::State<'_, AppState>) -> Result<Vec<String>, AppError> {
-    Ok(state.queue_manager.pending_order().await)
+fn ack_schedule_trigger(
+    app_handle: tauri::AppHandle,
+    action: String,
+    key: String,
+) -> Result<(), String> {
+    crate::settings::update_settings_state(&app_handle, |state| match action.as_str() {
+        "start" => {
+            state.insert("schedulerLastStartKey".to_string(), serde_json::json!(key));
+        }
+        "stop" => {
+            state.insert("schedulerLastStopKey".to_string(), serde_json::json!(key));
+        }
+        _ => {}
+    })?;
+    match action.as_str() {
+        "start" | "stop" => Ok(()),
+        _ => Err("Unknown scheduler trigger action".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn get_pending_order(
+    state: tauri::State<'_, AppState>,
+    queue_id: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    Ok(state.queue_manager.pending_order(queue_id.as_deref()).await)
 }
 
 #[tauri::command]
 async fn enqueue_download(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    item: queue::EnqueueItem,
-) -> Result<String, AppError> {
+    mut item: queue::EnqueueItem,
+) -> Result<crate::ipc::EnqueueAccepted, AppError> {
     let id = item.id.clone();
+    item.filename = crate::download_ownership::canonical_download_filename(&item.filename);
+    let accepted_filename = item.filename.clone();
     crate::download_ownership::register_expected(
         &app_handle,
         &item.id,
@@ -2725,15 +2775,21 @@ async fn enqueue_download(
         state.queue_manager.release_registered_id(&id).await;
         return Err(AppError::Internal(e));
     }
-    Ok(id)
+    Ok(crate::ipc::EnqueueAccepted {
+        id,
+        filename: accepted_filename,
+    })
 }
 
 #[tauri::command]
 async fn enqueue_many(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    items: Vec<queue::EnqueueItem>,
+    mut items: Vec<queue::EnqueueItem>,
 ) -> Result<Vec<crate::ipc::EnqueueResult>, AppError> {
+    for item in &mut items {
+        item.filename = crate::download_ownership::canonical_download_filename(&item.filename);
+    }
     for item in &items {
         crate::download_ownership::register_expected(
             &app_handle,
@@ -2759,9 +2815,13 @@ async fn enqueue_many(
 async fn move_in_queue(
     state: tauri::State<'_, AppState>,
     id: String,
+    queue_id: String,
     direction: crate::ipc::QueueDirection,
 ) -> Result<Vec<String>, AppError> {
-    Ok(state.queue_manager.move_in_queue(&id, direction).await)
+    Ok(state
+        .queue_manager
+        .move_in_queue(&id, &queue_id, direction)
+        .await)
 }
 
 #[tauri::command]
@@ -3010,26 +3070,120 @@ fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String>
     }
 }
 
-#[tauri::command]
-async fn export_logs(app_handle: tauri::AppHandle, dest_path: String) -> Result<String, String> {
+async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
     use tauri::Manager;
     let log_dir = app_handle.path().app_log_dir().map_err(|e| e.to_string())?;
-    let log_file = log_dir.join("firelink.log");
-    let src = if log_file.exists() {
-        log_file
-    } else {
-        let mut found = None;
-        if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if entry.path().extension().is_some_and(|e| e == "log") {
-                    found = Some(entry.path());
-                    break;
-                }
+    let mut files = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".log"))
+            {
+                files.push(path);
             }
         }
-        found.ok_or_else(|| "No log file found in app log directory".to_string())?
-    };
-    tokio::fs::copy(&src, &dest_path).await.map_err(|e| e.to_string())?;
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn redact_log_line(line: &str) -> String {
+    use std::sync::OnceLock;
+    static SECRET: OnceLock<regex::Regex> = OnceLock::new();
+    static QUERY: OnceLock<regex::Regex> = OnceLock::new();
+    let secret = SECRET.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\s,;]+)",
+        )
+        .expect("valid secret redaction regex")
+    });
+    let query = QUERY.get_or_init(|| {
+        regex::Regex::new(r"(https?://[^\s?]+)\?[^\s]+")
+            .expect("valid URL query redaction regex")
+    });
+    let redacted = secret.replace_all(line, "$1=[redacted]");
+    query.replace_all(&redacted, "$1?[redacted]").into_owned()
+}
+
+#[tauri::command]
+async fn read_logs(app_handle: tauri::AppHandle, limit: usize) -> Result<Vec<String>, String> {
+    let mut lines = Vec::new();
+    for file in log_files(&app_handle).await? {
+        let content = tokio::fs::read_to_string(&file)
+            .await
+            .map_err(|error| format!("failed to read '{}': {error}", file.display()))?;
+        lines.extend(content.lines().map(redact_log_line));
+    }
+    let keep = limit.clamp(1, 10_000);
+    if lines.len() > keep {
+        lines.drain(..lines.len() - keep);
+    }
+    Ok(lines)
+}
+
+#[tauri::command]
+async fn export_logs(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    dest_path: String,
+) -> Result<String, String> {
+    let mut output = format!(
+        "Firelink support logs\nVersion: {}\nOS: {} {}\nArchitecture: {}\nGenerated: {}\n\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::FAMILY,
+        std::env::consts::ARCH,
+        chrono::Utc::now().to_rfc3339(),
+    );
+    let (aria2, ytdlp, ffmpeg, deno) = tokio::join!(
+        check_aria2(&app_handle, state.aria2_port, &state.aria2_secret),
+        check_ytdlp(&app_handle),
+        check_ffmpeg(&app_handle),
+        check_deno(&app_handle),
+    );
+    output.push_str("Engine status:\n");
+    for engine in [aria2, ytdlp, ffmpeg, deno] {
+        output.push_str(&format!(
+            "- {}: {}{}\n",
+            engine.name,
+            if engine.ready { "ready" } else { "unavailable" },
+            engine
+                .version
+                .as_deref()
+                .map(|version| format!(" ({version})"))
+                .unwrap_or_default()
+        ));
+        if let Some(error) = engine.error {
+            output.push_str(&format!("  Error: {}\n", redact_log_line(&error)));
+        }
+    }
+    if let Ok(settings) = crate::settings::load_settings(&app_handle) {
+        output.push_str(&format!(
+            "\nRuntime settings:\n- Max concurrent downloads: {}\n- Per-server connections: {}\n- Automatic retries: {}\n- Proxy mode: {:?}\n- Scheduler enabled: {}\n\n",
+            settings.max_concurrent_downloads,
+            settings.per_server_connections,
+            settings.max_automatic_retries,
+            settings.proxy_mode,
+            settings.scheduler.enabled,
+        ));
+    }
+    for file in log_files(&app_handle).await? {
+        output.push_str(&format!("===== {} =====\n", file.display()));
+        let content = tokio::fs::read_to_string(&file)
+            .await
+            .map_err(|error| format!("failed to read '{}': {error}", file.display()))?;
+        for line in content.lines() {
+            output.push_str(&redact_log_line(line));
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+    tokio::fs::write(&dest_path, output)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(dest_path)
 }
 
@@ -3154,7 +3308,7 @@ mod tests {
         aggregate_media_fraction, build_media_format_options, collect_download_uris,
         is_excluded_yt_dlp_format, json_lower, media_progress_speed,
         normalize_speed_limit_for_aria2, parse_firelink_urls, parse_media_progress_line,
-        MediaProgress, MEDIA_PROGRESS_PREFIX,
+        redact_log_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -3166,6 +3320,16 @@ mod tests {
         assert_eq!(normalize_speed_limit_for_aria2("1.5 MB/s"), Some("1.5M".to_string()));
         assert_eq!(normalize_speed_limit_for_aria2("0"), None);
         assert_eq!(normalize_speed_limit_for_aria2("bad"), None);
+    }
+
+    #[test]
+    fn redacts_secrets_and_signed_url_queries_from_support_logs() {
+        let line = "Authorization: bearer-secret Cookie=session=abc https://example.com/file?token=secret";
+        let redacted = redact_log_line(line);
+        assert!(!redacted.contains("bearer-secret"));
+        assert!(!redacted.contains("session=abc"));
+        assert!(!redacted.contains("token=secret"));
+        assert!(redacted.contains("[redacted]"));
     }
 
     #[test]
@@ -3802,18 +3966,11 @@ pub fn run() {
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
                 ])
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
                 .max_file_size(10_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
-                .format(move |out, message, _record| {
-                    let msg = message.to_string();
-                    if msg.contains("[download]") && msg.contains('%') {
-                        return;
-                    }
-                    out.finish(format_args!("{}\n", msg));
-                })
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
@@ -3833,6 +3990,7 @@ pub fn run() {
  get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
  pause_download, resume_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
+            ack_schedule_trigger,
             request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             hydrate_extension_pairing_token, acknowledge_pairing_token_change,
@@ -3840,12 +3998,12 @@ pub fn run() {
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
             enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
-            commands::reveal_in_file_manager, commands::open_downloaded_file, commands::trash_download_assets,
+            commands::reveal_in_file_manager, commands::open_downloaded_file,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories,
             db_save_settings, db_load_settings, db_get_all_downloads, db_replace_downloads,
             db_get_all_queues, db_replace_queues,
-            export_logs
+            read_logs, export_logs
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

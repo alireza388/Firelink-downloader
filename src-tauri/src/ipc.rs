@@ -8,6 +8,8 @@ use ts_rs::TS;
 pub enum DownloadStatus {
     /// Added to the download list but not assigned to a queue or dispatched.
     Ready,
+    /// Assigned to a queue but intentionally not registered with the backend.
+    Staged,
     Downloading,
     /// Post-download media processing such as yt-dlp/ffmpeg merging or
     /// extraction. The queue permit is still held.
@@ -25,6 +27,7 @@ impl DownloadStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Ready => "ready",
+            Self::Staged => "staged",
             Self::Downloading => "downloading",
             Self::Processing => "processing",
             Self::Paused => "paused",
@@ -100,6 +103,8 @@ pub struct DownloadItem {
     #[ts(optional)]
     pub queue_id: Option<String>,
     #[ts(optional)]
+    pub queue_position: Option<i32>,
+    #[ts(optional)]
     pub has_been_dispatched: Option<bool>,
 }
 
@@ -110,7 +115,17 @@ pub struct EnqueueResult {
     pub id: String,
     pub success: bool,
     #[ts(optional)]
+    pub filename: Option<String>,
+    #[ts(optional)]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct EnqueueAccepted {
+    pub id: String,
+    pub filename: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -170,7 +185,7 @@ pub enum ActiveView {
     Scheduler,
     #[serde(rename = "speedLimiter")]
     SpeedLimiter,
-    Diagnostics,
+    Logs,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -219,6 +234,7 @@ pub struct SchedulerSettings {
     pub stop_time: String,
     pub everyday: bool,
     pub selected_days: Vec<u32>,
+    pub selected_queue_ids: Vec<String>,
     pub post_queue_action: PostQueueAction,
 }
 

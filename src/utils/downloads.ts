@@ -83,6 +83,15 @@ export const fileNameFromUrl = (rawUrl: string): string => {
   return 'download';
 };
 
+export const canonicalizeDownloadFileName = (fileName: string): string => {
+  const leaf = fileName.replace(/\\/g, '/').split('/').pop() || 'download';
+  const sanitized = leaf
+    .replace(/[\u0000-\u001f<>:"/\\|?*]/g, '-')
+    .trim()
+    .replace(/[. ]+$/g, '');
+  return sanitized && sanitized !== '.' && sanitized !== '..' ? sanitized : 'download';
+};
+
 export const isMediaUrl = (rawUrl: string): boolean => {
   try {
     const url = new URL(rawUrl);

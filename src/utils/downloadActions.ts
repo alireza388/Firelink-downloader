@@ -2,6 +2,7 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 
 const STARTABLE_STATUSES: ReadonlySet<DownloadStatus> = new Set([
   'ready',
+  'staged',
   'paused',
   'failed',
 ]);
@@ -29,7 +30,7 @@ export const canRedownload = (status: DownloadStatus): boolean =>
   REDOWNLOADABLE_STATUSES.has(status);
 
 export const startActionLabel = (status: DownloadStatus): 'Start' | 'Resume' =>
-  status === 'ready' || status === 'failed' ? 'Start' : 'Resume';
+  status === 'ready' || status === 'staged' || status === 'failed' ? 'Start' : 'Resume';
 
 export const isTransferLocked = (status: DownloadStatus): boolean =>
   status === 'downloading' || status === 'processing' || status === 'retrying';

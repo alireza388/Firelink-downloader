@@ -7,11 +7,9 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
-import { isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
+import { categoryForFileName, isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import {
-  expandTilde,
-  resolveCategoryDestination,
-  resolveDownloadFilePath
+  resolveCategoryDestination
 } from '../utils/downloadLocations';
 import { canPauseDownload, canStartDownload } from '../utils/downloadActions';
 
@@ -42,6 +40,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
 
       const enqueueItem = {
         id: item.id,
+        queue_id: item.queueId || MAIN_QUEUE_ID,
         url: item.url,
         destination,
         filename: item.fileName,
@@ -61,8 +60,15 @@ export async function dispatchItem(id: string): Promise<boolean> {
         is_media: item.isMedia || false
       };
 
-      await invoke('enqueue_download', { item: enqueueItem });
-      const order = await invoke('get_pending_order');
+      const accepted = await invoke('enqueue_download', { item: enqueueItem });
+      const acceptedFilename = accepted?.filename || item.fileName;
+      if (acceptedFilename !== item.fileName) {
+        useDownloadStore.getState().updateDownload(id, {
+          fileName: acceptedFilename,
+          category: categoryForFileName(acceptedFilename)
+        });
+      }
+      const order = await invoke('get_pending_order', { queueId: item.queueId || MAIN_QUEUE_ID });
       useDownloadStore.getState().setPendingOrder(order);
       useDownloadStore.getState().registerBackendIds([id]);
       return true;
@@ -126,15 +132,25 @@ const syncSystemIntegrations = () => {
   }
 };
 
-const resolveDownloadPath = async (destination: string, fileName: string) => {
-  return resolveDownloadFilePath(await expandTilde(destination), fileName);
-};
-
 const effectiveDestinationForItem = async (
   item: Pick<DownloadItem, 'destination' | 'category'>,
   settings: ReturnType<typeof useSettingsStore.getState>
 ): Promise<string> =>
   item.destination || resolveCategoryDestination(settings, item.category);
+
+const normalizeQueuePositions = (downloads: DownloadItem[]): DownloadItem[] => {
+  const nextPosition = new Map<string, number>();
+  return downloads.map(download => {
+    const queueId = download.queueId || MAIN_QUEUE_ID;
+    const position = nextPosition.get(queueId) || 0;
+    nextPosition.set(queueId, position + 1);
+    return {
+      ...download,
+      queueId,
+      queuePosition: download.queuePosition ?? position
+    };
+  });
+};
 
 export type { DownloadStatus };
 export const MAIN_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
@@ -186,15 +202,15 @@ interface DownloadState {
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
   removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
   redownload: (id: string) => Promise<void>;
-  resumeDownload: (id: string) => Promise<void>;
-  startQueue: (queueId: string) => Promise<number>;
+  resumeDownload: (id: string) => Promise<boolean>;
+  startQueue: (queueId: string) => Promise<string[]>;
   pauseQueue: (queueId: string) => Promise<number>;
   startAll: () => Promise<number>;
   pauseAll: () => Promise<number>;
-  assignToQueue: (ids: string[], queueId: string) => void;
+  assignToQueue: (ids: string[], queueId: string) => Promise<void>;
   addQueue: (name: string) => void;
   renameQueue: (id: string, name: string) => void;
-  removeQueue: (id: string) => void;
+  removeQueue: (id: string) => Promise<void>;
   initDB: () => Promise<void>;
   
 }
@@ -205,8 +221,27 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingOrder: [],
   setPendingOrder: (order) => set({ pendingOrder: order }),
   moveInQueue: async (id, direction) => {
+    const item = get().downloads.find(download => download.id === id);
+    if (!item) return;
+    const queueId = item.queueId || MAIN_QUEUE_ID;
+    const queueItems = get().downloads
+      .filter(download => (download.queueId || MAIN_QUEUE_ID) === queueId && download.status !== 'completed')
+      .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
+    const index = queueItems.findIndex(download => download.id === id);
+    const target = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= queueItems.length) return;
+    const reordered = [...queueItems];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const positions = new Map(reordered.map((download, position) => [download.id, position]));
+    set(state => ({
+      downloads: state.downloads.map(download => positions.has(download.id)
+        ? { ...download, queuePosition: positions.get(download.id) }
+        : download)
+    }));
+
+    if (!get().backendRegisteredIds.has(id)) return;
     try {
-      const order = await invoke('move_in_queue', { id, direction });
+      const order = await invoke('move_in_queue', { id, queueId, direction });
       set({ pendingOrder: order });
     } catch (e) {
       console.error("Failed to move item in queue:", e);
@@ -284,20 +319,21 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   addDownload: async (item, action) => {
     const settings = useSettingsStore.getState();
     const destPath = await effectiveDestinationForItem(item, settings);
+    const queueId = action.type === 'add-to-queue' ? action.queueId : MAIN_QUEUE_ID;
+    const queuePosition = get().downloads.filter(download =>
+      (download.queueId || MAIN_QUEUE_ID) === queueId && download.status !== 'completed'
+    ).length;
     const ownedItem: DownloadItem = {
       ...item,
       destination: destPath,
-      status: action.type === 'add-to-queue' ? 'queued' : 'ready',
-      queueId: action.type === 'add-to-queue' ? action.queueId : MAIN_QUEUE_ID,
+      status: action.type === 'add-to-queue' ? 'staged' : 'ready',
+      queueId,
+      queuePosition,
       hasBeenDispatched: false
     };
     set((state) => ({ downloads: [...state.downloads, ownedItem] }));
 
     if (action.type === 'add-to-queue') {
-      const order = useDownloadStore.getState().pendingOrder;
-      if (!order.includes(item.id)) {
-        useDownloadStore.getState().setPendingOrder([...order, item.id]);
-      }
       info(`Download ${item.id} added to queue ${action.queueId}`);
     } else if (action.type === 'start-now') {
       if (await dispatchItem(item.id)) {
@@ -315,7 +351,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       throw new Error("Cannot change properties while transfer is active. Pause it first.");
     }
 
-    if (item.status === 'ready' || item.status === 'completed' || item.status === 'failed') {
+    if (item.status === 'ready' || item.status === 'staged' || item.status === 'completed' || item.status === 'failed') {
       state.updateDownload(id, updates);
       return;
     }
@@ -373,18 +409,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   removeDownload: async (id, deleteFile = false) => {
     const item = get().downloads.find(d => d.id === id);
 
-    if (item && deleteFile) {
-      const filepath = await resolveDownloadPath(item.destination || '~/Downloads', item.fileName);
-      const partialPaths = [`${filepath}.aria2`, `${filepath}.part`];
-      await invoke('trash_download_assets', { path: filepath, partialPaths });
-    }
-
     if (item) {
-      try {
-        await invoke('remove_download', { id, filepath: null });
-      } catch (e) {
-        console.error("Failed to terminate download on backend during deletion, but will still remove from UI:", e);
-      }
+      await invoke('remove_download', { id, deleteAssets: deleteFile });
     }
 
     set((state) => ({
@@ -464,19 +490,20 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   resumeDownload: async (id) => {
     const targetItem = get().downloads.find(d => d.id === id);
-    if (!targetItem) return;
+    if (!targetItem) return false;
 
     try {
-      if (targetItem.status === 'ready') {
+      if (targetItem.status === 'ready' || targetItem.status === 'staged') {
         if (await dispatchItem(id)) {
           get().updateDownload(id, { hasBeenDispatched: true });
+          return true;
         }
-        return;
+        return false;
       }
 
       const resumedExisting = await invoke('resume_download', { id });
       if (resumedExisting) {
-        return;
+        return true;
       }
 
       get().unregisterBackendIds([id]);
@@ -492,38 +519,50 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
       if (!await dispatchItem(id)) {
         console.error("Failed to re-enqueue for resume");
+        return false;
       }
+      return true;
     } catch (e) {
       console.error("Failed to resume download:", e);
+      return false;
     }
   },
   startQueue: async (queueId) => {
     const runnable = get().downloads
-      .filter(item => item.queueId === queueId && (item.status === 'queued' || canStartDownload(item.status)));
+      .filter(item => item.queueId === queueId && (item.status === 'queued' || canStartDownload(item.status)))
+      .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
 
-    if (runnable.length === 0) return 0;
+    if (runnable.length === 0) return [];
 
-    let dispatchedCount = 0;
-    const promises = runnable.map(async (item) => {
-      if (item.status === 'ready' || item.status === 'failed' || !item.hasBeenDispatched) {
+    const acceptedIds: string[] = [];
+    for (const item of runnable) {
+      if (
+        item.status === 'ready' ||
+        item.status === 'staged' ||
+        item.status === 'failed' ||
+        !item.hasBeenDispatched ||
+        !get().backendRegisteredIds.has(item.id)
+      ) {
         if (await dispatchItem(item.id)) {
-          get().updateDownload(item.id, { hasBeenDispatched: true, status: 'queued' });
-          dispatchedCount++;
+          const current = get().downloads.find(download => download.id === item.id);
+          get().updateDownload(item.id, {
+            hasBeenDispatched: true,
+            ...(current?.status === item.status ? { status: 'queued' as const } : {})
+          });
+          acceptedIds.push(item.id);
         }
       } else if (item.status === 'paused' || item.status === 'queued') {
         // If it's queued but already dispatched, it might be waiting. 
         // If it's paused, we resume it.
         if (item.status === 'paused') {
-          await get().resumeDownload(item.id);
+          if (!await get().resumeDownload(item.id)) continue;
         }
-        dispatchedCount++;
+        acceptedIds.push(item.id);
       }
-    });
+    }
 
-    await Promise.all(promises);
-
-    info(`Queue ${queueId} started, ${dispatchedCount} items dispatched/resumed`);
-    return dispatchedCount;
+    info(`Queue ${queueId} started, ${acceptedIds.length} items dispatched/resumed`);
+    return acceptedIds;
   },
   pauseQueue: async (queueId) => {
     const activeIds = get().downloads
@@ -556,7 +595,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         .map(item => item.queueId || MAIN_QUEUE_ID)
     );
     const results = await Promise.all(Array.from(queueIds, queueId => get().startQueue(queueId)));
-    return results.reduce((total, count) => total + count, 0);
+    return results.reduce((total, ids) => total + ids.length, 0);
   },
   pauseAll: async () => {
     const activeIds = get().downloads
@@ -571,12 +610,39 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     syncSystemIntegrations();
     return pausedCount;
   },
-  assignToQueue: (ids, queueId) => {
+  assignToQueue: async (ids, queueId) => {
     const selectedIds = new Set(ids);
+    const selected = get().downloads.filter(item => selectedIds.has(item.id));
+    const locked = selected.find(item => isActiveDownloadStatus(item.status) && item.status !== 'queued');
+    if (locked) {
+      throw new Error(`Pause ${locked.fileName} before moving it to another queue.`);
+    }
+
+    for (const item of selected) {
+      if (!get().backendRegisteredIds.has(item.id)) continue;
+      if (item.status === 'queued') {
+        await invoke('remove_from_queue', { id: item.id });
+      } else if (item.status === 'paused') {
+        await invoke('detach_download_for_reconfigure', { id: item.id });
+      }
+      get().unregisterBackendIds([item.id]);
+    }
+
+    const nextPosition = get().downloads.filter(item =>
+      !selectedIds.has(item.id) &&
+      (item.queueId || MAIN_QUEUE_ID) === queueId &&
+      item.status !== 'completed'
+    ).length;
     set(state => ({
       downloads: state.downloads.map(item =>
         selectedIds.has(item.id) && item.status !== 'completed'
-          ? { ...item, queueId }
+          ? {
+              ...item,
+              queueId,
+              queuePosition: nextPosition + selected.findIndex(selectedItem => selectedItem.id === item.id),
+              status: 'staged' as const,
+              hasBeenDispatched: false
+            }
           : item
       )
     }));
@@ -599,9 +665,14 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       })
     }));
   },
-  removeQueue: (id) => {
+  removeQueue: async (id) => {
     if (id === MAIN_QUEUE_ID) return;
-    
+    const unfinishedIds = get().downloads
+      .filter(download => download.queueId === id && download.status !== 'completed')
+      .map(download => download.id);
+    if (unfinishedIds.length > 0) {
+      await get().assignToQueue(unfinishedIds, MAIN_QUEUE_ID);
+    }
     set((state) => ({
       queues: state.queues.filter(q => q.id !== id),
       downloads: state.downloads.map(d => 
@@ -619,10 +690,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       set(state => ({
         queues: queues.length > 0 ? queues : state.queues,
         downloads: downloads.length > 0
-          ? downloads.map(download => ({
-              ...download,
-              queueId: download.queueId || MAIN_QUEUE_ID
-            }))
+          ? normalizeQueuePositions(downloads)
           : state.downloads
       }));
       
@@ -655,6 +723,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               await resolveCategoryDestination(settings, item.category);
             itemsToEnqueue.push({
               id: item.id,
+              queue_id: item.queueId || MAIN_QUEUE_ID,
               url: item.url,
               destination: destPath,
               filename: item.fileName,
@@ -677,7 +746,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           const results = await invoke('enqueue_many', { items: itemsToEnqueue });
           const registeredIds = results.filter(result => result.success).map(result => result.id);
           const failedIds = new Set(results.filter(result => !result.success).map(result => result.id));
-          const order = await invoke('get_pending_order');
+          const order = await invoke('get_pending_order', { queueId: null });
           set(state => ({
             pendingOrder: order,
             backendRegisteredIds: new Set([

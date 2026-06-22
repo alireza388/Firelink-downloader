@@ -8,6 +8,7 @@
     "core:window:allow-start-dragging",
     "opener:default",
     "dialog:default",
+    "log:default",
     "notification:default",
     "notification:allow-is-permission-granted"
   ]

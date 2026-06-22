@@ -177,7 +177,7 @@ export default function SettingsView() {
   const settings = useSettingsStore();
   const activeTab = settings.activeSettingsTab;
 
-  // Local state for engine diagnostics
+  // Local state for engine status
 const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
 const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
 const [isRecheckingEngines, setIsRecheckingEngines] = useState(false);

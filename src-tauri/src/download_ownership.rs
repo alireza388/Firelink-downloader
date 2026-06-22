@@ -9,6 +9,30 @@ struct DownloadOwnershipRecord {
     primary_path: String,
 }
 
+pub fn canonical_download_filename(filename: &str) -> String {
+    let leaf = filename.replace('\\', "/");
+    let leaf = Path::new(&leaf)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download");
+    let sanitized = leaf
+        .chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.trim().trim_end_matches(['.', ' ']);
+    if sanitized.is_empty() || matches!(sanitized, "." | "..") {
+        "download".to_string()
+    } else {
+        sanitized.to_string()
+    }
+}
+
 pub fn expected_primary_path(
     app_handle: &tauri::AppHandle,
     destination: &str,
@@ -19,10 +43,7 @@ pub fn expected_primary_path(
         return Err("Path traversal blocked".to_string());
     }
 
-    let safe_filename = Path::new(&filename.replace('\\', "/"))
-        .file_name()
-        .ok_or_else(|| "Download filename is invalid".to_string())?
-        .to_owned();
+    let safe_filename = canonical_download_filename(filename);
     Ok(resolved_dest.join(safe_filename))
 }
 
@@ -65,6 +86,16 @@ pub fn remove(app_handle: &tauri::AppHandle, id: &str) -> Result<(), String> {
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     crate::db::remove_ownership(&connection, id)
+}
+
+pub fn primary_path_for_id(
+    app_handle: &tauri::AppHandle,
+    id: &str,
+) -> Result<Option<PathBuf>, String> {
+    Ok(load_records(app_handle)?
+        .into_iter()
+        .find(|record| record.id == id)
+        .map(|record| PathBuf::from(record.primary_path)))
 }
 
 pub fn known_primary_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
@@ -167,4 +198,16 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
     }
 
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_download_filename;
+
+    #[test]
+    fn canonicalizes_untrusted_download_filenames() {
+        assert_eq!(canonical_download_filename("../folder/video?.mp4"), "video-.mp4");
+        assert_eq!(canonical_download_filename(" report. "), "report");
+        assert_eq!(canonical_download_filename(".."), "download");
+    }
 }

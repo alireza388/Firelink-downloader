@@ -8,6 +8,7 @@ import {
 import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadStore';
 import { ActiveView, useSettingsStore } from '../store/useSettingsStore';
 import { WindowDragRegion } from './WindowDragRegion';
+import { useToast } from '../contexts/ToastContext';
 
 export type SidebarFilter = 'all' | 'active' | 'completed' | 'unfinished' | DownloadCategory | 'settings' | string;
 
@@ -20,6 +21,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   const { selectedFilter, onSelectFilter } = props;
   const { downloads, queues, addQueue, renameQueue, removeQueue, startQueue, pauseQueue } = useDownloadStore();
   const { activeView, setActiveView, toggleSidebar } = useSettingsStore();
+  const { addToast } = useToast();
 
   const [isAddingQueue, setIsAddingQueue] = useState(false);
   const [newQueueName, setNewQueueName] = useState('');
@@ -236,7 +238,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           <div className="sidebar-section-label">Tools</div>
           <ToolItem icon={CalendarClock} label="Scheduler" view="scheduler" />
           <ToolItem icon={Gauge} label="Speed Limiter" view="speedLimiter" />
-          <ToolItem icon={Bug} label="Diagnostics" view="diagnostics" />
+          <ToolItem icon={Bug} label="Logs" view="logs" />
         </section>
       </div>
 
@@ -294,7 +296,17 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           {!queues.find(q => q.id === contextMenu.id)?.isMain && (
             <button
               className="w-full text-left px-3 py-1.5 flex items-center hover:bg-red-500/20 text-red-400"
-              onClick={() => { removeQueue(contextMenu.id); setContextMenu(null); }}
+              onClick={() => {
+                const queueId = contextMenu.id;
+                setContextMenu(null);
+                void removeQueue(queueId).catch(error => {
+                  addToast({
+                    message: `Could not delete queue: ${String(error)}`,
+                    variant: 'error',
+                    isActionable: true
+                  });
+                });
+              }}
             >
               <Trash2 size={14} className="mr-2" />
               Delete Queue

@@ -26,6 +26,11 @@ const postActions: { value: PostQueueAction; label: string; icon: typeof Moon }[
   { value: 'shutdown', label: 'Shut down', icon: Power },
 ];
 
+const minuteOfDay = (value: string) => {
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
+};
+
 function nextScheduledRun(settings: SchedulerSettings): string {
   if (!settings.enabled) return 'Scheduler is disabled';
 
@@ -55,6 +60,7 @@ export default function SchedulerView() {
   const savedSettings = useSettingsStore(state => state.scheduler);
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const setScheduler = useSettingsStore(state => state.setScheduler);
+  const queues = useDownloadStore(state => state.queues);
   const [draft, setDraft] = useState<SchedulerSettings>(savedSettings);
   const { addToast } = useToast();
   const [permissionMessage, setPermissionMessage] = useState('');
@@ -81,12 +87,41 @@ export default function SchedulerView() {
     }));
   };
 
+  const availableQueueIds = new Set(queues.map(queue => queue.id));
+  const selectedQueueIds = draft.selectedQueueIds.filter(queueId => availableQueueIds.has(queueId));
+  const effectiveSelectedQueueIds = selectedQueueIds.length > 0
+    ? selectedQueueIds
+    : [MAIN_QUEUE_ID];
+
+  const toggleQueue = (queueId: string) => {
+    setDraft(current => {
+      const isSelected = current.selectedQueueIds.includes(queueId);
+      const availableSelectionCount = current.selectedQueueIds
+        .filter(id => availableQueueIds.has(id))
+        .length;
+      if (isSelected && availableSelectionCount === 1) return current;
+      return {
+        ...current,
+        selectedQueueIds: isSelected
+          ? current.selectedQueueIds.filter(id => id !== queueId)
+          : [...current.selectedQueueIds, queueId]
+      };
+    });
+  };
+
   const save = () => {
+    if (!draft.everyday && draft.selectedDays.length === 0) {
+      addToast({ message: 'Select at least one day for the scheduler', variant: 'error', isActionable: true });
+      return;
+    }
+    if (draft.stopTimeEnabled && minuteOfDay(draft.stopTime) <= minuteOfDay(draft.startTime)) {
+      addToast({ message: 'Stop time must be later than start time', variant: 'error', isActionable: true });
+      return;
+    }
     const normalized = {
       ...draft,
-      selectedDays: draft.everyday || draft.selectedDays.length > 0
-        ? draft.selectedDays
-        : savedSettings.selectedDays
+      selectedDays: draft.selectedDays,
+      selectedQueueIds: effectiveSelectedQueueIds
     };
     setScheduler(normalized);
     setDraft(normalized);
@@ -94,18 +129,27 @@ export default function SchedulerView() {
   };
 
   const runNow = async () => {
-    const count = await useDownloadStore.getState().startQueue(MAIN_QUEUE_ID);
+    const results = await Promise.all(
+      effectiveSelectedQueueIds.map(queueId => useDownloadStore.getState().startQueue(queueId))
+    );
+    const count = results.reduce((total, ids) => total + ids.length, 0);
+    const acceptedIds = results.flat();
     if (count > 0) {
       useSettingsStore.getState().setSchedulerRunning(true);
+      useSettingsStore.getState().setSchedulerActiveDownloadIds(acceptedIds);
       addToast({ message: `Started ${count} download${count === 1 ? '' : 's'}`, variant: 'success' });
     } else {
-      addToast({ message: 'No paused or failed downloads to start', variant: 'info' });
+      addToast({ message: 'No downloads in the selected queues can be started', variant: 'info' });
     }
   };
 
   const pauseNow = async () => {
-    const count = await useDownloadStore.getState().pauseQueue(MAIN_QUEUE_ID);
+    const counts = await Promise.all(
+      effectiveSelectedQueueIds.map(queueId => useDownloadStore.getState().pauseQueue(queueId))
+    );
+    const count = counts.reduce((total, queueCount) => total + queueCount, 0);
     useSettingsStore.getState().setSchedulerRunning(false);
+    useSettingsStore.getState().setSchedulerActiveDownloadIds([]);
     addToast({ message: count > 0 ? `Paused ${count} active download${count === 1 ? '' : 's'}` : 'No active downloads', variant: 'info' });
   };
 
@@ -230,6 +274,9 @@ export default function SchedulerView() {
                 <input type="time" value={draft.stopTime} onChange={event => updateDraft('stopTime', event.target.value)} disabled={!draft.enabled || !draft.stopTimeEnabled} className="app-control px-3 py-2 text-text-primary disabled:opacity-50" />
               </div>
             </div>
+            <p className="mt-4 text-[11px] text-text-muted">
+              If Firelink is asleep at the start time, it starts the selected queues when it returns later that day, unless the stop time has already passed.
+            </p>
 
             <div className="my-5 border-t border-border-color" />
             <label className="flex items-center gap-2 text-[13px] font-medium text-text-primary">
@@ -262,11 +309,26 @@ export default function SchedulerView() {
             <div className="mb-4 flex items-center gap-2 font-semibold text-text-primary">
               <List size={17} className="text-accent" /> Queues to Schedule
             </div>
-            <label className="flex items-center gap-3 text-[13px] text-text-primary">
-              <input type="checkbox" checked readOnly disabled={!draft.enabled} className="accent-accent" />
-              Main Queue
-              <span className="text-[11px] text-text-muted">All paused and failed downloads</span>
-            </label>
+            <div className="space-y-3">
+              {queues.map(queue => {
+                const selected = draft.selectedQueueIds.includes(queue.id);
+                return (
+                  <label key={queue.id} className="flex items-center gap-3 text-[13px] text-text-primary">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleQueue(queue.id)}
+                      disabled={!draft.enabled || (selected && selectedQueueIds.length === 1)}
+                      className="accent-accent"
+                    />
+                    {queue.name}
+                    {queue.isMain && (
+                      <span className="text-[11px] text-text-muted">Default queue</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
           </section>
 
           <section className="app-card p-5">

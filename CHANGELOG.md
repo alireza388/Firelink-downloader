@@ -333,7 +333,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-06-03
 
 ### Changes
-- Reorganized Settings sections so related download preferences sit together and app diagnostics live under App.
+- Reorganized Settings sections so related download preferences sit together and app logs live under App.
 - Hardened the release workflow with explicit macOS 26 SDK checks, newer GitHub Actions, and app signature verification.
 - Prefer the bundled `aria2c` binary inside release builds.
 

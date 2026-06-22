@@ -58,6 +58,7 @@ fn make_manager(capacity: usize) -> (QueueManager<tauri::test::MockRuntime>, Arc
 fn sample_task(id: &str) -> QueuedTask {
     QueuedTask {
         id: id.to_string(),
+        queue_id: "main".to_string(),
         kind: TaskKind::Native,
         payload: SpawnPayload::default(),
     }
@@ -66,9 +67,9 @@ fn sample_task(id: &str) -> QueuedTask {
 #[tokio::test]
 async fn push_appends_to_pending_and_emits_queued() {
     let (mgr, _spawner) = make_manager(2);
-    mgr.push(sample_task("a")).await;
-    mgr.push(sample_task("b")).await;
-    let order = mgr.pending_order().await;
+    mgr.push(sample_task("a")).await.unwrap();
+    mgr.push(sample_task("b")).await.unwrap();
+    let order = mgr.pending_order(None).await;
     assert_eq!(order, vec!["a".to_string(), "b".to_string()]);
 }
 
@@ -116,8 +117,8 @@ async fn forgetting_aria2_gid_clears_mapping_without_releasing_twice() {
 #[tokio::test]
 async fn push_then_pop_front_drains_fifo() {
     let (mgr, _spawner) = make_manager(2);
-    mgr.push(sample_task("a")).await;
-    mgr.push(sample_task("b")).await;
+    mgr.push(sample_task("a")).await.unwrap();
+    mgr.push(sample_task("b")).await.unwrap();
     let first = mgr.pop_front().await.expect("some task");
     let second = mgr.pop_front().await.expect("some task");
     assert_eq!(first.id, "a");
@@ -179,7 +180,7 @@ async fn grow_releases_immediately_and_dispatches_waiting_tasks() {
     let mgr_arc = Arc::new(mgr);
 
     for i in 0..4 {
-        mgr_arc.push(sample_task(&format!("t{i}"))).await;
+        mgr_arc.push(sample_task(&format!("t{i}"))).await.unwrap();
     }
     let handle = {
         let mgr_clone = Arc::clone(&mgr_arc);
@@ -206,7 +207,7 @@ async fn shrink_converges_to_target_without_killing_active() {
     let mgr_arc = Arc::new(mgr);
 
     for i in 0..6 {
-        mgr_arc.push(sample_task(&format!("t{i}"))).await;
+        mgr_arc.push(sample_task(&format!("t{i}"))).await.unwrap();
     }
     let handle = {
         let mgr_clone = Arc::clone(&mgr_arc);
@@ -239,6 +240,7 @@ async fn shrink_converges_to_target_without_killing_active() {
 fn aria2_task(id: &str) -> QueuedTask {
     QueuedTask {
         id: id.to_string(),
+        queue_id: "main".to_string(),
         kind: TaskKind::Aria2,
         payload: SpawnPayload::default(),
     }
@@ -247,6 +249,7 @@ fn aria2_task(id: &str) -> QueuedTask {
 fn media_task(id: &str) -> QueuedTask {
     QueuedTask {
         id: id.to_string(),
+        queue_id: "main".to_string(),
         kind: TaskKind::Media,
         payload: SpawnPayload::default(),
     }
@@ -305,7 +308,7 @@ fn emitted_statuses(event_rx: &std::sync::mpsc::Receiver<String>) -> Vec<String>
 async fn media_terminal_error_emits_failed_without_completed() {
     let (manager, event_rx) = make_media_manager(Err("terminal media failure".to_string()));
     let manager = Arc::new(manager);
-    manager.push(media_task("media-failed")).await;
+    manager.push(media_task("media-failed")).await.unwrap();
     let dispatcher = {
         let manager = Arc::clone(&manager);
         tokio::spawn(async move { manager.run_dispatcher().await })
@@ -325,7 +328,7 @@ async fn media_cancellation_does_not_emit_completed() {
     let (manager, event_rx) =
         make_media_manager(Err(MEDIA_RUN_CANCELLED.to_string()));
     let manager = Arc::new(manager);
-    manager.push(media_task("media-cancelled")).await;
+    manager.push(media_task("media-cancelled")).await.unwrap();
     let dispatcher = {
         let manager = Arc::clone(&manager);
         tokio::spawn(async move { manager.run_dispatcher().await })
@@ -344,7 +347,7 @@ async fn media_cancellation_does_not_emit_completed() {
 async fn aria2_permit_survives_rpc_return() {
     let (mgr, spawner) = make_manager(1);
     let mgr_arc = Arc::new(mgr);
-    mgr_arc.push(aria2_task("a")).await;
+    mgr_arc.push(aria2_task("a")).await.unwrap();
     let handle = {
         let mgr_clone = Arc::clone(&mgr_arc);
         tokio::spawn(async move { mgr_clone.run_dispatcher().await })
@@ -373,7 +376,7 @@ async fn gid_completion_before_store_buffers_and_reconciles() {
 
     let (mgr, _spawner) = make_manager(1);
     let mgr_arc = Arc::new(mgr);
-    mgr_arc.push(aria2_task("a")).await;
+    mgr_arc.push(aria2_task("a")).await.unwrap();
     let handle = {
         let mgr_clone = Arc::clone(&mgr_arc);
         tokio::spawn(async move { mgr_clone.run_dispatcher().await })
@@ -396,7 +399,7 @@ async fn gid_completion_before_store_buffers_and_reconciles() {
     assert_eq!(mgr_arc.available_permits(), 1);
 
     // Push another aria2 task; its gid will be "gid-2".
-    mgr_arc.push(aria2_task("b")).await;
+    mgr_arc.push(aria2_task("b")).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     mgr_arc.release_permit("b").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -425,21 +428,43 @@ async fn move_up_down_reorders_pending() {
 
     let (mgr, _spawner) = make_manager(3);
     let mgr_arc = Arc::new(mgr);
-    mgr_arc.push(sample_task("a")).await;
-    mgr_arc.push(sample_task("b")).await;
-    mgr_arc.push(sample_task("c")).await;
+    mgr_arc.push(sample_task("a")).await.unwrap();
+    mgr_arc.push(sample_task("b")).await.unwrap();
+    mgr_arc.push(sample_task("c")).await.unwrap();
 
-    mgr_arc.move_in_queue("c", QueueDirection::Down).await;
-    assert_eq!(mgr_arc.pending_order().await, vec!["a", "b", "c"]);
+    mgr_arc.move_in_queue("c", "main", QueueDirection::Down).await;
+    assert_eq!(mgr_arc.pending_order(None).await, vec!["a", "b", "c"]);
 
-    mgr_arc.move_in_queue("c", QueueDirection::Up).await;
-    assert_eq!(mgr_arc.pending_order().await, vec!["a", "c", "b"]);
+    mgr_arc.move_in_queue("c", "main", QueueDirection::Up).await;
+    assert_eq!(mgr_arc.pending_order(None).await, vec!["a", "c", "b"]);
 
-    mgr_arc.move_in_queue("a", QueueDirection::Down).await;
-    assert_eq!(mgr_arc.pending_order().await, vec!["c", "a", "b"]);
+    mgr_arc.move_in_queue("a", "main", QueueDirection::Down).await;
+    assert_eq!(mgr_arc.pending_order(None).await, vec!["c", "a", "b"]);
 
-    mgr_arc.move_in_queue("c", QueueDirection::Up).await;
-    assert_eq!(mgr_arc.pending_order().await, vec!["c", "a", "b"]);
+    mgr_arc.move_in_queue("c", "main", QueueDirection::Up).await;
+    assert_eq!(mgr_arc.pending_order(None).await, vec!["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn moving_one_queue_does_not_reorder_another_queue() {
+    use firelink_lib::ipc::QueueDirection;
+
+    let (mgr, _spawner) = make_manager(3);
+    let mut a1 = sample_task("a1");
+    a1.queue_id = "a".to_string();
+    let mut b1 = sample_task("b1");
+    b1.queue_id = "b".to_string();
+    let mut a2 = sample_task("a2");
+    a2.queue_id = "a".to_string();
+    let mut b2 = sample_task("b2");
+    b2.queue_id = "b".to_string();
+    mgr.push(a1).await.unwrap();
+    mgr.push(b1).await.unwrap();
+    mgr.push(a2).await.unwrap();
+    mgr.push(b2).await.unwrap();
+
+    assert_eq!(mgr.move_in_queue("a2", "a", QueueDirection::Up).await, vec!["a2", "a1"]);
+    assert_eq!(mgr.pending_order(Some("b")).await, vec!["b1", "b2"]);
 }
 
 #[tokio::test]
@@ -455,7 +480,7 @@ async fn notify_fires_on_push_and_release() {
         tokio::spawn(async move { mgr_clone.run_dispatcher().await })
     };
 
-    mgr_arc.push(sample_task("x")).await;
+    mgr_arc.push(sample_task("x")).await.unwrap();
     let dispatched = timeout(
         Duration::from_millis(150),
         async {

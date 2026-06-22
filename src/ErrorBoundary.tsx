@@ -33,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="app-card max-w-lg space-y-4 p-6 text-center">
             <h1 className="text-xl font-semibold">Firelink could not display this window.</h1>
             <p className="text-sm text-text-secondary">
-              The error was written to Diagnostics. Reload the interface to reconnect to the running download service.
+              The error was written to Logs. Reload the interface to reconnect to the running download service.
             </p>
             <button
               type="button"

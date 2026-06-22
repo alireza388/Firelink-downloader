@@ -182,7 +182,7 @@ users. Manual QA is needed to confirm current focus behavior.
 | SB-09 | Delete Queue | queue context menu | `removeQueue` | DB persistence subscription | Reassign items to Main Queue and delete custom queue | wired; no confirmation | unit test |
 | SB-10 | Open Scheduler | `ToolItem` | `setActiveView` | none | Show Scheduler | wired | code trace |
 | SB-11 | Open Speed Limiter | `ToolItem` | `setActiveView` | none | Show Speed Limiter | wired | code trace |
-| SB-12 | Open Diagnostics | `ToolItem` | `setActiveView` | none | Show Diagnostics | wired | code trace |
+| SB-12 | Open Logs | `ToolItem` | `setActiveView` | none | Show Logs | wired | code trace |
 | SB-13 | Open Settings | footer button | `setActiveView` | none | Show Settings | wired | code trace |
 
 Recommendation: make queue membership explicit and total. Every non-completed
@@ -351,7 +351,7 @@ to the frontend.
 |---|---|---|---|---|---|
 | ST-25 | Prevent system sleep | setter plus download-state sync; `set_prevent_sleep` | Keep system awake during active downloads | wired but duplicated in setter/store synchronization | integration test, Manual QA needed |
 | ST-26 | Recheck engines | four engine status commands | Validate packaged sidecars | wired | integration test, build check |
-| ST-27 | Show/hide engine details | local expanded state | Reveal diagnostics | wired | code trace |
+| ST-27 | Show/hide engine details | local expanded state | Reveal engine status | wired | code trace |
 | ST-28 | Browser Cookies Source | `setMediaCookieSource` | Pass selected browser to media metadata/downloads | wired; Manual QA needed for browser permissions | integration test |
 | ST-29 | Copy pairing token | clipboard handler | Copy keychain-hydrated token | wired; success toast is shown without awaiting clipboard result | code trace, Manual QA needed |
 | ST-30 | Regenerate pairing token | `regeneratePairingToken`; keychain + App effect | Rotate token and reconfigure local server | wired but fragile: UI reports success before keychain/server calls confirm | integration test |
@@ -401,7 +401,7 @@ native transfers that the command does not implement.
 
 ---
 
-## 8. Diagnostics
+## 8. Logs
 
 | ID | Action | Component / function | IPC / Rust | Expected behavior | Status | Validation |
 |---|---|---|---|---|---|---|

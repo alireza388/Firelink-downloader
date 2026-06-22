@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
 import { attachLogger } from '@tauri-apps/plugin-log';
-import { FileDown, Trash2, Terminal, Filter, Play, Pause } from 'lucide-react';
+import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 
@@ -169,6 +169,15 @@ export default function LogsView() {
             Export Logs
           </button>
         </div>
+      </div>
+
+      {/* Privacy Hint */}
+      <div className="bg-black/10 border-y border-border-modal px-4 py-2 shrink-0 flex items-center gap-2 text-text-muted text-[10px] select-none">
+        <Info size={12} className="text-text-muted opacity-80 shrink-0" />
+        <span className="opacity-90 leading-tight">
+          <strong className="font-medium text-text-primary mr-1">Privacy Note:</strong>
+          Telemetry securely captures basic hardware capabilities (OS, CPU, RAM) exclusively for troubleshooting. No unique identifiers or sensitive paths are collected. Logs remain entirely offline on your device until manually exported.
+        </span>
       </div>
 
       {/* Console */}

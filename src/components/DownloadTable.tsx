@@ -88,6 +88,24 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidths));
   }, [columnWidths]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.querySelector('.app-modal-backdrop') || document.querySelector('.app-modal')) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+      
+      if (!isInput && (e.key === 'Delete' || e.key === 'Backspace')) {
+        if (!activeEl || !activeEl.closest('.sidebar-inner')) {
+          if (selectedIds.size > 0) {
+            handleDelete(Array.from(selectedIds));
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedIds]);
+
 
   const showInteractionError = (message: string, error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);

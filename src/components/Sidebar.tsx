@@ -53,6 +53,30 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     if (renamingQueueId) renameInputRef.current?.focus();
   }, [renamingQueueId]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.querySelector('.app-modal-backdrop') || document.querySelector('.app-modal')) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+      
+      if (!isInput && (e.key === 'Delete' || e.key === 'Backspace')) {
+        if (activeEl && activeEl.closest('.sidebar-inner')) {
+          if (activeView === 'downloads' && selectedFilter.startsWith('queue:')) {
+            const queueId = selectedFilter.replace('queue:', '');
+            const q = queues.find(q => q.id === queueId);
+            if (q && !q.isMain) {
+              void removeQueue(queueId).catch(error => {
+                addToast({ message: `Could not delete queue: ${String(error)}`, variant: 'error', isActionable: true });
+              });
+            }
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFilter, activeView, queues]);
+
   const getCount = (filter: SidebarFilter) => {
     if (filter.startsWith('queue:')) {
       const qid = filter.replace('queue:', '');

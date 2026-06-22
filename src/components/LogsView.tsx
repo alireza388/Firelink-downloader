@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
-import { FileDown, Trash2, Terminal, Filter } from 'lucide-react';
+import { attachLogger } from '@tauri-apps/plugin-log';
+import { FileDown, Trash2, Terminal, Filter, Play, Pause } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 
@@ -14,42 +15,68 @@ export default function LogsView() {
   const { addToast } = useToast();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
+  const [isPaused, setIsPaused] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rawLineCountRef = useRef(0);
-  const clearedThroughRef = useRef(0);
-  const lastSnapshotRef = useRef('');
+
   const MAX_LOG_LINES = 2000;
 
   useEffect(() => {
     let active = true;
-    const refresh = async () => {
+    let unlisten: (() => void) | undefined;
+
+    const init = async () => {
       try {
-        const lines = await invoke('read_logs', { limit: MAX_LOG_LINES });
+        const [lines, currentPauseState] = await Promise.all([
+          invoke('read_logs', { limit: MAX_LOG_LINES }),
+          invoke('is_log_paused')
+        ]);
         if (!active) return;
-        if (lines.length < clearedThroughRef.current) {
-          clearedThroughRef.current = 0;
-        }
-        const snapshot = `${lines.length}:${lines[lines.length - 1] || ''}`;
-        if (snapshot === lastSnapshotRef.current) return;
-        lastSnapshotRef.current = snapshot;
-        rawLineCountRef.current = lines.length;
-        setLogs(lines.slice(clearedThroughRef.current).map(message => {
-          const level = message.includes('[ERROR]') ? 'Error'
+        setIsPaused(currentPauseState);
+        if (!active) return;
+        const initialLogs = lines.map(message => {
+          const level: LogEntry['level'] = message.includes('[ERROR]') ? 'Error'
             : message.includes('[WARN]') ? 'Warn'
               : message.includes('[INFO]') ? 'Info'
                 : message.includes('[TRACE]') ? 'Trace'
                   : 'Debug';
           return { level, message };
-        }));
-      } catch {
-        if (active) setLogs([]);
+        });
+        
+        setLogs(initialLogs);
+        rawLineCountRef.current = initialLogs.length;
+
+        unlisten = await attachLogger((log) => {
+          if (!active) return;
+          const levelStr: LogEntry['level'] = log.level === 5 ? 'Error'
+            : log.level === 4 ? 'Warn'
+              : log.level === 3 ? 'Info'
+                : log.level === 1 ? 'Trace'
+                  : 'Debug';
+          
+          const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const formattedMsg = `[${timeStr}] [${levelStr.toUpperCase()}] ${log.message}`;
+
+          setLogs(prev => {
+            const newLogs = [...prev, { level: levelStr, message: formattedMsg }];
+            rawLineCountRef.current = newLogs.length;
+            if (newLogs.length > MAX_LOG_LINES + 500) {
+              const trimmed = newLogs.slice(newLogs.length - MAX_LOG_LINES);
+
+              return trimmed;
+            }
+            return newLogs;
+          });
+        });
+      } catch (e) {
+        console.error('Failed to init logs:', e);
       }
     };
-    void refresh();
-    const interval = window.setInterval(refresh, 2000);
+    void init();
+    
     return () => {
       active = false;
-      window.clearInterval(interval);
+      if (unlisten) unlisten();
     };
   }, []);
 
@@ -75,7 +102,6 @@ export default function LogsView() {
   };
 
   const handleClear = () => {
-    clearedThroughRef.current = rawLineCountRef.current;
     setLogs([]);
   };
 
@@ -117,6 +143,17 @@ export default function LogsView() {
           </div>
           <div className="w-[1px] h-4 bg-border-modal mx-0.5" />
           <button
+            onClick={async () => {
+              const newState = !isPaused;
+              setIsPaused(newState);
+              await invoke('toggle_log_pause', { pause: newState }).catch(console.error);
+            }}
+            className={`app-icon-button ${isPaused ? 'text-accent' : ''}`}
+            title={isPaused ? "Resume logs" : "Pause logs system"}
+          >
+            {isPaused ? <Play size={14} /> : <Pause size={14} />}
+          </button>
+          <button
             onClick={handleClear}
             className="app-icon-button"
             title="Clear displayed logs"
@@ -135,7 +172,7 @@ export default function LogsView() {
       </div>
 
       {/* Console */}
-      <div ref={scrollRef} className="logs-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5]">
+      <div ref={scrollRef} className="logs-console flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-[1.5] select-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
         {logs.length === 0 && (
           <div className="text-text-muted italic select-none">No persisted log entries are available yet.</div>
         )}

@@ -3720,6 +3720,18 @@ mod tests {
     }
 }
 
+static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+fn toggle_log_pause(pause: bool) {
+    LOG_PAUSED.store(pause, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn is_log_paused() -> bool {
+    LOG_PAUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let extension_pairing_token = Arc::new(RwLock::new(String::new()));
@@ -3746,6 +3758,17 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard::new())
         .setup(move |app| {
+            let mut sys = sysinfo::System::new_all();
+            sys.refresh_all();
+            log::info!("=== System Information ===");
+            log::info!("OS: {} {}", sysinfo::System::name().unwrap_or_else(|| "Unknown".to_string()), sysinfo::System::os_version().unwrap_or_else(|| "Unknown".to_string()));
+            let arch = sysinfo::System::cpu_arch();
+            log::info!("Architecture: {}", if arch.is_empty() { "Unknown" } else { &arch });
+            log::info!("CPU: {} ({} cores)", sys.cpus().first().map(|c| c.brand()).unwrap_or("Unknown"), sys.cpus().len());
+            log::info!("Memory: {} MB total", sys.total_memory() / 1024 / 1024);
+            log::info!("App Version: {}", env!("CARGO_PKG_VERSION"));
+            log::info!("==========================");
+
             build_main_tray(app.handle())
                 .map_err(|error| format!("failed to create tray menu: {error}"))?;
 
@@ -4052,6 +4075,7 @@ pub fn run() {
         })
         .plugin(
             tauri_plugin_log::Builder::new()
+                .filter(|_meta| !LOG_PAUSED.load(std::sync::atomic::Ordering::Relaxed))
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
@@ -4092,7 +4116,7 @@ pub fn run() {
             parity::create_category_directories,
             db_save_settings, db_load_settings, db_get_all_downloads, db_replace_downloads,
             db_get_all_queues, db_replace_queues,
-            read_logs, export_logs
+            read_logs, export_logs, toggle_log_pause, is_log_paused
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

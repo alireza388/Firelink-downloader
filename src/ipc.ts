@@ -69,6 +69,8 @@ type CommandMap = {
   };
   export_logs: { args: { destPath: string }; result: string };
   read_logs: { args: { limit: number }; result: string[] };
+  toggle_log_pause: { args: { pause: boolean }; result: void };
+  is_log_paused: { args: undefined; result: boolean };
   get_pending_order: { args: { queueId: string | null }; result: string[] };
   enqueue_download: { args: { item: EnqueueItem }; result: EnqueueAccepted };
   enqueue_many: { args: { items: EnqueueItem[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };

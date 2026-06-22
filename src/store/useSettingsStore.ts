@@ -261,7 +261,6 @@ export const useSettingsStore = create<SettingsState>()(
       setPreventsSleepWhileDownloading: (preventsSleepWhileDownloading) => {
         info('Settings updated: preventsSleepWhileDownloading');
         set({ preventsSleepWhileDownloading });
-        if (!preventsSleepWhileDownloading) invoke('set_prevent_sleep', { prevent: false }).catch(console.error);
       },
       setMediaCookieSource: (mediaCookieSource) => { info('Settings updated: mediaCookieSource'); set({ mediaCookieSource }); },
       setCategorySubfolder: (category, subfolder) => {
@@ -344,6 +343,8 @@ export const useSettingsStore = create<SettingsState>()(
         isSidebarVisible: state.isSidebarVisible,
         activeSettingsTab: state.activeSettingsTab,
         scheduler: state.scheduler,
+        schedulerRunning: state.schedulerRunning,
+        schedulerActiveDownloadIds: state.schedulerActiveDownloadIds,
         schedulerLastStartKey: state.schedulerLastStartKey,
         schedulerLastStopKey: state.schedulerLastStopKey,
         lastCustomSpeedLimitKiB: state.lastCustomSpeedLimitKiB,

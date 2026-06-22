@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useDownloadStore } from './useDownloadStore';
+import { useSettingsStore } from './useSettingsStore';
 import * as ipc from '../ipc';
 
 vi.mock('../ipc', () => ({
@@ -172,6 +173,26 @@ describe('useDownloadStore', () => {
     );
   });
 
+  it('reports a rejected immediate start instead of claiming success', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (command: string) => {
+      if (command === 'enqueue_download') {
+        throw new Error('backend unavailable');
+      }
+      return undefined;
+    });
+
+    const added = await useDownloadStore.getState().addDownload({
+      id: 'rejected-start',
+      url: 'https://example.com/rejected.bin',
+      fileName: 'rejected.bin',
+      category: 'Other',
+      dateAdded: ''
+    }, { type: 'start-now' });
+
+    expect(added).toBe(false);
+    expect(useDownloadStore.getState().downloads[0].status).toBe('failed');
+  });
+
   it('redownloads fallback media without requiring a format selector', async () => {
     useDownloadStore.setState({
       downloads: [{
@@ -278,6 +299,33 @@ describe('useDownloadStore', () => {
 
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'ready')?.queueId).toBe('new');
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'done')?.queueId).toBe('old');
+  });
+
+  it('disables scheduler when its last selected queue is deleted', async () => {
+    const originalSettings = useSettingsStore.getState();
+    const setScheduler = vi.fn();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      scheduler: {
+        enabled: true,
+        selectedQueueIds: ['queue-a']
+      },
+      setScheduler
+    } as any);
+    useDownloadStore.setState({
+      queues: [
+        { id: '00000000-0000-0000-0000-000000000001', name: 'Main Queue', isMain: true },
+        { id: 'queue-a', name: 'Scheduled', isMain: false }
+      ],
+      downloads: []
+    });
+
+    await useDownloadStore.getState().removeQueue('queue-a');
+
+    expect(setScheduler).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: false,
+      selectedQueueIds: []
+    }));
+    vi.mocked(useSettingsStore.getState).mockReturnValue(originalSettings);
   });
 
   it('retains the UI item when backend removal fails', async () => {

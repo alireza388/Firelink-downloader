@@ -21,16 +21,27 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 let automaticUpdateCheckStarted = false;
 const processingScheduleKeys = new Set<string>();
 
+const waitForSettingsHydration = (): Promise<void> => {
+  if (useSettingsStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise(resolve => {
+    const unsubscribe = useSettingsStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+};
+
 const getScheduledQueueIds = () => {
   const downloadState = useDownloadStore.getState();
   const availableQueueIds = new Set(downloadState.queues.map(queue => queue.id));
   const selectedQueueIds = useSettingsStore.getState().scheduler.selectedQueueIds
     .filter(queueId => availableQueueIds.has(queueId));
-  return selectedQueueIds.length > 0 ? selectedQueueIds : [MAIN_QUEUE_ID];
+  return selectedQueueIds;
 };
 
 function App() {
   const [filter, setFilter] = useState<SidebarFilter>('all');
+  const [coreReady, setCoreReady] = useState(false);
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
@@ -58,6 +69,12 @@ function App() {
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef<string | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
+  const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
+  const activeTransferCount = downloads.filter(download =>
+    download.status === 'downloading' ||
+    download.status === 'processing' ||
+    download.status === 'retrying'
+  ).length;
 
   const acknowledgePairingTokenChange = () => {
     invoke('acknowledge_pairing_token_change').catch(error => {
@@ -94,9 +111,24 @@ function App() {
   const { addToast } = useToast();
 
   useEffect(() => {
-    useDownloadStore.getState().initDB();
-    useSettingsStore.getState().hydratePairingToken()
-      .then(changed => {
+    let active = true;
+    const initialize = async () => {
+      try {
+        await waitForSettingsHydration();
+        await useDownloadStore.getState().initDB();
+        if (active) setCoreReady(true);
+      } catch (error) {
+        console.error('Failed to initialize Firelink state:', error);
+        addToast({
+          message: `Could not initialize saved downloads: ${String(error)}`,
+          variant: 'error',
+          isActionable: true
+        });
+        return;
+      }
+
+      try {
+        const changed = await useSettingsStore.getState().hydratePairingToken();
         if (changed) {
           addToast({
             variant: 'warning',
@@ -143,10 +175,14 @@ function App() {
             )
           });
         }
-      })
-      .catch(error => {
+      } catch (error) {
         console.error('Failed to hydrate extension pairing token:', error);
-      });
+      }
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, [addToast]);
 
   useEffect(() => {
@@ -206,6 +242,19 @@ function App() {
   }, [showDockBadge, activeDownloadCount]);
 
   useEffect(() => {
+    invoke('set_prevent_sleep', {
+      prevent: preventsSleepWhileDownloading && activeTransferCount > 0
+    }).catch(error => {
+      console.error('Failed to update sleep prevention:', error);
+      addToast({
+        message: `Could not update sleep prevention: ${String(error)}`,
+        variant: 'error',
+        isActionable: true
+      });
+    });
+  }, [addToast, preventsSleepWhileDownloading, activeTransferCount]);
+
+  useEffect(() => {
     invoke('toggle_tray_icon', { show: showMenuBarIcon }).catch(console.error);
   }, [showMenuBarIcon]);
 
@@ -228,6 +277,7 @@ function App() {
   }, [globalSpeedLimit]);
 
   useEffect(() => {
+    if (!coreReady) return;
     const unlisten = listen('schedule-trigger', async (event) => {
       const state = useSettingsStore.getState();
       const payload = event.payload;
@@ -235,17 +285,48 @@ function App() {
       processingScheduleKeys.add(payload.key);
       try {
         if (payload.action === 'start') {
+          const scheduledQueueIds = getScheduledQueueIds();
+          if (scheduledQueueIds.length === 0) {
+            state.setSchedulerActiveDownloadIds([]);
+            state.setSchedulerRunning(false);
+            addToast({
+              message: 'Scheduler has no valid queues selected. Update Scheduler settings.',
+              variant: 'warning',
+              isActionable: true
+            });
+            await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
+            return;
+          }
           const startedResults = await Promise.all(
-            getScheduledQueueIds().map(queueId => useDownloadStore.getState().startQueue(queueId))
+            scheduledQueueIds.map(queueId => useDownloadStore.getState().startQueue(queueId))
           );
           const acceptedIds = startedResults.flat();
-          state.setSchedulerActiveDownloadIds(acceptedIds);
-          state.setSchedulerRunning(acceptedIds.length > 0);
+          const scheduledQueueSet = new Set(scheduledQueueIds);
+          const trackedIds = useDownloadStore.getState().downloads
+            .filter(download =>
+              scheduledQueueSet.has(download.queueId || MAIN_QUEUE_ID) &&
+              isActiveDownloadStatus(download.status)
+            )
+            .map(download => download.id);
+          const activeIds = [...new Set([...acceptedIds, ...trackedIds])];
+          state.setSchedulerActiveDownloadIds(activeIds);
+          state.setSchedulerRunning(activeIds.length > 0);
           await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
         } else if (payload.action === 'stop') {
-          await Promise.all(
-            getScheduledQueueIds().map(queueId => useDownloadStore.getState().pauseQueue(queueId))
-          );
+          const trackedIds = state.schedulerActiveDownloadIds;
+          if (trackedIds.length > 0) {
+            const pauseResults = await Promise.allSettled(
+              trackedIds.map(id => invoke('pause_download', { id }))
+            );
+            const failedPauses = pauseResults.filter(result => result.status === 'rejected').length;
+            if (failedPauses > 0) {
+              addToast({
+                message: `Scheduler could not pause ${failedPauses} download${failedPauses === 1 ? '' : 's'}.`,
+                variant: 'error',
+                isActionable: true
+              });
+            }
+          }
           state.setSchedulerActiveDownloadIds([]);
           state.setSchedulerRunning(false);
           await invoke('ack_schedule_trigger', { action: 'stop', key: payload.key });
@@ -258,33 +339,34 @@ function App() {
     return () => {
       unlisten.then(f => f()).catch(console.error);
     };
-  }, []);
+  }, [addToast, coreReady]);
 
   useEffect(() => {
     if (!schedulerRunning) return;
     if (schedulerActiveDownloadIds.length === 0) return;
-    const scheduledIds = new Set(schedulerActiveDownloadIds);
-    const hasPendingScheduledWork = downloads.some(download =>
-      scheduledIds.has(download.id) && isActiveDownloadStatus(download.status)
-    );
-    if (hasPendingScheduledWork) return;
-
     const settings = useSettingsStore.getState();
     const scheduledItems = schedulerActiveDownloadIds.map(id =>
       downloads.find(download => download.id === id)
     );
-    const hasFailures = scheduledItems.some(item => !item || item.status === 'failed');
+    if (scheduledItems.some(item => item && isActiveDownloadStatus(item.status))) return;
+
+    const allCompleted = scheduledItems.every(item => item?.status === 'completed');
     settings.setSchedulerActiveDownloadIds([]);
     settings.setSchedulerRunning(false);
-    if (hasFailures) {
+    if (!allCompleted) {
       addToast({
-        message: 'Scheduled downloads finished with failures. The post-queue system action was skipped.',
+        message: 'Scheduled downloads did not all complete. The post-queue system action was skipped.',
         variant: 'warning',
         isActionable: true
       });
     } else if (settings.scheduler.postQueueAction !== 'none') {
       invoke('perform_system_action', { action: settings.scheduler.postQueueAction }).catch(error => {
         console.error('Scheduled post action failed:', error);
+        addToast({
+          message: `Scheduled system action failed: ${String(error)}`,
+          variant: 'error',
+          isActionable: true
+        });
       });
     }
   }, [addToast, downloads, schedulerRunning, schedulerActiveDownloadIds]);

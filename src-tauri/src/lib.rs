@@ -668,10 +668,6 @@ async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
     cleanup_media_artifacts(out_path, true).await;
 }
 
-async fn cleanup_media_sidecars(out_path: &std::path::Path) {
-    cleanup_media_artifacts(out_path, false).await;
-}
-
 async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: bool) {
     let Some(parent) = out_path.parent() else {
         return;
@@ -1126,12 +1122,34 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
 }
 
 pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle) -> bool {
-    if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if !path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
         return false;
     }
 
-    if !path.is_absolute() {
-        return true;
+    let mut existing = path;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        let Some(name) = existing.file_name() else {
+            return false;
+        };
+        missing.push(name.to_owned());
+        let Some(parent) = existing.parent() else {
+            return false;
+        };
+        existing = parent;
+    }
+    let Ok(mut canonical_path) = std::fs::canonicalize(existing) else {
+        return false;
+    };
+    for component in missing.iter().rev() {
+        canonical_path.push(component);
     }
 
     let mut allowed_prefixes = Vec::new();
@@ -1147,38 +1165,13 @@ pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle
     allowed_prefixes.push(std::path::PathBuf::from("/Volumes"));
 
     for prefix in allowed_prefixes {
-        if path.starts_with(&prefix) {
+        let canonical_prefix = std::fs::canonicalize(&prefix).unwrap_or(prefix);
+        if canonical_path.starts_with(&canonical_prefix) {
             return true;
         }
     }
 
     false
-}
-
-#[tauri::command]
-async fn open_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-    
-    let resolved_dest = resolve_path(&path, &app);
-    
-    if !is_safe_path(&resolved_dest, &app) {
-        return Err("Path traversal blocked".to_string());
-    }
-
-    app.opener().open_path(resolved_dest.to_string_lossy().as_ref(), None::<String>).map_err(|e| format!("Failed to open file: {}", e))
-}
-
-#[tauri::command]
-async fn show_in_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-    
-    let resolved_dest = resolve_path(&path, &app);
-    
-    if !is_safe_path(&resolved_dest, &app) {
-        return Err("Path traversal blocked".to_string());
-    }
-
-    app.opener().reveal_item_in_dir(resolved_dest.to_string_lossy().as_ref()).map_err(|e| format!("Failed to reveal in folder: {}", e))
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1242,6 +1235,7 @@ pub struct AppState {
     pub aria2_secret: String,
     pub media_semaphore: Arc<tokio::sync::Semaphore>,
     pub sleep_preventer: Arc<Mutex<Option<keepawake::KeepAwake>>>,
+    pub scheduler_settings: Arc<RwLock<Option<crate::ipc::PersistedSettings>>>,
     pub queue_manager: Arc<queue::QueueManager>,
 }
 
@@ -2362,23 +2356,32 @@ async fn pause_download(
         return Ok(());
     }
 
-    use tauri::Emitter;
-    let _ = app_handle.emit(
-        "download-state",
-        crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
-    );
-
-    if let Ok(download_id) = Uuid::parse_str(&id) {
-        let _ = state
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
+        state
             .download_coordinator
-            .send(download::DownloadCmd::Pause(download_id))
-            .await;
+            .pause_media_with_ack(id.clone(), tx)
+            .await?;
+    } else if let Ok(download_id) = Uuid::parse_str(&id) {
+        state
+            .download_coordinator
+            .send(download::DownloadCmd::PauseWithAck(download_id, tx))
+            .await?;
+    } else {
+        let _ = tx.send(());
     }
-    let media_result = state.download_coordinator.pause_media(id.clone()).await;
+    rx.await
+        .map_err(|_| "download worker stopped without acknowledging pause".to_string())?;
+
     if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
         state.queue_manager.release_permit(&id).await;
     }
-    media_result
+    use tauri::Emitter;
+    let _ = app_handle.emit(
+        "download-state",
+        crate::ipc::DownloadStateEvent::new(id, crate::ipc::DownloadStatus::Paused),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -2498,10 +2501,12 @@ async fn remove_download(
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
         } else if let Ok(download_id) = Uuid::parse_str(&id) {
-            state
-                .download_coordinator
-                .send(download::DownloadCmd::CancelWithAck(download_id, tx))
-                .await?;
+            let command = if delete_assets {
+                download::DownloadCmd::CancelWithAck(download_id, tx)
+            } else {
+                download::DownloadCmd::PauseWithAck(download_id, tx)
+            };
+            state.download_coordinator.send(command).await?;
         } else {
             let _ = tx.send(());
         }
@@ -2524,8 +2529,6 @@ async fn remove_download(
         if let Some(path) = primary_path.as_deref() {
             remove_download_assets(path, &app_handle).await?;
         }
-    } else if let Some(path) = primary_path.as_deref() {
-        remove_partial_download_assets(path, &app_handle).await?;
     }
 
     crate::download_ownership::remove(&app_handle, &id)?;
@@ -2556,25 +2559,6 @@ async fn remove_download_assets(
     }
 
     cleanup_media_processing_artifacts(primary).await;
-    Ok(())
-}
-
-async fn remove_partial_download_assets(
-    primary: &std::path::Path,
-    app_handle: &tauri::AppHandle,
-) -> Result<(), String> {
-    if !is_safe_path(primary, app_handle) {
-        return Err("Download asset path is outside an allowed download location".to_string());
-    }
-    for suffix in [".aria2", ".part", ".ytdl"] {
-        let candidate = std::path::PathBuf::from(format!("{}{}", primary.display(), suffix));
-        if candidate.exists() && is_safe_path(&candidate, app_handle) {
-            tokio::fs::remove_file(&candidate)
-                .await
-                .map_err(|error| format!("failed to remove '{}': {error}", candidate.display()))?;
-        }
-    }
-    cleanup_media_sidecars(primary).await;
     Ok(())
 }
 
@@ -2741,17 +2725,21 @@ fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
 }
 
 #[tauri::command]
-fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) {
+fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) -> Result<(), String> {
     let mut current_preventer = state.sleep_preventer.lock().unwrap_or_else(|e| e.into_inner());
     if prevent {
         if current_preventer.is_none() {
-            if let Ok(keepawake) = keepawake::Builder::default().display(true).reason("Downloading files").create() {
-                *current_preventer = Some(keepawake);
-            }
+            let keepawake = keepawake::Builder::default()
+                .idle(true)
+                .reason("Firelink active download")
+                .create()
+                .map_err(|error| format!("failed to prevent system sleep: {error}"))?;
+            *current_preventer = Some(keepawake);
         }
     } else {
         *current_preventer = None;
     }
+    Ok(())
 }
 
 pub(crate) fn execute_system_action(action: crate::ipc::PostQueueAction) -> Result<(), String> {
@@ -2777,6 +2765,7 @@ fn perform_system_action(action: crate::ipc::PostQueueAction) -> Result<(), Stri
 #[tauri::command]
 fn ack_schedule_trigger(
     app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     action: String,
     key: String,
 ) -> Result<(), String> {
@@ -2790,7 +2779,18 @@ fn ack_schedule_trigger(
         _ => {}
     })?;
     match action.as_str() {
-        "start" | "stop" => Ok(()),
+        "start" | "stop" => {
+            if let Ok(mut cached) = state.scheduler_settings.write() {
+                if let Some(settings) = cached.as_mut() {
+                    if action == "start" {
+                        settings.scheduler_last_start_key = key;
+                    } else {
+                        settings.scheduler_last_stop_key = key;
+                    }
+                }
+            }
+            Ok(())
+        }
         _ => Err("Unknown scheduler trigger action".to_string()),
     }
 }
@@ -2931,16 +2931,17 @@ async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option
 }
 
 #[tauri::command]
-fn request_automation_permission() -> Result<(), String> {
+fn check_automation_permission() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        use cocoa::base::{id, nil};
         use cocoa::foundation::NSString;
-        use cocoa::base::{nil, id};
-        use objc::{msg_send, sel, sel_impl, class};
+        use objc::{class, msg_send, sel, sel_impl};
 
         unsafe {
             objc::rc::autoreleasepool(|| {
-                let script_str = NSString::alloc(nil).init_str("tell application \"Finder\" to get name");
+                let script_str =
+                    NSString::alloc(nil).init_str("tell application \"System Events\" to get name");
                 let ns_apple_script: id = msg_send![class!(NSAppleScript), alloc];
                 let ns_apple_script: id = msg_send![ns_apple_script, initWithSource: script_str];
                 let mut error_dict: id = nil;
@@ -2951,6 +2952,18 @@ fn request_automation_permission() -> Result<(), String> {
                 Ok(())
             })
         }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+#[tauri::command]
+fn request_automation_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        system_shutdown::request_permission_dialog()
+            .map_err(|error| format!("Automation permission was not granted: {error}"))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -3049,9 +3062,20 @@ fn acknowledge_pairing_token_change(
 }
 
 #[tauri::command]
-fn db_save_settings(state: tauri::State<'_, crate::db::DbState>, data: String) -> Result<(), String> {
+fn db_save_settings(
+    state: tauri::State<'_, crate::db::DbState>,
+    app_state: tauri::State<'_, AppState>,
+    data: String,
+) -> Result<(), String> {
     let connection = state.lock()?;
-    crate::db::save_settings(&connection, &data)
+    let existing = crate::db::load_settings(&connection)?;
+    let merged = crate::settings::preserve_scheduler_runtime_keys(existing.as_deref(), &data)?;
+    crate::db::save_settings(&connection, &merged)?;
+    let decoded = crate::settings::decode_stored_settings(&serde_json::Value::String(merged))?;
+    if let Ok(mut cached) = app_state.scheduler_settings.write() {
+        *cached = Some(decoded);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -3103,19 +3127,6 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
         return false;
     }
     resolved_dest.exists()
-}
-
-#[tauri::command]
-fn delete_file(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
-    let resolved_dest = resolve_path(&path, &app_handle);
-    if !is_safe_path(&resolved_dest, &app_handle) {
-        return Err("Path traversal blocked".to_string());
-    }
-    if resolved_dest.exists() {
-        std::fs::remove_file(resolved_dest).map_err(|e| e.to_string())
-    } else {
-        Ok(())
-    }
 }
 
 async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
@@ -3757,6 +3768,9 @@ pub fn run() {
                     .map(|settings| settings.max_concurrent_downloads)
                     .unwrap_or(crate::queue::DEFAULT_MAX_CONCURRENT)
             };
+            let scheduler_settings = Arc::new(RwLock::new(
+                crate::settings::load_settings(app.handle()).ok(),
+            ));
 
             let queue_manager = Arc::new(queue::QueueManager::new(app.handle().clone(), max_concurrent));
             let dispatcher_mgr = Arc::clone(&queue_manager);
@@ -3777,6 +3791,7 @@ pub fn run() {
                 aria2_secret: aria2_secret.clone(),
                 media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
                 sleep_preventer: Arc::new(Mutex::new(None)),
+                scheduler_settings: Arc::clone(&scheduler_settings),
                 queue_manager,
             });
 
@@ -3822,7 +3837,7 @@ pub fn run() {
                 Ok(None) => {}
                 Err(error) => eprintln!("Failed to read startup deep link: {error}"),
             }
-            crate::scheduler::spawn_scheduler(app.handle().clone());
+            crate::scheduler::spawn_scheduler(app.handle().clone(), scheduler_settings);
 
             let global_speed_limit = crate::settings::load_settings(app.handle())
                 .map(|settings| settings.global_speed_limit)
@@ -4061,14 +4076,14 @@ pub fn run() {
         })
 .invoke_handler(tauri::generate_handler![
  get_engine_status, get_aria2_engine_status, get_ytdlp_engine_status, get_ffmpeg_engine_status,
- get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno, open_file, show_in_folder,
+ get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno,
  pause_download, resume_download, fetch_metadata, fetch_media_metadata,
             update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
             ack_schedule_trigger,
-            request_automation_permission, open_automation_settings,
+            check_automation_permission, request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
             hydrate_extension_pairing_token, acknowledge_pairing_token_change,
-            check_file_exists, delete_file, toggle_tray_icon, set_extension_pairing_token,
+            check_file_exists, toggle_tray_icon, set_extension_pairing_token,
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
             enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,

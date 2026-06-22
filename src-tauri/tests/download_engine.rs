@@ -21,7 +21,7 @@ use std::{
 };
 use firelink_lib::download::{DownloadCmd, DownloadCoordinator, DownloadEvent, DownloadPayload};
 use tempfile::TempDir;
-use tokio::{net::TcpListener, sync::mpsc, task::JoinHandle};
+use tokio::{net::TcpListener, sync::{mpsc, oneshot}, task::JoinHandle};
 use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -288,12 +288,19 @@ async fn pause_then_resume_uses_range_and_preserves_integrity() {
         .await
         .unwrap();
     wait_for_progress(&mut events, id, 256 * 1024).await;
-    coordinator.send(DownloadCmd::Pause(id)).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (pause_tx, pause_rx) = oneshot::channel();
+    coordinator
+        .send(DownloadCmd::PauseWithAck(id, pause_tx))
+        .await
+        .unwrap();
+    pause_rx.await.unwrap();
 
     let paused_len = tokio::fs::metadata(&output_path).await.unwrap().len();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let stable_paused_len = tokio::fs::metadata(&output_path).await.unwrap().len();
     assert!(paused_len >= 256 * 1024);
     assert!(paused_len < expected.len() as u64);
+    assert_eq!(stable_paused_len, paused_len);
 
     coordinator
         .send(DownloadCmd::Start(Box::new(payload(

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
+import { useDownloadProgressStore } from '../store/downloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { ChevronDown, ChevronRight, FolderPlus, Info, CheckCircle, AlertCircle, Play, Pause } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -18,6 +19,11 @@ export const PropertiesModal = () => {
     selectedPropertiesDownloadId
       ? state.downloads.find(d => d.id === selectedPropertiesDownloadId) ?? null
       : null
+  );
+  const liveProgress = useDownloadProgressStore(state =>
+    selectedPropertiesDownloadId
+      ? state.progressMap[selectedPropertiesDownloadId]
+      : undefined
   );
 
   const { baseDownloadFolder, perServerConnections } = useSettingsStore();
@@ -152,6 +158,15 @@ export const PropertiesModal = () => {
 
   const identityLocked = getIdentityLocked(item.status);
   const transferLocked = getTransferLocked(item.status);
+  const displayedFraction = item.status === 'completed'
+    ? 1
+    : liveProgress?.fraction ?? item.fraction ?? 0;
+  const displayedSpeed = item.status === 'completed'
+    ? '-'
+    : liveProgress?.speed ?? item.speed ?? '-';
+  const displayedEta = item.status === 'completed'
+    ? '-'
+    : liveProgress?.eta ?? item.eta ?? '-';
 
   let statusColor = 'text-text-secondary';
   let StatusIcon = Info;
@@ -176,14 +191,14 @@ export const PropertiesModal = () => {
           </div>
           
           <div className="w-full bg-border-color rounded-full h-1.5 overflow-hidden mb-4">
-            <div className={`h-1.5 rounded-full transition-all duration-300 ${item.status === 'completed' ? 'bg-green-500' : item.status === 'paused' ? 'bg-orange-500' : item.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${(item.status === 'completed' ? 1 : item.fraction || 0) * 100}%` }}></div>
+            <div className={`h-1.5 rounded-full transition-all duration-300 ${item.status === 'completed' ? 'bg-green-500' : item.status === 'paused' ? 'bg-orange-500' : item.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${displayedFraction * 100}%` }}></div>
           </div>
           
             <div className="grid grid-cols-4 gap-y-2 gap-x-4 text-[11px] leading-tight">
-              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Progress</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '100%' : ((item.fraction || 0) * 100).toFixed(0) + '%'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Progress</span><span className="text-text-secondary truncate">{`${(displayedFraction * 100).toFixed(0)}%`}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Size</span><span className="text-text-secondary truncate">{item.size || '-'}</span></div>
-              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.speed || '-'}</span></div>
-              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[30px] shrink-0">ETA</span><span className="text-text-secondary truncate">{item.status === 'completed' ? '-' : item.eta || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{displayedSpeed}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[30px] shrink-0">ETA</span><span className="text-text-secondary truncate">{displayedEta}</span></div>
 
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Connections</span><span className="text-text-secondary truncate">{item.connections || perServerConnections || '-'}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[60px] shrink-0">Speed cap</span><span className="text-text-secondary truncate">{item.speedLimit || '-'}</span></div>

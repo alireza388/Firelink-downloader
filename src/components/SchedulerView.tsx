@@ -5,7 +5,7 @@ import {
   Pause, Play, Power, RotateCcw, Save
 } from 'lucide-react';
 import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/useSettingsStore';
-import { useDownloadStore, MAIN_QUEUE_ID } from '../store/useDownloadStore';
+import { MAIN_QUEUE_ID, useDownloadStore } from '../store/useDownloadStore';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 
@@ -89,9 +89,7 @@ export default function SchedulerView() {
 
   const availableQueueIds = new Set(queues.map(queue => queue.id));
   const selectedQueueIds = draft.selectedQueueIds.filter(queueId => availableQueueIds.has(queueId));
-  const effectiveSelectedQueueIds = selectedQueueIds.length > 0
-    ? selectedQueueIds
-    : [MAIN_QUEUE_ID];
+  const effectiveSelectedQueueIds = selectedQueueIds;
 
   const toggleQueue = (queueId: string) => {
     setDraft(current => {
@@ -114,6 +112,10 @@ export default function SchedulerView() {
       addToast({ message: 'Select at least one day for the scheduler', variant: 'error', isActionable: true });
       return;
     }
+    if (effectiveSelectedQueueIds.length === 0) {
+      addToast({ message: 'Select at least one queue for the scheduler', variant: 'error', isActionable: true });
+      return;
+    }
     if (draft.stopTimeEnabled && minuteOfDay(draft.stopTime) <= minuteOfDay(draft.startTime)) {
       addToast({ message: 'Stop time must be later than start time', variant: 'error', isActionable: true });
       return;
@@ -132,12 +134,19 @@ export default function SchedulerView() {
     const results = await Promise.all(
       effectiveSelectedQueueIds.map(queueId => useDownloadStore.getState().startQueue(queueId))
     );
-    const count = results.reduce((total, ids) => total + ids.length, 0);
     const acceptedIds = results.flat();
-    if (count > 0) {
+    const selectedQueueSet = new Set(effectiveSelectedQueueIds);
+    const trackedIds = useDownloadStore.getState().downloads
+      .filter(download =>
+        selectedQueueSet.has(download.queueId || MAIN_QUEUE_ID) &&
+        ['queued', 'downloading', 'processing', 'retrying'].includes(download.status)
+      )
+      .map(download => download.id);
+    const activeIds = [...new Set([...acceptedIds, ...trackedIds])];
+    if (activeIds.length > 0) {
       useSettingsStore.getState().setSchedulerRunning(true);
-      useSettingsStore.getState().setSchedulerActiveDownloadIds(acceptedIds);
-      addToast({ message: `Started ${count} download${count === 1 ? '' : 's'}`, variant: 'success' });
+      useSettingsStore.getState().setSchedulerActiveDownloadIds(activeIds);
+      addToast({ message: `Tracking ${activeIds.length} scheduled download${activeIds.length === 1 ? '' : 's'}`, variant: 'success' });
     } else {
       addToast({ message: 'No downloads in the selected queues can be started', variant: 'info' });
     }
@@ -157,7 +166,7 @@ export default function SchedulerView() {
     if (!isMac) return;
 
     try {
-      await invoke('request_automation_permission');
+      await invoke('check_automation_permission');
       setAutomationPermissionGranted(true);
       if (showMessage) {
         setPermissionMessage('Automation permission is available.');
@@ -165,7 +174,7 @@ export default function SchedulerView() {
     } catch {
       setAutomationPermissionGranted(false);
       if (showMessage) {
-        setPermissionMessage('Automation permission is missing. Enable Firelink under Automation for Finder in System Settings.');
+        setPermissionMessage('Automation permission is missing. Enable Firelink under Automation for System Events in System Settings.');
       }
     }
   }, [isMac]);
@@ -204,7 +213,7 @@ export default function SchedulerView() {
 
   const handlePermissionAction = async () => {
     if (automationPermissionGranted) {
-      await openAutomationSettings('macOS does not allow Firelink to revoke Automation permission directly. Revoke it in System Settings, then return to Firelink.');
+      await openAutomationSettings('macOS does not allow Firelink to revoke Automation permission directly. Revoke System Events access in System Settings, then return to Firelink.');
       return;
     }
 
@@ -215,7 +224,7 @@ export default function SchedulerView() {
       setPermissionMessage('Automation permission is available.');
     } catch {
       setAutomationPermissionGranted(false);
-      await openAutomationSettings('Enable Firelink under Automation for Finder in System Settings, then return to Firelink.');
+      await openAutomationSettings('Enable Firelink under Automation for System Events in System Settings, then return to Firelink.');
     }
   };
 
@@ -361,7 +370,7 @@ export default function SchedulerView() {
             <div className="mb-2 flex items-center gap-2 font-semibold text-text-primary">
               <LockKeyhole size={17} className="text-accent" /> System Permissions
             </div>
-          <p className="mb-4 text-[12px] text-text-muted">Sleep, restart, and shut down require macOS Automation permission for Finder.</p>
+          <p className="mb-4 text-[12px] text-text-muted">Sleep, restart, and shut down require macOS Automation permission for System Events.</p>
           <div className="mb-4 flex items-center gap-2 text-[12px]">
             {automationPermissionGranted ? (
               <>

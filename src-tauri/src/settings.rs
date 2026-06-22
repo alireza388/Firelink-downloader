@@ -43,6 +43,26 @@ pub fn update_settings_state(
     crate::db::save_settings(&connection, &stored)
 }
 
+pub fn preserve_scheduler_runtime_keys(
+    existing: Option<&str>,
+    incoming: &str,
+) -> Result<String, String> {
+    let Some(existing) = existing else {
+        return Ok(incoming.to_string());
+    };
+    let existing_document = decode_document(&Value::String(existing.to_string()))?;
+    let existing_state = settings_state(&existing_document)?;
+    let mut incoming_document = decode_document(&Value::String(incoming.to_string()))?;
+    let incoming_state = settings_state_mut(&mut incoming_document)?;
+    for key in ["schedulerLastStartKey", "schedulerLastStopKey"] {
+        if let Some(value) = existing_state.get(key) {
+            incoming_state.insert(key.to_string(), value.clone());
+        }
+    }
+    serde_json::to_string(&incoming_document)
+        .map_err(|error| format!("failed to encode persisted settings: {error}"))
+}
+
 fn decode_document(stored: &Value) -> Result<Value, String> {
     match stored {
         Value::String(text) => serde_json::from_str(text)
@@ -246,6 +266,8 @@ fn default_settings() -> PersistedSettings {
             selected_queue_ids: vec!["00000000-0000-0000-0000-000000000001".to_string()],
             post_queue_action: PostQueueAction::None,
         },
+        scheduler_running: false,
+        scheduler_active_download_ids: Vec::new(),
         scheduler_last_start_key: String::new(),
         scheduler_last_stop_key: String::new(),
         last_custom_speed_limit_ki_b: 1024,
@@ -271,8 +293,40 @@ fn default_settings() -> PersistedSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_stored_settings;
+    use super::{decode_stored_settings, preserve_scheduler_runtime_keys};
     use serde_json::{json, Value};
+
+    #[test]
+    fn frontend_settings_save_preserves_backend_scheduler_keys() {
+        let existing = json!({
+            "state": {
+                "schedulerLastStartKey": "2026-06-22-start",
+                "schedulerLastStopKey": "2026-06-22-stop"
+            },
+            "version": 3
+        })
+        .to_string();
+        let incoming = json!({
+            "state": {
+                "schedulerLastStartKey": "",
+                "schedulerLastStopKey": "",
+                "theme": "system"
+            },
+            "version": 3
+        })
+        .to_string();
+
+        let merged = preserve_scheduler_runtime_keys(Some(&existing), &incoming).unwrap();
+        let merged: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            merged["state"]["schedulerLastStartKey"],
+            "2026-06-22-start"
+        );
+        assert_eq!(
+            merged["state"]["schedulerLastStopKey"],
+            "2026-06-22-stop"
+        );
+    }
 
     #[test]
     fn decodes_zustand_envelope_and_preserves_non_default_startup_settings() {

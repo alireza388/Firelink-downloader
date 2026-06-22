@@ -414,9 +414,20 @@ export const AddDownloadsModal = () => {
           });
         } catch (e) {}
 
-         if (fileExistsInStore || fileExistsOnDisk) {
-             newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'file', msg: 'File exists at destination' }, resolution: 'rename' });
-         }
+        if (fileExistsInStore || fileExistsOnDisk) {
+          newConflicts.push({
+            id: i.toString(),
+            fileName: finalFile,
+            reason: {
+              type: 'file',
+              msg: fileExistsInStore
+                ? 'Existing Firelink download uses this destination'
+                : 'File exists on disk; rename or skip to avoid deleting unrelated data'
+            },
+            resolution: 'rename',
+            replaceAllowed: fileExistsInStore
+          });
+        }
       }
     }
 
@@ -503,7 +514,7 @@ export const AddDownloadsModal = () => {
                  
                  itemsToAdd[idx] = { ...item, file: newName };
              } else if (res.resolution === 'replace') {
-              if (conflict?.reason.type !== 'file') {
+              if (conflict?.reason.type !== 'file' || !conflict.replaceAllowed) {
                 itemsToAdd[idx] = null;
                 continue;
               }
@@ -516,8 +527,6 @@ export const AddDownloadsModal = () => {
         const itemLocation = useSharedDestination
           ? finalLocation
           : destinationOverrides[idx] || await categoryLocationForFile(finalFile);
-        const fullPath = await resolveDownloadFilePath(itemLocation, finalFile);
-
         const store = useDownloadStore.getState();
         let existingItem;
         const currentSettings = useSettingsStore.getState();
@@ -525,8 +534,8 @@ export const AddDownloadsModal = () => {
           const destination = download.destination ||
             await resolveCategoryDestination(currentSettings, download.category);
           if (
-            (download.url === item.downloadUrl ||
-              (destination === itemLocation && download.fileName === finalFile)) &&
+            destination === itemLocation &&
+            download.fileName === finalFile &&
             download.status !== 'failed'
           ) {
             existingItem = download;
@@ -538,10 +547,10 @@ export const AddDownloadsModal = () => {
                    throw new Error(`Pause ${existingItem.fileName} before replacing it.`);
                  }
 
-                 await invoke('delete_file', { path: fullPath });
-                 if (existingItem) {
-                   await store.removeDownload(existingItem.id);
+                 if (!existingItem) {
+                   throw new Error(`Cannot replace ${finalFile}: file is not owned by a Firelink download.`);
                  }
+                 await store.removeDownload(existingItem.id, true);
              }
          }
       }
@@ -565,7 +574,7 @@ export const AddDownloadsModal = () => {
         }
 
         const category = categoryForFileName(finalFile);
-        await addDownload({
+        const added = await addDownload({
           id,
           url: item.downloadUrl,
           fileName: finalFile,
@@ -588,6 +597,9 @@ export const AddDownloadsModal = () => {
           mediaFormatSelector: formatSelector,
           size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
         }, action);
+        if (!added) {
+          throw new Error('Backend rejected download start.');
+        }
         addedCount += 1;
         } catch (e) {
           console.error("Invalid URL or failed to add:", e);

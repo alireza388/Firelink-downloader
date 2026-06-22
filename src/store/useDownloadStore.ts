@@ -125,11 +125,6 @@ const syncSystemIntegrations = () => {
   const settings = useSettingsStore.getState();
   const activeCount = useDownloadStore.getState().downloads.filter(d => d.status === 'downloading').length;
   invoke('update_dock_badge', { count: settings.showDockBadge ? activeCount : 0 }).catch(() => {});
-  if (settings.preventsSleepWhileDownloading) {
-    invoke('set_prevent_sleep', { prevent: activeCount > 0 }).catch(() => {});
-  } else {
-    invoke('set_prevent_sleep', { prevent: false }).catch(() => {});
-  }
 };
 
 const effectiveDestinationForItem = async (
@@ -198,7 +193,7 @@ interface DownloadState {
   openDeleteModal: (downloadIds?: string | string[]) => void;
   closeDeleteModal: () => void;
   setSelectedPropertiesDownloadId: (id: string | null) => void;
-  addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<void>;
+  addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<boolean>;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
   removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
   redownload: (id: string) => Promise<void>;
@@ -335,12 +330,16 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     if (action.type === 'add-to-queue') {
       info(`Download ${item.id} added to queue ${action.queueId}`);
+      return true;
     } else if (action.type === 'start-now') {
       if (await dispatchItem(item.id)) {
         get().updateDownload(item.id, { hasBeenDispatched: true });
+        info(`Download ${item.id} started`);
+        return true;
       }
-      info(`Download ${item.id} started`);
+      return false;
     }
+    return false;
   },
   applyProperties: async (id, updates) => {
     const state = get();
@@ -676,6 +675,15 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         d.queueId === id ? { ...d, queueId: MAIN_QUEUE_ID } : d
       )
     }));
+    const settings = useSettingsStore.getState();
+    if (settings.scheduler.selectedQueueIds.includes(id)) {
+      const selectedQueueIds = settings.scheduler.selectedQueueIds.filter(queueId => queueId !== id);
+      settings.setScheduler({
+        ...settings.scheduler,
+        enabled: selectedQueueIds.length > 0 ? settings.scheduler.enabled : false,
+        selectedQueueIds
+      });
+    }
   },
   initDB: async () => {
     try {
@@ -764,6 +772,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       }
     } catch (e) {
       console.error("Failed to init DB", e);
+      throw e;
     }
   }
 }));

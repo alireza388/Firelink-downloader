@@ -7,6 +7,7 @@ import { listenEvent as listen } from '../ipc';
 interface DownloadProgressState {
   progressMap: Record<string, DownloadProgressEvent>;
   updateDownloadProgress: (id: string, payload: DownloadProgressEvent) => void;
+  clearDownloadProgress: (id: string) => void;
 }
 
 import { useDownloadStore } from './useDownloadStore';
@@ -20,6 +21,13 @@ export const useDownloadProgressStore = create<DownloadProgressState>((set) => (
         [id]: payload,
       },
     })),
+  clearDownloadProgress: (id) =>
+    set((state) => {
+      if (!(id in state.progressMap)) return state;
+      const next = { ...state.progressMap };
+      delete next[id];
+      return { progressMap: next };
+    }),
 }));
 
 let unlistenProgress: UnlistenFn | null = null;
@@ -36,12 +44,9 @@ export async function initDownloadListener() {
     const current = mainStore.downloads.find(d => d.id === payload.id);
     if (current) {
       const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
-      mainStore.updateDownload(payload.id, {
-        fraction: payload.fraction,
-        speed: payload.speed,
-        eta: payload.eta,
-        ...(shouldUpdateSize ? { size: payload.size! } : {}),
-      });
+      if (shouldUpdateSize && current.size !== payload.size) {
+        mainStore.updateDownload(payload.id, { size: payload.size! });
+      }
     }
   });
 
@@ -52,7 +57,11 @@ export async function initDownloadListener() {
       const current = mainStore.downloads.find(d => d.id === payload.id);
       if (current) {
         const status = payload.status as DownloadStatus;
-        const updates: Partial<any> = { status };
+        const progress = useDownloadProgressStore.getState().progressMap[payload.id];
+        const updates: Partial<any> = {
+          status,
+          ...(progress ? { fraction: progress.fraction } : {})
+        };
         if (status !== 'downloading') {
           updates.speed = '-';
           updates.eta = '-';
@@ -71,6 +80,9 @@ export async function initDownloadListener() {
           mainStore.registerBackendIds([payload.id]);
         } else if (status === 'completed' || status === 'failed') {
           mainStore.unregisterBackendIds([payload.id]);
+        }
+        if (status === 'completed' || status === 'failed' || status === 'paused') {
+          useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
         }
       }
     });

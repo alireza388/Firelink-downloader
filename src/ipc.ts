@@ -40,13 +40,13 @@ type CommandMap = {
   set_concurrent_limit: { args: { limit: number }; result: void };
   set_global_speed_limit: { args: { limit: string | null }; result: void };
   request_automation_permission: { args: undefined; result: void };
+  check_automation_permission: { args: undefined; result: void };
   open_automation_settings: { args: undefined; result: void };
   get_free_space: { args: { path: string }; result: string };
   set_keychain_password: { args: { id: string; password: string }; result: void };
   get_keychain_password: { args: { id: string }; result: string };
   delete_keychain_password: { args: { id: string }; result: void };
   check_file_exists: { args: { path: string }; result: boolean };
-  delete_file: { args: { path: string }; result: void };
   toggle_tray_icon: { args: { show: boolean }; result: void };
   set_extension_pairing_token: { args: { token: string }; result: void };
   get_extension_server_port: { args: undefined; result: number | null };

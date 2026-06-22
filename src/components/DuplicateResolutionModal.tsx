@@ -8,6 +8,7 @@ export interface DuplicateConflict {
   fileName: string;
   reason: DuplicateReason;
   resolution: DuplicateResolution;
+  replaceAllowed?: boolean;
 }
 
 interface Props {
@@ -44,7 +45,7 @@ export const DuplicateResolutionModal = ({ conflicts: initialConflicts, onConfir
                 className="app-control w-24 shrink-0 px-2 py-1 text-xs"
               >
                 <option value="rename">Rename</option>
-                {conflict.reason.type === 'file' && <option value="replace">Replace</option>}
+                {conflict.reason.type === 'file' && conflict.replaceAllowed && <option value="replace">Replace</option>}
                 <option value="skip">Skip</option>
               </select>
             </div>

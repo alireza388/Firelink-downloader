@@ -1,5 +1,6 @@
 use chrono::{Datelike, Local, Timelike};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tauri::Emitter;
 
@@ -10,15 +11,44 @@ fn minute_of_day(value: &str) -> Option<u32> {
     (hour < 24 && minute < 60).then_some(hour * 60 + minute)
 }
 
-pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
+fn stop_is_due(
+    stop_time_enabled: bool,
+    stop_minute: Option<u32>,
+    current_minute: u32,
+    last_start_key: &str,
+    start_key: &str,
+    last_stop_key: &str,
+    stop_key: &str,
+) -> bool {
+    stop_time_enabled
+        && stop_minute.is_some_and(|stop| current_minute >= stop)
+        && last_start_key == start_key
+        && last_stop_key != stop_key
+}
+
+pub fn spawn_scheduler(
+    app_handle: tauri::AppHandle,
+    settings_cache: Arc<RwLock<Option<crate::ipc::PersistedSettings>>>,
+) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         let mut last_emit: HashMap<&'static str, std::time::Instant> = HashMap::new();
         loop {
             interval.tick().await;
 
-            if let Ok(settings) = crate::settings::load_settings(&app_handle) {
-                let scheduler = settings.scheduler;
+            let settings = settings_cache
+                .read()
+                .ok()
+                .and_then(|settings| {
+                    settings.as_ref().map(|settings| {
+                        (
+                            settings.scheduler.clone(),
+                            settings.scheduler_last_start_key.clone(),
+                            settings.scheduler_last_stop_key.clone(),
+                        )
+                    })
+                });
+            if let Some((scheduler, scheduler_last_start_key, scheduler_last_stop_key)) = settings {
                 if !scheduler.enabled {
                     continue;
                 }
@@ -43,7 +73,7 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
 
                 if start_minute.is_some_and(|start| current_minute >= start)
                     && before_stop
-                    && settings.scheduler_last_start_key != start_key
+                    && scheduler_last_start_key != start_key
                     && last_emit
                         .get("start")
                         .is_none_or(|instant| instant.elapsed() >= Duration::from_secs(5))
@@ -55,9 +85,15 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
                     last_emit.insert("start", std::time::Instant::now());
                 }
 
-                if scheduler.stop_time_enabled
-                    && stop_minute.is_some_and(|stop| current_minute >= stop)
-                    && settings.scheduler_last_stop_key != stop_key
+                if stop_is_due(
+                    scheduler.stop_time_enabled,
+                    stop_minute,
+                    current_minute,
+                    &scheduler_last_start_key,
+                    &start_key,
+                    &scheduler_last_stop_key,
+                    &stop_key,
+                )
                     && last_emit
                         .get("stop")
                         .is_none_or(|instant| instant.elapsed() >= Duration::from_secs(5))
@@ -75,7 +111,7 @@ pub fn spawn_scheduler(app_handle: tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::minute_of_day;
+    use super::{minute_of_day, stop_is_due};
 
     #[test]
     fn parses_valid_scheduler_times() {
@@ -89,5 +125,27 @@ mod tests {
         assert_eq!(minute_of_day("24:00"), None);
         assert_eq!(minute_of_day("12:60"), None);
         assert_eq!(minute_of_day("bad"), None);
+    }
+
+    #[test]
+    fn stop_requires_same_day_acknowledged_start() {
+        assert!(!stop_is_due(
+            true,
+            Some(480),
+            600,
+            "",
+            "2026-06-22-start",
+            "",
+            "2026-06-22-stop",
+        ));
+        assert!(stop_is_due(
+            true,
+            Some(480),
+            600,
+            "2026-06-22-start",
+            "2026-06-22-start",
+            "",
+            "2026-06-22-stop",
+        ));
     }
 }

@@ -3676,6 +3676,16 @@ pub fn run() {
 
             let database = crate::db::init(app.handle())
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
+            let initial_pairing_token = {
+                let mut connection = database.lock()?;
+                crate::db::hydrate_pairing_token(&mut connection)?.0
+            };
+            {
+                let mut pairing_token = extension_pairing_token
+                    .write()
+                    .map_err(|_| "extension pairing token lock is unavailable".to_string())?;
+                *pairing_token = initial_pairing_token;
+            }
             app.manage(database);
 
             let max_concurrent = {

@@ -1,7 +1,9 @@
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::State,
-    http::{HeaderMap, Method, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::Response,
     routing::{get, post},
     Router,
 };
@@ -23,6 +25,7 @@ pub const EXTENSION_SERVER_PORT: u16 = 6412;
 pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> = EXTENSION_SERVER_PORT..=6422;
 const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
+const SERVER_HEADER: &str = "x-firelink-server";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -90,6 +93,7 @@ pub async fn start_server(
         .route("/ping", get(ping_handler))
         .route("/download", post(download_handler))
         .layer(cors)
+        .layer(middleware::from_fn(add_server_identity))
         .with_state(state);
 
     let (port, listener) = bind_extension_listener().await?;
@@ -114,6 +118,14 @@ pub async fn start_server(
     }
 
     server_result
+}
+
+async fn add_server_identity(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(SERVER_HEADER, HeaderValue::from_static("1"));
+    response
 }
 
 async fn bind_extension_listener() -> Result<(u16, tokio::net::TcpListener), String> {
@@ -358,4 +370,30 @@ fn is_allowed_origin(origin: &str) -> bool {
     Url::parse(origin)
         .ok()
         .is_some_and(|url| matches!(url.scheme(), "moz-extension" | "chrome-extension"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_server_identity, SERVER_HEADER};
+    use axum::{http::StatusCode, middleware, routing::get, Router};
+
+    #[tokio::test]
+    async fn identifies_every_extension_server_response() {
+        let app = Router::new()
+            .route("/ping", get(|| async { StatusCode::FORBIDDEN }))
+            .layer(middleware::from_fn(add_server_identity));
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let response = reqwest::get(format!("http://{address}/ping")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
+
+        server.abort();
+    }
 }

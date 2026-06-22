@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadStore';
 import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
@@ -31,7 +32,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   onClick,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
-  const queueItems = useDownloadStore(state => {
+  const queueItems = useDownloadStore(useShallow(state => {
     const item = state.downloads.find(candidate => candidate.id === downloadId);
     if (!item) return [];
     const queueId = item.queueId;
@@ -42,7 +43,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       )
       .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
       .map(candidate => candidate.id);
-  });
+  }));
   const moveInQueue = useDownloadStore(state => state.moveInQueue);
   const queueIndex = queueItems.indexOf(downloadId);
 

@@ -9,7 +9,7 @@ import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database,
 import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
-import { canonicalizeDownloadFileName, categoryForFileName, fileNameFromUrl, isMediaUrl } from '../utils/downloads';
+import { canonicalizeDownloadFileName, categoryForFileName } from '../utils/downloads';
 import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 import {
   resolveCategoryDestination,
@@ -17,28 +17,15 @@ import {
 } from '../utils/downloadLocations';
 import { isTransferLocked } from '../utils/downloadActions';
 import { useToast } from '../contexts/ToastContext';
-
-interface MediaFormat {
-  name: string;
-  selector: string;
-  ext: string;
-  formatLabel: string;
-  detail: string;
-  type: string;
-  bytes: number;
-  isApproximate?: boolean;
-}
-
-interface ParsedDownloadItem {
-  url: string;
-  file: string;
-  size?: string;
-  sizeBytes?: number;
-  status?: string;
-  isMedia?: boolean;
-  formats?: MediaFormat[];
-  selectedFormat?: number;
-}
+import {
+  canSubmitMetadataRows,
+  mediaFormatSelectorForRow,
+  metadataSummaryMessage,
+  reconcileDownloadRows,
+  refreshFailedMetadataRows,
+  updateRowIfCurrent,
+  type AddDownloadDraftRow
+} from '../utils/addDownloadMetadata';
 
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return 'Unknown size';
@@ -64,9 +51,9 @@ export const AddDownloadsModal = () => {
   const { baseDownloadFolder, perServerConnections } = useSettingsStore();
 
   const [urls, setUrls] = useState('');
-  const [metadataRefreshNonce, setMetadataRefreshNonce] = useState(0);
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
-  const [parsedItems, setParsedItems] = useState<ParsedDownloadItem[]>([]);
+  const [parsedItems, setParsedItems] = useState<AddDownloadDraftRow[]>([]);
+  const metadataRequestsRef = useRef(new Set<string>());
 
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>([]);
   const [showingDuplicates, setShowingDuplicates] = useState(false);
@@ -170,41 +157,26 @@ export const AddDownloadsModal = () => {
       .catch(() => setFreeSpace('Unknown'));
   }, [saveLocation, isAddModalOpen]);
 
-  // Metadata parser
   useEffect(() => {
-    let active = true;
-    const lines = urls.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+    setParsedItems(current =>
+      reconcileDownloadRows(urls, current, pendingAddFilename || undefined)
+    );
+  }, [urls, pendingAddFilename]);
 
-    // Immediately display items in loading state
-    const initialItems: ParsedDownloadItem[] = lines.map(url => {
-      const fallbackFile = lines.length === 1 && pendingAddFilename
-        ? pendingAddFilename
-        : fileNameFromUrl(url);
-      return { url, file: fallbackFile, size: '-', status: 'Loading', isMedia: isMediaUrl(url) };
-    });
-    setParsedItems(initialItems);
+  useEffect(() => {
+    for (const row of parsedItems) {
+      if (row.status !== 'loading') continue;
+      const requestKey = `${row.id}:${row.generation}`;
+      if (metadataRequestsRef.current.has(requestKey)) continue;
+      metadataRequestsRef.current.add(requestKey);
 
-    if (lines.length === 0) {
-      setSelectedItemIndex(null);
-      return;
-    } else if (selectedItemIndex === null || selectedItemIndex >= lines.length) {
-      setSelectedItemIndex(0);
-    }
-
-    const timer = setTimeout(async () => {
-      const updatedItems = [...initialItems];
-      let firstReadyIndex: number | null = null;
-
-      for (let i = 0; i < lines.length; i++) {
-        if (!active) break;
-        const url = lines[i];
+      void (async () => {
         try {
-          new URL(url);
-          if (isMediaUrl(url)) {
+          if (row.isMedia) {
             const settingsStore = useSettingsStore.getState();
             const { mediaCookieSource } = settingsStore;
             const browserArg = mediaCookieSource !== 'none' ? mediaCookieSource : null;
-            const login = getSiteLogin(url, settingsStore);
+            const login = getSiteLogin(row.sourceUrl, settingsStore);
             let keychainPassword = null;
             if (login) {
               try {
@@ -215,7 +187,7 @@ export const AddDownloadsModal = () => {
             }
 
             const mediaData = await fetchMediaMetadataDeduped({
-              url,
+              url: row.sourceUrl,
               cookieBrowser: browserArg,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword
@@ -239,22 +211,28 @@ export const AddDownloadsModal = () => {
                   type: quality.toLowerCase().includes('audio') ? 'Audio' : 'Video'
                 };
               });
-              updatedItems[i] = {
-                url,
-                file: canonicalizeDownloadFileName(`${mediaData.title}.${mediaData.formats[0].ext}`),
-                size: mappedFormats[0].detail,
-                sizeBytes: mappedFormats[0].bytes,
-                status: 'Ready',
-                isMedia: true,
-                formats: mappedFormats,
-                selectedFormat: 0
-              };
+              setParsedItems(current => updateRowIfCurrent(
+                current,
+                row.id,
+                row.sourceUrl,
+                row.generation,
+                currentRow => ({
+                  ...currentRow,
+                  downloadUrl: row.sourceUrl,
+                  file: canonicalizeDownloadFileName(`${mediaData.title}.${mediaData.formats[0].ext}`),
+                  size: mappedFormats[0].bytes ? mappedFormats[0].detail : undefined,
+                  sizeBytes: mappedFormats[0].bytes || undefined,
+                  status: 'ready',
+                  formats: mappedFormats,
+                  selectedFormat: 0
+                })
+              ));
             } else {
               throw new Error("Invalid media metadata or no formats found");
             }
           } else {
             const settingsStore = useSettingsStore.getState();
-            const login = getSiteLogin(url, settingsStore);
+            const login = getSiteLogin(row.sourceUrl, settingsStore);
             let keychainPassword = null;
             if (login) {
               try {
@@ -264,60 +242,74 @@ export const AddDownloadsModal = () => {
               }
             }
             const meta = await invoke('fetch_metadata', {
-              url,
+              url: row.sourceUrl,
               userAgent: settingsStore.customUserAgent || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword
             });
-            updatedItems[i] = {
-              url: meta.url || url,
-              file: canonicalizeDownloadFileName(
-                lines.length === 1 && pendingAddFilename ? pendingAddFilename : meta.filename
-              ),
-              size: meta.size,
-              sizeBytes: meta.size_bytes,
-              status: 'Ready'
-            };
+            setParsedItems(current => updateRowIfCurrent(
+              current,
+              row.id,
+              row.sourceUrl,
+              row.generation,
+              currentRow => ({
+                ...currentRow,
+                downloadUrl: meta.url || currentRow.downloadUrl,
+                file: canonicalizeDownloadFileName(
+                  current.length === 1 && pendingAddFilename
+                    ? pendingAddFilename
+                    : meta.filename
+                ),
+                size: meta.size_bytes ? meta.size : undefined,
+                sizeBytes: meta.size_bytes || undefined,
+                status: 'ready'
+              })
+            ));
           }
-          if (firstReadyIndex === null) firstReadyIndex = i;
         } catch (e) {
           console.error("Meta fetch failed", e);
-          updatedItems[i] = { ...updatedItems[i], size: 'Unknown', sizeBytes: 0, status: 'Error' };
+          setParsedItems(current => updateRowIfCurrent(
+            current,
+            row.id,
+            row.sourceUrl,
+            row.generation,
+            currentRow => ({
+              ...currentRow,
+              downloadUrl: currentRow.sourceUrl,
+              size: undefined,
+              sizeBytes: undefined,
+              status: 'metadata-error',
+              formats: undefined,
+              selectedFormat: undefined
+            })
+          ));
+        } finally {
+          metadataRequestsRef.current.delete(requestKey);
         }
-        if (active) setParsedItems([...updatedItems]);
-      }
-
-    if (active && firstReadyIndex !== null && !isSaveLocationManual) {
-      setSelectedItemIndex(firstReadyIndex);
-      if (lines.length > 1) {
-        setSaveLocation(useSettingsStore.getState().baseDownloadFolder || '~/Downloads');
-      } else {
-        const firstFile = updatedItems[firstReadyIndex].file;
-        if (firstFile) {
-          const category = categoryForFileName(firstFile);
-          const categoryDir = await resolveCategoryDestination(
-            useSettingsStore.getState(),
-            category
-          );
-          if (active) setSaveLocation(categoryDir);
-        }
-      }
+      })();
     }
-    }, 400);
+  }, [parsedItems, pendingAddFilename, password, useAuth, username]);
 
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [
-    urls,
-    pendingAddFilename,
-    isSaveLocationManual,
-    metadataRefreshNonce,
-    useAuth,
-    username,
-    password
-  ]);
+  useEffect(() => {
+    if (parsedItems.length === 0) {
+      setSelectedItemIndex(null);
+      return;
+    }
+    setSelectedItemIndex(current =>
+      current === null || current >= parsedItems.length ? 0 : current
+    );
+    if (isSaveLocationManual) return;
+    if (parsedItems.length > 1) {
+      setSaveLocation(useSettingsStore.getState().baseDownloadFolder || '~/Downloads');
+      return;
+    }
+    const first = parsedItems[0];
+    if (first.status !== 'ready' && first.status !== 'metadata-error') return;
+    void resolveCategoryDestination(
+      useSettingsStore.getState(),
+      categoryForFileName(first.file)
+    ).then(setSaveLocation);
+  }, [isSaveLocationManual, parsedItems]);
 
   if (!isAddModalOpen) return null;
 
@@ -343,7 +335,7 @@ export const AddDownloadsModal = () => {
   };
 
   const handleAction = async (action: AddDownloadAction) => {
-    if (isSubmitting || parsedItems.length === 0 || parsedItems.some(item => item.status !== 'Ready')) {
+    if (isSubmitting || !canSubmitMetadataRows(parsedItems)) {
       return;
     }
     if (speedLimitEnabled && (!Number.isFinite(Number(speedLimit)) || Number(speedLimit) <= 0)) {
@@ -397,7 +389,7 @@ export const AddDownloadsModal = () => {
         ? finalLocation
         : destinationOverrides[i] || await categoryLocationForFile(finalFile);
 
-      const isUrlDupe = store.downloads.some(d => d.url === item.url && d.status !== 'failed' && d.status !== 'completed');
+      const isUrlDupe = store.downloads.some(d => d.url === item.downloadUrl && d.status !== 'failed' && d.status !== 'completed');
       if (isUrlDupe) {
         newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'url', msg: 'URL already in queue' }, resolution: 'rename' });
       } else {
@@ -452,7 +444,7 @@ export const AddDownloadsModal = () => {
     resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[],
     destinationOverrides: Record<number, string> = {}
   ) => {
-      let itemsToAdd: Array<ParsedDownloadItem | null> = [...parsedItems];
+      let itemsToAdd: Array<AddDownloadDraftRow | null> = [...parsedItems];
 
       if (resolutions) {
          for (const res of resolutions) {
@@ -533,7 +525,7 @@ export const AddDownloadsModal = () => {
           const destination = download.destination ||
             await resolveCategoryDestination(currentSettings, download.category);
           if (
-            (download.url === item.url ||
+            (download.url === item.downloadUrl ||
               (destination === itemLocation && download.fileName === finalFile)) &&
             download.status !== 'failed'
           ) {
@@ -562,11 +554,10 @@ export const AddDownloadsModal = () => {
         try {
           const id = crypto.randomUUID();
           let finalFile = canonicalizeDownloadFileName(item.file);
-          let formatSelector = undefined;
+          let formatSelector = mediaFormatSelectorForRow(item);
 
           if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
             const selectedFormat = item.formats[item.selectedFormat];
-            formatSelector = selectedFormat.selector;
             if (!finalFile.endsWith(`.${selectedFormat.ext}`)) {
                 const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
                 finalFile = `${baseName}.${selectedFormat.ext}`;
@@ -576,7 +567,7 @@ export const AddDownloadsModal = () => {
         const category = categoryForFileName(finalFile);
         await addDownload({
           id,
-          url: item.url,
+          url: item.downloadUrl,
           fileName: finalFile,
           category,
           dateAdded: new Date().toISOString(),
@@ -635,17 +626,22 @@ export const AddDownloadsModal = () => {
 
   const selectMediaFormat = (index: number) => {
     if (selectedItemIndex === null) return;
-    const newItems = [...parsedItems];
-    const selectedItem = newItems[selectedItemIndex];
+    const selectedItem = parsedItems[selectedItemIndex];
     const format = selectedItem?.formats?.[index];
     if (!selectedItem || !format) return;
 
-    selectedItem.selectedFormat = index;
-    selectedItem.size = format.detail || 'Unknown';
-    selectedItem.sizeBytes = format.bytes || 0;
     const baseName = selectedItem.file.substring(0, selectedItem.file.lastIndexOf('.')) || selectedItem.file;
-    selectedItem.file = canonicalizeDownloadFileName(`${baseName}.${format.ext}`);
-    setParsedItems(newItems);
+    setParsedItems(items => items.map((item, itemIndex) =>
+      itemIndex === selectedItemIndex
+        ? {
+            ...item,
+            selectedFormat: index,
+            size: format.bytes ? format.detail : undefined,
+            sizeBytes: format.bytes || undefined,
+            file: canonicalizeDownloadFileName(`${baseName}.${format.ext}`)
+          }
+        : item
+    ));
   };
 
   const requiredBytes = parsedItems.reduce((acc, item) => acc + (item.sizeBytes || 0), 0);
@@ -657,7 +653,8 @@ export const AddDownloadsModal = () => {
        : requiredBytes < 1024 * 1024 * 1024 ? `${(requiredBytes / 1024 / 1024).toFixed(1)} MB`
        : `${(requiredBytes / 1024 / 1024 / 1024).toFixed(2)} GB`}`
     : 'Unknown';
-  const canSubmit = parsedItems.length > 0 && parsedItems.every(item => item.status === 'Ready');
+  const canSubmit = canSubmitMetadataRows(parsedItems);
+  const failedMetadataCount = parsedItems.filter(item => item.status === 'metadata-error').length;
 
   return (
     <>
@@ -711,11 +708,12 @@ export const AddDownloadsModal = () => {
                 />
                 <div className="flex justify-between items-center px-1">
                   <span className="text-[11px] text-text-muted font-medium">
-                    {parsedItems.filter(item => item.status === 'Ready').length} ready, {parsedItems.filter(item => item.status === 'Error').length} failed
+                    {parsedItems.filter(item => item.status === 'ready').length} ready, {failedMetadataCount} fallback
                   </span>
                     <button
                       type="button"
-                      onClick={() => setMetadataRefreshNonce(value => value + 1)}
+                      onClick={() => setParsedItems(refreshFailedMetadataRows)}
+                      disabled={failedMetadataCount === 0}
                       className="add-download-link-button flex items-center gap-1.5 text-[11px] font-medium"
                     >
                       <RefreshCw size={12} /> Refresh Metadata
@@ -749,7 +747,7 @@ export const AddDownloadsModal = () => {
                     ) : (
                       parsedItems.map((item, i) => (
                         <div
-                          key={i}
+                          key={item.id}
                           onClick={() => setSelectedItemIndex(i)}
                           onKeyDown={(event) => {
                             if (event.key === 'Enter' || event.key === ' ') {
@@ -768,14 +766,18 @@ export const AddDownloadsModal = () => {
                         >
                           <div className="flex items-center w-full">
                             <div className="flex-[2] text-text-primary font-medium truncate pr-2" title={item.file}>{item.file}</div>
-                            <div className={`flex-1 font-mono ${item.status === 'Loading' ? 'text-text-muted/50' : 'text-text-muted'}`}>{item.size || 'Unknown'}</div>
-                            <div className={`flex-[1.5] font-medium ${item.status === 'Error' ? 'text-red-500' : item.status === 'Loading' ? 'text-orange-400' : 'text-blue-500'}`}>
-                              {item.status === 'Loading' ? (
+                            <div className={`flex-1 font-mono ${item.status === 'loading' ? 'text-text-muted/50' : 'text-text-muted'}`}>{item.size || 'Unknown'}</div>
+                            <div className={`flex-[1.5] font-medium ${item.status === 'metadata-error' || item.status === 'invalid' ? 'text-red-500' : item.status === 'loading' ? 'text-orange-400' : 'text-blue-500'}`}>
+                              {item.status === 'loading' ? (
                                 <div className="flex items-center gap-1.5">
                                   <RefreshCw size={12} className="animate-spin" /> Fetching...
                                 </div>
                               ) : (
-                                item.status || 'Ready'
+                                item.status === 'metadata-error'
+                                  ? 'Fallback'
+                                  : item.status === 'invalid'
+                                    ? 'Invalid'
+                                    : 'Ready'
                               )}
                             </div>
                           </div>
@@ -803,7 +805,7 @@ export const AddDownloadsModal = () => {
                     <Video size={16} className="text-purple-500" /> Media Format
                   </div>
 
-                  {parsedItems[selectedItemIndex].status === 'Loading' ? (
+                  {parsedItems[selectedItemIndex].status === 'loading' ? (
                     <div className="flex flex-col items-center justify-center py-6 gap-3 relative z-10">
                       <RefreshCw size={24} className="animate-spin text-purple-500" />
                       <span className="text-xs text-text-muted font-medium animate-pulse">Fetching media streams...</span>
@@ -849,7 +851,7 @@ export const AddDownloadsModal = () => {
                   </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-4 relative z-10">
-                      <span className="text-xs text-red-400 font-medium">Failed to load media streams.</span>
+                      <span className="text-xs text-red-400 font-medium">Metadata unavailable. Default media format will be used.</span>
                     </div>
                   )}
                 </section>
@@ -984,11 +986,7 @@ export const AddDownloadsModal = () => {
         {/* Footer */}
         <div className="add-download-footer p-4 flex items-center shrink-0">
           <div className="text-[11px] text-text-muted font-medium flex-1">
-            {parsedItems.length === 0
-              ? 'Paste one or more links.'
-              : canSubmit
-                ? `Ready to add ${parsedItems.length} download(s).`
-                : 'Wait for metadata or remove links that failed validation.'}
+            {metadataSummaryMessage(parsedItems)}
           </div>
           <div className="flex gap-2.5">
             <button onClick={() => toggleAddModal(false)} className="add-download-button add-download-button-cancel px-4 text-xs">

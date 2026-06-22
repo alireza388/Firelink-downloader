@@ -172,6 +172,37 @@ describe('useDownloadStore', () => {
     );
   });
 
+  it('redownloads fallback media without requiring a format selector', async () => {
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'media-fallback',
+        url: 'https://youtube.com/watch?v=test',
+        fileName: 'watch',
+        destination: '/tmp',
+        status: 'completed',
+        category: 'Other',
+        dateAdded: '',
+        isMedia: true
+      }] as any[]
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return [];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().redownload('media-fallback');
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({
+          is_media: true,
+          format_selector: null
+        })
+      })
+    );
+  });
+
   it('starts and pauses all items regardless of legacy missing queue ids', async () => {
     useDownloadStore.setState({
       downloads: [

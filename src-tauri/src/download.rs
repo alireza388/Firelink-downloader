@@ -51,6 +51,7 @@ pub enum DownloadEvent {
         strike: usize,
         reason: String,
     },
+    CapturedUrls(String),
 }
 
 #[derive(Debug)]
@@ -240,7 +241,7 @@ impl CoordinatorEventSink {
     fn emit_captured_urls(&self, payload: String) -> bool {
         match self {
             Self::Tauri(app_handle) => app_handle.emit("deep-link-add-download", payload).is_ok(),
-            Self::Headless(_) => true,
+            Self::Headless(event_tx) => event_tx.send(DownloadEvent::CapturedUrls(payload)).is_ok(),
         }
     }
 }
@@ -772,7 +773,8 @@ fn parse_speed_limit(value: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_speed_limit;
+    use super::{parse_speed_limit, DownloadCmd, DownloadCoordinator, DownloadEvent};
+    use std::time::Duration;
 
     #[test]
     fn parses_aria_style_speed_limits() {
@@ -780,5 +782,35 @@ mod tests {
         assert_eq!(parse_speed_limit("1.5M"), Some(1_572_864));
         assert_eq!(parse_speed_limit("2 MB/s"), Some(2 * 1024 * 1024));
         assert_eq!(parse_speed_limit("0"), None);
+    }
+
+    #[tokio::test]
+    async fn buffers_captured_urls_until_frontend_is_ready() {
+        let (coordinator, mut events) = DownloadCoordinator::spawn_headless();
+        coordinator
+            .send(DownloadCmd::CaptureUrls(vec![
+                "https://example.com/startup.zip".to_string()
+            ]))
+            .await
+            .unwrap();
+
+        assert!(tokio::time::timeout(Duration::from_millis(20), events.recv())
+            .await
+            .is_err());
+
+        coordinator
+            .send(DownloadCmd::FrontendReady(true))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            DownloadEvent::CapturedUrls(
+                "https://example.com/startup.zip".to_string()
+            )
+        );
     }
 }

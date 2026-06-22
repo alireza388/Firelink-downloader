@@ -444,9 +444,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
 
     const mediaFormatSelector = targetItem.mediaFormatSelector?.trim();
-    if (targetItem.isMedia && !mediaFormatSelector) {
-      throw new Error('Cannot redownload: selected media format is missing.');
-    }
 
     const settings = useSettingsStore.getState();
     const destPath = targetItem.destination ||

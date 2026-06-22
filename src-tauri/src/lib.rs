@@ -1313,43 +1313,73 @@ pub(crate) fn collect_download_uris(url: &str, mirrors: Option<&str>) -> Vec<Str
 const MAX_DEEP_LINK_PAYLOAD_LEN: usize = 65_536;
 const MAX_DEEP_LINK_URLS: usize = 200;
 
-fn parse_firelink_urls(deep_links: impl IntoIterator<Item = url::Url>) -> Vec<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FirelinkDeepLink {
+    Launch,
+    Add(Vec<String>),
+    Invalid,
+}
+
+fn parse_firelink_deep_link(deep_link: &url::Url) -> FirelinkDeepLink {
+    if deep_link.scheme() != "firelink"
+        || !deep_link.username().is_empty()
+        || deep_link.password().is_some()
+        || deep_link.port().is_some()
+    {
+        return FirelinkDeepLink::Invalid;
+    }
+
+    if deep_link.host_str() == Some("launch") {
+        return if matches!(deep_link.path(), "" | "/")
+            && deep_link.query().is_none()
+            && deep_link.fragment().is_none()
+        {
+            FirelinkDeepLink::Launch
+        } else {
+            FirelinkDeepLink::Invalid
+        };
+    }
+
+    if deep_link.host_str() != Some("add")
+        || !matches!(deep_link.path(), "" | "/")
+        || deep_link.fragment().is_some()
+    {
+        return FirelinkDeepLink::Invalid;
+    }
+
+    let Some(raw_urls) = deep_link
+        .query_pairs()
+        .find_map(|(key, value)| (key == "url").then(|| value.into_owned()))
+    else {
+        return FirelinkDeepLink::Invalid;
+    };
+    if raw_urls.is_empty() || raw_urls.chars().count() >= MAX_DEEP_LINK_PAYLOAD_LEN {
+        return FirelinkDeepLink::Invalid;
+    }
+
     let mut captured = Vec::new();
-
-    for deep_link in deep_links {
-        if deep_link.scheme() != "firelink" || deep_link.host_str() != Some("add") {
-            continue;
-        }
-
-        let Some(raw_urls) = deep_link
-            .query_pairs()
-            .find_map(|(key, value)| (key == "url").then(|| value.into_owned()))
-        else {
+    for raw_url in raw_urls.lines() {
+        let raw_url = raw_url.trim();
+        let Ok(url) = url::Url::parse(raw_url) else {
             continue;
         };
-        if raw_urls.is_empty() || raw_urls.chars().count() >= MAX_DEEP_LINK_PAYLOAD_LEN {
+        if !matches!(url.scheme(), "http" | "https" | "ftp" | "sftp") {
             continue;
         }
-
-        for raw_url in raw_urls.lines() {
-            let raw_url = raw_url.trim();
-            let Ok(url) = url::Url::parse(raw_url) else {
-                continue;
-            };
-            if !matches!(url.scheme(), "http" | "https" | "ftp" | "sftp") {
-                continue;
-            }
-            let url = url.to_string();
-            if !captured.iter().any(|existing| existing == &url) {
-                captured.push(url);
-                if captured.len() == MAX_DEEP_LINK_URLS {
-                    return captured;
-                }
+        let url = url.to_string();
+        if !captured.iter().any(|existing| existing == &url) {
+            captured.push(url);
+            if captured.len() == MAX_DEEP_LINK_URLS {
+                break;
             }
         }
     }
 
-    captured
+    if captured.is_empty() {
+        FirelinkDeepLink::Invalid
+    } else {
+        FirelinkDeepLink::Add(captured)
+    }
 }
 
 fn restore_main_window(app_handle: &tauri::AppHandle) {
@@ -1361,12 +1391,30 @@ fn restore_main_window(app_handle: &tauri::AppHandle) {
 }
 
 fn dispatch_deep_links(app_handle: tauri::AppHandle, deep_links: Vec<url::Url>) {
-    let urls = parse_firelink_urls(deep_links);
-    if urls.is_empty() {
+    let mut should_restore = false;
+    let mut urls = Vec::new();
+    for deep_link in deep_links {
+        match parse_firelink_deep_link(&deep_link) {
+            FirelinkDeepLink::Launch => should_restore = true,
+            FirelinkDeepLink::Add(parsed) => {
+                should_restore = true;
+                for url in parsed {
+                    if !urls.contains(&url) && urls.len() < MAX_DEEP_LINK_URLS {
+                        urls.push(url);
+                    }
+                }
+            }
+            FirelinkDeepLink::Invalid => {}
+        }
+    }
+    if !should_restore {
         return;
     }
 
     restore_main_window(&app_handle);
+    if urls.is_empty() {
+        return;
+    }
     let coordinator = app_handle.state::<AppState>().download_coordinator.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(error) = coordinator
@@ -3307,7 +3355,8 @@ mod tests {
     use super::{
         aggregate_media_fraction, build_media_format_options, collect_download_uris,
         is_excluded_yt_dlp_format, json_lower, media_progress_speed,
-        normalize_speed_limit_for_aria2, parse_firelink_urls, parse_media_progress_line,
+        normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_media_progress_line,
+        FirelinkDeepLink,
         redact_log_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
@@ -3361,23 +3410,38 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            parse_firelink_urls([deep_link]),
-            vec![
-                "https://example.com/one.zip",
-                "ftp://example.com/two.zip",
-            ]
+            parse_firelink_deep_link(&deep_link),
+            FirelinkDeepLink::Add(vec![
+                "https://example.com/one.zip".to_string(),
+                "ftp://example.com/two.zip".to_string(),
+            ])
         );
     }
 
     #[test]
-    fn rejects_unexpected_deep_links_and_nested_schemes() {
+    fn accepts_exact_launch_without_downloads() {
+        let deep_link = url::Url::parse("firelink://launch").unwrap();
+        assert_eq!(
+            parse_firelink_deep_link(&deep_link),
+            FirelinkDeepLink::Launch
+        );
+    }
+
+    #[test]
+    fn rejects_launch_variants_and_nested_schemes() {
         let links = [
             url::Url::parse("firelink://open?url=https%3A%2F%2Fexample.com").unwrap(),
             url::Url::parse("firelink://add?url=file%3A%2F%2F%2Ftmp%2Fsecret").unwrap(),
             url::Url::parse("other://add?url=https%3A%2F%2Fexample.com").unwrap(),
+            url::Url::parse("firelink://launch?url=https%3A%2F%2Fexample.com").unwrap(),
+            url::Url::parse("firelink://launch/path").unwrap(),
+            url::Url::parse("firelink://user@launch").unwrap(),
+            url::Url::parse("firelink://add/path?url=https%3A%2F%2Fexample.com").unwrap(),
         ];
 
-        assert!(parse_firelink_urls(links).is_empty());
+        assert!(links
+            .iter()
+            .all(|link| parse_firelink_deep_link(link) == FirelinkDeepLink::Invalid));
     }
 
     #[test]

@@ -53,15 +53,23 @@ node scripts/verify-binaries.js --search-root "$APP" --target aarch64-apple-darw
 node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
 ```
 
-## Automated release
+GitHub release publication is intentionally manual. Tag pushes build and upload
+artifacts, but the `publish` job only runs from a `workflow_dispatch` on a `v*`
+tag when both release-certification inputs are checked after Windows, Linux,
+and macOS clean-machine QA.
 
-Push a version tag:
+## Automated release builds
+
+Push a version tag to build and verify native artifacts:
 
 ```bash
 git tag v<version>
 git push origin v<version>
 ```
 
-GitHub Actions builds all targets on native runners, verifies engines inside final package contents, performs packaged launch smoke where supported, creates SHA-256 sums, then publishes one GitHub Release.
+GitHub Actions builds all targets on native runners, verifies engines inside
+final package contents, performs packaged launch smoke where supported, and
+uploads artifacts. Publish the GitHub Release with a manual `workflow_dispatch`
+run on the same tag after clean-machine QA is complete.
 
 No target may silently skip missing engines, failed extraction, checksum mismatch, or missing package output.

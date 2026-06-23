@@ -153,7 +153,7 @@ export const downloadLocationEquals = (
 ): boolean => {
   const normalize = (value: string) => {
     const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-    return os === 'windows' || os === 'macos'
+    return os === 'windows'
       ? normalized.toLocaleLowerCase()
       : normalized;
   };

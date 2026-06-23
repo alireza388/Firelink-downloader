@@ -2997,7 +2997,7 @@ fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, 
 
     for disk in disks.list() {
         let mount_point = disk.mount_point();
-        if resolved_dest.starts_with(mount_point) {
+        if crate::platform::path_is_within(&resolved_dest, mount_point) {
             let match_len = mount_point.as_os_str().len();
             if match_len > max_match_len {
                 max_match_len = match_len;

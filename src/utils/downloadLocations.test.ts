@@ -17,9 +17,9 @@ import {
 } from './downloadLocations';
 
 describe('download locations', () => {
-  it('compares Windows and macOS locations case-insensitively', () => {
+  it('matches backend platform path case semantics', () => {
     expect(downloadLocationEquals('D:\\Downloads', 'Movie.MP4', 'd:/downloads', 'movie.mp4', 'windows')).toBe(true);
-    expect(downloadLocationEquals('/Users/Test', 'Movie.MP4', '/users/test', 'movie.mp4', 'macos')).toBe(true);
+    expect(downloadLocationEquals('/Users/Test', 'Movie.MP4', '/users/test', 'movie.mp4', 'macos')).toBe(false);
     expect(downloadLocationEquals('/home/Test', 'Movie.MP4', '/home/test', 'movie.mp4', 'linux')).toBe(false);
   });
   beforeEach(() => {

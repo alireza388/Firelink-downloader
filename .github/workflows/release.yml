@@ -4,6 +4,15 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish the GitHub release after all platform QA is certified'
+        type: boolean
+        default: false
+      certified_cross_platform:
+        description: 'Confirm Windows, Linux, and macOS clean-machine QA passed'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -89,7 +98,11 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    if: github.ref_type == 'tag'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      inputs.publish_release &&
+      inputs.certified_cross_platform
     needs: build
     runs-on: ubuntu-22.04
     steps:

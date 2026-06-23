@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef, useLayoutEffect } from 'react';
 import { CheckCircle2, AlertCircle, Info, XCircle, X } from 'lucide-react';
 
 export type ToastVariant = 'success' | 'info' | 'warning' | 'error';
@@ -32,16 +32,21 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
 
   const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.map(t => t.id === id ? { ...t, exiting: true } : t));
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 300); // Matches the exit animation duration
+    setToasts(prev => {
+      // Prevent multiple exit calls and re-renders for the same ID
+      if (prev.find(t => t.id === id)?.exiting) return prev;
+      return prev.map(t => t.id === id ? { ...t, exiting: true } : t);
+    });
+  }, []);
+
+  const removeToastCompletely = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} removeToastCompletely={removeToastCompletely} />
     </ToastContext.Provider>
   );
 };
@@ -52,16 +57,39 @@ export const useToast = () => {
   return context;
 };
 
-const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void }> = ({ toast, removeToast }) => {
+const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void; removeToastCompletely: (id: string) => void }> = ({ toast, removeToast, removeToastCompletely }) => {
+  const [isMounted, setIsMounted] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const elementRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    if (elementRef.current && !isMounted) {
+      // Measure natural height of the toast
+      setContentHeight(elementRef.current.offsetHeight);
+      
+      let frame2: number;
+      const frame1 = requestAnimationFrame(() => {
+        frame2 = requestAnimationFrame(() => setIsMounted(true));
+      });
+      return () => {
+        cancelAnimationFrame(frame1);
+        if (frame2) cancelAnimationFrame(frame2);
+      };
+    }
+  }, [isMounted]);
 
   useEffect(() => {
-    let timeoutDuration = toast.duration ?? 5000;
-    if (timeoutDuration < 5000) timeoutDuration = 5000;
+    // 1. If exiting, don't trigger the auto-dismiss timer
+    if (toast.exiting) return;
 
-    if (toast.isActionable || (toast.variant === 'error' && !toast.duration)) {
+    // Explicitly treat a duration of 0 as a permanent toast
+    if (toast.duration === 0 || toast.isActionable || (toast.variant === 'error' && !toast.duration)) {
       return;
     }
+
+    let timeoutDuration = toast.duration ?? 5000;
+    if (timeoutDuration < 5000) timeoutDuration = 5000;
 
     if (isHovered) {
       return;
@@ -73,6 +101,16 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
 
     return () => clearTimeout(timer);
   }, [toast, isHovered, removeToast]);
+
+  // Fallback safety timer just in case browser drops onTransitionEnd
+  useEffect(() => {
+    if (toast.exiting) {
+      const fallbackTimer = setTimeout(() => {
+        removeToastCompletely(toast.id);
+      }, 500); 
+      return () => clearTimeout(fallbackTimer);
+    }
+  }, [toast.exiting, toast.id, removeToastCompletely]);
 
   const role = toast.variant === 'error' ? 'alert' : 'status';
 
@@ -94,43 +132,55 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
   const style = variantStyles[variant];
   const Icon = icons[variant];
 
+  const isVisible = isMounted && !toast.exiting;
+
   return (
     <div
-      role={role}
-      className={`app-toast-item pointer-events-auto flex items-start gap-3 rounded-[16px] border px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.12),0_0_20px_var(--tw-shadow-color)] backdrop-blur-xl transition-all duration-300 text-[14px] leading-relaxed ${style} ${toast.exiting ? 'opacity-0 scale-95 translate-y-4' : 'opacity-100 scale-100 translate-y-0'}`}
+      className={`w-full transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] flex flex-col justify-end ${isVisible ? 'mb-3' : 'mb-0'}`}
       style={{
-        transformOrigin: 'bottom center',
-        animation: toast.exiting ? 'none' : 'toast-slide-up 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards'
+        height: isVisible && contentHeight !== undefined ? contentHeight : 0,
       }}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      onFocus={() => setIsHovered(true)}
-      onBlur={() => setIsHovered(false)}
+      onTransitionEnd={(e) => {
+        // 2. Rely on height transition end to safely unmount, instead of hardcoded fixed setTimeouts
+        if (toast.exiting && e.target === e.currentTarget && e.propertyName === 'height') {
+          removeToastCompletely(toast.id);
+        }
+      }}
     >
-      <div className="mt-0.5">{Icon}</div>
-      <div className="font-semibold flex-1 tracking-tight">{toast.message}</div>
-      <button
-        onClick={() => removeToast(toast.id)}
-        className="shrink-0 ml-2 mt-0.5 opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded-full transition-all active:scale-90"
-        aria-label="Dismiss notification"
+      <div
+        ref={elementRef}
+        role={role}
+        className={`app-toast-item shrink-0 ${isVisible ? 'pointer-events-auto' : 'pointer-events-none'} flex items-start gap-3 rounded-[16px] border px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.12),0_0_20px_var(--tw-shadow-color)] backdrop-blur-xl text-[14px] leading-relaxed transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${style}`}
+        style={{
+          opacity: isVisible ? 1 : 0,
+          transform: isVisible ? 'translateY(0) scale(1)' : 'translateY(24px) scale(0.95)',
+          transformOrigin: 'bottom center',
+        }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onFocus={() => setIsHovered(true)}
+        onBlur={() => setIsHovered(false)}
       >
-        <X className="w-4 h-4" strokeWidth={2.5} />
-      </button>
+        <div className="mt-0.5 shrink-0">{Icon}</div>
+        <div className="font-semibold flex-1 tracking-tight">{toast.message}</div>
+        <button
+          onClick={() => removeToast(toast.id)}
+          className="shrink-0 ml-2 mt-0.5 opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded-full transition-all active:scale-90"
+          aria-label="Dismiss notification"
+        >
+          <X className="w-4 h-4" strokeWidth={2.5} />
+        </button>
+      </div>
     </div>
   );
 };
 
-const ToastContainer: React.FC<{ toasts: ToastState[]; removeToast: (id: string) => void }> = ({ toasts, removeToast }) => {
+const ToastContainer: React.FC<{ toasts: ToastState[]; removeToast: (id: string) => void; removeToastCompletely: (id: string) => void }> = ({ toasts, removeToast, removeToastCompletely }) => {
   return (
-    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col gap-3 pointer-events-none items-center px-4">
-      <style>{`
-        @keyframes toast-slide-up {
-          from { opacity: 0; transform: translateY(24px) scale(0.95); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-      `}</style>
+    // 3. Removed 'gap-3' to allow the dynamic mb-3 from the wrapper to handle spacing, allowing it to smoothly collapse
+    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] flex w-full max-w-[420px] flex-col pointer-events-none items-center px-4">
       {toasts.map(toast => (
-        <ToastItem key={toast.id} toast={toast} removeToast={removeToast} />
+        <ToastItem key={toast.id} toast={toast} removeToast={removeToast} removeToastCompletely={removeToastCompletely} />
       ))}
     </div>
   );

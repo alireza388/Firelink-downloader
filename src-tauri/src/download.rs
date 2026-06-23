@@ -703,7 +703,11 @@ fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
         builder = builder.user_agent(user_agent);
     }
     if let Some(proxy) = payload.proxy.as_deref().filter(|value| !value.is_empty()) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
+        if proxy == "none" {
+            builder = builder.no_proxy();
+        } else {
+            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
+        }
     }
 
     builder.build().map_err(|error| error.to_string())

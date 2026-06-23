@@ -88,14 +88,18 @@ export async function dispatchItem(id: string): Promise<boolean> {
 const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.getState>) => {
   if (settings.proxyMode === 'system') {
     try {
-      return await invoke('get_system_proxy');
+      const sysProxy = await invoke('get_system_proxy');
+      return typeof sysProxy === 'string' && sysProxy ? sysProxy : "none";
     } catch (e) {
       console.warn("Failed to get system proxy:", e);
-      return null;
+      return "none";
     }
   }
   if (settings.proxyMode === 'custom' && settings.proxyHost) {
     return `http://${settings.proxyHost}:${settings.proxyPort}`;
+  }
+  if (settings.proxyMode === 'none') {
+    return "none";
   }
   return null;
 };

@@ -872,8 +872,12 @@ impl SidecarSpawner for ProductionSpawner {
         if !header_list.is_empty() {
             options.insert("header".to_string(), serde_json::json!(header_list));
         }
-        if let Some(prox) = &payload.proxy {
-            options.insert("all-proxy".to_string(), serde_json::json!(prox));
+        if let Some(prox) = payload.proxy.as_deref().filter(|s| !s.is_empty()) {
+            if prox == "none" {
+                options.insert("all-proxy".to_string(), serde_json::json!(""));
+            } else {
+                options.insert("all-proxy".to_string(), serde_json::json!(prox));
+            }
         }
         let uris = crate::collect_download_uris(&payload.url, payload.mirrors.as_deref());
         let params = serde_json::json!([uris, options]);

@@ -2085,8 +2085,10 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
-        if let Some(p) = proxy.as_ref() {
-            if !p.is_empty() {
+        if let Some(p) = proxy.as_ref().filter(|s| !s.is_empty()) {
+            if p == "none" {
+                cmd = cmd.arg("--proxy").arg("");
+            } else {
                 cmd = cmd.arg("--proxy").arg(p);
             }
         }

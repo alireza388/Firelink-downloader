@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function argValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
 const archMap = { x64: 'x86_64', arm64: 'aarch64' };
 const platformMap = {
   darwin: 'apple-darwin',
@@ -23,14 +28,47 @@ if (!currentArch || !currentPlatform) {
   process.exit(1);
 }
 
-const targetTriple = `${currentArch}-${currentPlatform}`;
-const isWindows = os.platform() === 'win32';
-const isMacOS = os.platform() === 'darwin';
+const targetTriple = argValue('--target')
+  || process.env.FIRELINK_TARGET_TRIPLE
+  || `${currentArch}-${currentPlatform}`;
+const hostTriple = `${currentArch}-${currentPlatform}`;
+const canExecuteTarget = targetTriple === hostTriple;
+const isWindows = targetTriple.includes('windows');
+const isMacOS = targetTriple.includes('apple-darwin');
+const isLinux = targetTriple.includes('linux');
 const ext = isWindows ? '.exe' : '';
 const suffix = `-${targetTriple}${ext}`;
 
 const scriptsDir = __dirname;
-const binariesDir = path.join(scriptsDir, '..', 'src-tauri', 'binaries');
+const searchRoot = argValue('--search-root');
+function findEngineRoot(root) {
+  const expected = `yt-dlp-${targetTriple}${ext}`;
+  const matches = [];
+  const walk = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (fs.existsSync(path.join(candidate, expected))) matches.push(candidate);
+        walk(candidate);
+      }
+    }
+  };
+  walk(path.resolve(root));
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one packaged engine root under ${root}, found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+const configuredRoot = argValue('--root')
+  || (process.argv.includes('--staged')
+    ? path.join(scriptsDir, '..', 'src-tauri', 'engine-dist', targetTriple)
+    : searchRoot
+      ? findEngineRoot(searchRoot)
+      : null);
+const binariesDir = configuredRoot
+  ? path.resolve(configuredRoot)
+  : path.join(scriptsDir, '..', 'src-tauri', 'binaries');
 const requiredEngines = ['yt-dlp', 'aria2c', 'ffmpeg', 'deno'];
 
 const FORBIDDEN_OTOOL_PATHS = ['/opt/homebrew', '/usr/local/Cellar'];
@@ -79,6 +117,10 @@ if (exitCode !== 0) {
 // ───── Check 2: Executable permission ─────
 console.log('\n─── 2. Executable permission ───');
 for (const eng of requiredEngines) {
+  if (isWindows) {
+    ok(`Executable permission is represented by PE format on Windows: ${binName(eng)}`);
+    continue;
+  }
   try {
     fs.accessSync(binPath(eng), fs.constants.X_OK);
     ok(`Executable ${binName(eng)}`);
@@ -90,6 +132,19 @@ for (const eng of requiredEngines) {
 // ───── Check 3: file(1) identification ─────
 console.log('\n─── 3. file(1) identification ───');
 for (const eng of requiredEngines) {
+  if (os.platform() === 'win32') {
+    try {
+      const header = fs.readFileSync(binPath(eng)).subarray(0, 2).toString('ascii');
+      if (header === 'MZ') {
+        ok(`${binName(eng)}: Windows PE executable`);
+      } else {
+        fail(`${binName(eng)}: missing Windows PE MZ header`);
+      }
+    } catch (e) {
+      fail(`identify ${binName(eng)}: ${e.message}`);
+    }
+    continue;
+  }
   try {
     const out = execFileSync('file', ['--brief', binPath(eng)], {
       encoding: 'utf-8',
@@ -172,7 +227,6 @@ console.log('\n─── 6. yt-dlp packaging ───');
       }
 
       const requiredRuntimeFiles = [
-        path.join(internalDir, 'Python'),
         path.join(internalDir, 'yt_dlp_ejs', 'yt', 'solver', 'core.min.js'),
         path.join(internalDir, 'yt_dlp_ejs', 'yt', 'solver', 'lib.min.js'),
       ];
@@ -182,6 +236,16 @@ console.log('\n─── 6. yt-dlp packaging ───');
         } else {
           fail(`Missing yt-dlp runtime component: ${path.relative(binariesDir, required)}`);
         }
+      }
+      const runtimeCandidates = isWindows
+        ? fs.readdirSync(internalDir).filter(name => /^python.*\.dll$/i.test(name))
+        : isLinux
+          ? fs.readdirSync(internalDir).filter(name => /^libpython.*\.so/i.test(name) || name === 'Python')
+          : ['Python', 'Python.framework'].filter(name => fs.existsSync(path.join(internalDir, name)));
+      if (runtimeCandidates.length > 0) {
+        ok(`yt-dlp embedded Python runtime: ${runtimeCandidates[0]}`);
+      } else {
+        fail(`Missing embedded Python runtime in ${internalDir}`);
       }
     } else {
       fail('yt-dlp must use the self-contained onedir distribution; onefile adds ~17 seconds to every launch');
@@ -222,14 +286,26 @@ function runEngine(label, engine, args, timeout = 30000) {
   }
 }
 
-runEngine('yt-dlp cold start', 'yt-dlp', ['--version'], 20000);
-runEngine('yt-dlp warm start', 'yt-dlp', ['--version'], 8000);
-runEngine('ffmpeg', 'ffmpeg', ['-version']);
-runEngine('deno', 'deno', ['--version']);
-runEngine('aria2c', 'aria2c', ['--version']);
+const coldStartTimeout = isMacOS ? 120000 : 30000;
+if (canExecuteTarget) {
+  runEngine('yt-dlp cold start', 'yt-dlp', ['--version'], coldStartTimeout);
+  runEngine('yt-dlp warm start', 'yt-dlp', ['--version'], 8000);
+  runEngine('ffmpeg cold start', 'ffmpeg', ['-version'], coldStartTimeout);
+  runEngine('deno cold start', 'deno', ['--version'], coldStartTimeout);
+  runEngine('aria2c cold start', 'aria2c', ['--version'], coldStartTimeout);
+  if (isMacOS) {
+    // Unsigned binaries can incur a one-time macOS provenance scan after copying.
+    // Warm checks enforce engine startup performance after that OS validation.
+    runEngine('ffmpeg warm start', 'ffmpeg', ['-version'], 8000);
+    runEngine('deno warm start', 'deno', ['--version'], 8000);
+    runEngine('aria2c warm start', 'aria2c', ['--version'], 8000);
+  }
+} else {
+  console.log(`  Runtime tests skipped on ${hostTriple}; native ${targetTriple} CI runs them.`);
+}
 
-// ───── aria2 RPC smoke test (macOS only) ─────
-if (isMacOS) {
+// ───── aria2 RPC smoke test (native target only) ─────
+if (canExecuteTarget) {
   console.log('\n─── aria2 RPC smoke test ───');
   await (async function testAria2Rpc() {
     const p = binPath('aria2c');

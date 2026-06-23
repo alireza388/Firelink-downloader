@@ -1,0 +1,21 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Firelink",
+        "width": 1280,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 640,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["mica"],
+          "state": "active"
+        }
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["nsis"]
+  }
+}

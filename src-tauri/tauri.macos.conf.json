@@ -1,0 +1,28 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Firelink",
+        "width": 1280,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 640,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 17,
+          "y": 28
+        },
+        "hiddenTitle": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["sidebar"],
+          "state": "active"
+        }
+      }
+    ],
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "targets": ["app", "dmg"]
+  }
+}

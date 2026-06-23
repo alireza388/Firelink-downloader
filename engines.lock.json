@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "aarch64-apple-darwin": {
+      "engines": {
+        "yt-dlp": {
+          "version": "2026.06.09",
+          "source": "https://github.com/yt-dlp/yt-dlp",
+          "build": "PyInstaller onedir distribution with embedded Python and yt_dlp_ejs",
+          "sha256": "4eefb498e76f8a425bec30ba3ee2079b01542ca39ca1fb61b79966450794cc13"
+        },
+        "aria2c": {
+          "version": "1.37.0",
+          "source": "https://github.com/aria2/aria2",
+          "build": "arm64 executable with adjacent aria2-libs",
+          "sha256": "111b2f5ed760f1e1a2ec06117c4e8094fcde336ba16122dda1c5e7209bf1862d"
+        },
+        "ffmpeg": {
+          "version": "8.1.1",
+          "source": "https://ffmpeg.org/",
+          "build": "GPLv3 build identified by binary as https://www.martin-riedl.de",
+          "sha256": "ef4fe121377039053b0d7bed4a9aa46e7912918f5ba6424a1dd155f4eed625b0"
+        },
+        "deno": {
+          "version": "2.8.2",
+          "source": "https://github.com/denoland/deno",
+          "build": "official aarch64-apple-darwin executable",
+          "sha256": "9d25a1a5a67579eb607ed27a73141548b163e29df38735bc5556b7d887992435"
+        }
+      },
+      "runtimeTrees": {
+        "_internal": {
+          "files": 142,
+          "sha256": "3fabc08e6367f9393cfee32c32138f057f0e6068e430190c26a22ddfea84242b"
+        },
+        "aria2-libs": {
+          "files": 6,
+          "sha256": "e18a60538f7176373296f55af86f2c7780c2d6e8e32fdbd75f630e17ce79cb6c"
+        }
+      }
+    }
+  }
+}

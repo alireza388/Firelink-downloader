@@ -4,9 +4,9 @@
   "version": "0.7.3",
   "identifier": "com.nimbold.firelink",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/stage-engines.js && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "node scripts/verify-binaries.js && npm run build",
+    "beforeBuildCommand": "node scripts/stage-engines.js && node scripts/verify-binaries.js --staged && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -15,29 +15,17 @@
         "title": "Firelink",
         "width": 1280,
         "height": 760,
-        "minWidth": 1180,
-        "minHeight": 720,
-        "titleBarStyle": "Overlay",
-        "trafficLightPosition": {
-          "x": 17,
-          "y": 28
-        },
-        "hiddenTitle": true,
-        "transparent": true,
-        "windowEffects": {
-          "effects": ["sidebar", "mica"],
-          "state": "active"
-        }
+        "minWidth": 960,
+        "minHeight": 640,
+        "transparent": false
       }
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* http://127.0.0.1:* ws://127.0.0.1:*"
-    },
-    "macOSPrivateApi": true
+    }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -45,9 +33,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "binaries/**/*"
-    ]
+    "resources": {
+      "engine-dist/": "engine-dist/",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    }
   },
   "plugins": {
     "deep-link": {

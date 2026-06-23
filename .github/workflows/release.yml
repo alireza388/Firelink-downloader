@@ -2,89 +2,106 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  engine-verification:
-    name: macOS pre-release gate
-    runs-on: macos-latest
-
+  build:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+            artifact: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          - label: Windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          - label: Linux-x64-AppImage
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+            artifact: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Verify bundled engines (pre-build)
-        run: node scripts/verify-binaries.js
-
-      - name: Build macOS application bundle
-        run: npm run tauri build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
-      - name: Run engine self-test against packaged app
-        run: |
-          APP_PATH="src-tauri/target/release/bundle/macos/Firelink.app"
-          if [ -d "$APP_PATH" ]; then
-            echo "Testing engines from built bundle: $APP_PATH"
-            node scripts/verify-binaries.js
-          else
-            echo "Warning: .app bundle not found at $APP_PATH"
-            node scripts/verify-binaries.js
-          fi
-
-      - name: Upload macOS bundle artifact
-        uses: actions/upload-artifact@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          name: firelink-macos-${{ github.ref_name }}
-          path: src-tauri/target/release/bundle/macos/
+          targets: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libdbus-1-dev \
+            pkg-config \
+            xvfb
+      - run: npm ci
+      - name: Provision locked engines
+        if: runner.os != 'macOS'
+        run: node scripts/provision-engines.js --target ${{ matrix.target }}
+      - name: Build package
+        run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Verify macOS packaged engines and launch
+        if: runner.os == 'macOS'
+        run: |
+          APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Firelink.app"
+          node scripts/verify-binaries.js --search-root "$APP" --target ${{ matrix.target }}
+          node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
+      - name: Verify Windows installer payload
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
+          7z x $installer.FullName "-o$env:RUNNER_TEMP/firelink-installer" -y
+          node scripts/verify-binaries.js --search-root "$env:RUNNER_TEMP/firelink-installer" --target ${{ matrix.target }}
+      - name: Verify Linux AppImage payload and launch
+        if: runner.os == 'Linux'
+        run: |
+          APPIMAGE="$(find src-tauri/target/${{ matrix.target }}/release/bundle/appimage -name '*.AppImage' -print -quit)"
+          chmod +x "$APPIMAGE"
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract >/dev/null)
+          node scripts/verify-binaries.js --search-root "$RUNNER_TEMP/squashfs-root" --target ${{ matrix.target }}
+          xvfb-run -a node scripts/smoke-packaged-app.js --executable "$RUNNER_TEMP/squashfs-root/AppRun"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Firelink-${{ matrix.label }}-${{ github.ref_name }}
+          path: ${{ matrix.artifact }}
           if-no-files-found: error
 
-  create-release:
-    name: Create release
-    needs: engine-verification
-    runs-on: ubuntu-latest
-
+  publish:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-22.04
     steps:
-      - name: Download macOS bundle artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: firelink-macos-${{ github.ref_name }}
-          path: release-assets/
-
-      - name: Generate release notes
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
         run: |
-          echo "## Firelink ${{ github.ref_name }}" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Checksums" >> RELEASE_NOTES.md
-          echo '```' >> RELEASE_NOTES.md
-          shasum -a 256 release-assets/* 2>/dev/null || true
-          echo '```' >> RELEASE_NOTES.md
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+          cd release-assets
+          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**
-          body_path: RELEASE_NOTES.md
           generate_release_notes: true

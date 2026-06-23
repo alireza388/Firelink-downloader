@@ -28,6 +28,13 @@ pub fn canonical_download_filename(filename: &str) -> String {
     let sanitized = sanitized.trim().trim_end_matches(['.', ' ']);
     if sanitized.is_empty() || matches!(sanitized, "." | "..") {
         "download".to_string()
+    } else if crate::platform::is_windows_reserved_filename(sanitized) {
+        let path = Path::new(sanitized);
+        let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("download");
+        match path.extension().and_then(|value| value.to_str()) {
+            Some(extension) => format!("{stem}-.{extension}"),
+            None => format!("{stem}-"),
+        }
     } else {
         sanitized.to_string()
     }
@@ -209,5 +216,7 @@ mod tests {
         assert_eq!(canonical_download_filename("../folder/video?.mp4"), "video-.mp4");
         assert_eq!(canonical_download_filename(" report. "), "report");
         assert_eq!(canonical_download_filename(".."), "download");
+        assert_eq!(canonical_download_filename("CON.txt"), "CON-.txt");
+        assert_eq!(canonical_download_filename("lpt9"), "lpt9-");
     }
 }

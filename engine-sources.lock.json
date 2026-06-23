@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "x86_64-pc-windows-msvc": {
+      "yt-dlp": {
+        "version": "2026.06.09",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_win.zip",
+        "sha256": "9bb27530494092870b5330deacfc65a40d3e980c7e2c67e5f09b902c37a6903d"
+      },
+      "deno": {
+        "version": "2.8.2",
+        "url": "https://github.com/denoland/deno/releases/download/v2.8.2/deno-x86_64-pc-windows-msvc.zip",
+        "sha256": "6fe073b11cabeba2f2726d8a3d1592b198aec5f23dab3473d0dc8d5ec7aee1c9"
+      },
+      "ffmpeg": {
+        "version": "8.1",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+        "sha256": "6453fae49eeaaae4c885753d4a4d51e30e9712b44fe396a7c4aea202aa16a099"
+      },
+      "aria2c": {
+        "version": "1.37.0",
+        "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+        "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288"
+      }
+    },
+    "x86_64-unknown-linux-gnu": {
+      "yt-dlp": {
+        "version": "2026.06.09",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_linux.zip",
+        "sha256": "217bbc9c3ed19ea75a7f151a3e48dbfeac7f459a7dce2deeeecc2d6e2871bd5b"
+      },
+      "deno": {
+        "version": "2.8.2",
+        "url": "https://github.com/denoland/deno/releases/download/v2.8.2/deno-x86_64-unknown-linux-gnu.zip",
+        "sha256": "184da7a5267ab649bc08821b3bc3ce6805d8e6985fb82707cb8d5e9fd6535362"
+      },
+      "ffmpeg": {
+        "version": "8.1",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz",
+        "sha256": "f6ade3d8203a8471cf2e4d90857f1aa5c4a9e5ead1ec45548b4ed6015878dd56"
+      },
+      "aria2c": {
+        "version": "1.37.0",
+        "url": "https://github.com/abcfy2/aria2-static-build/releases/download/1.37.0/aria2-x86_64-linux-musl_static.zip",
+        "sha256": "e0a09b12ef67f35f8a8e4fdddbec851d235b7c31da549d0578bff459032b499a",
+        "upstreamSource": "https://github.com/aria2/aria2/tree/release-1.37.0",
+        "builderSource": "https://github.com/abcfy2/aria2-static-build/tree/1.37.0"
+      }
+    }
+  }
+}

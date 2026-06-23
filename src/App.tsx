@@ -17,6 +17,7 @@ import SpeedLimiterView from "./components/SpeedLimiterView";
 import LogsView from "./components/LogsView";
 import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { usePlatformInfo } from './utils/platform';
 
 let automaticUpdateCheckStarted = false;
 const processingScheduleKeys = new Set<string>();
@@ -40,6 +41,8 @@ const getScheduledQueueIds = () => {
 };
 
 function App() {
+  const platform = usePlatformInfo();
+  const platformOsRef = useRef(platform.os);
   const [filter, setFilter] = useState<SidebarFilter>('all');
   const [coreReady, setCoreReady] = useState(false);
 
@@ -111,6 +114,10 @@ function App() {
   const { addToast } = useToast();
 
   useEffect(() => {
+    platformOsRef.current = platform.os;
+  }, [platform.os]);
+
+  useEffect(() => {
     let active = true;
     const initialize = async () => {
       try {
@@ -177,6 +184,11 @@ function App() {
         }
       } catch (error) {
         console.error('Failed to hydrate extension pairing token:', error);
+        addToast({
+          message: `Secure credential persistence is unavailable. Browser pairing works for this session only: ${String(error)}`,
+          variant: 'error',
+          isActionable: true
+        });
       }
     };
     void initialize();
@@ -238,8 +250,10 @@ function App() {
   }, [maxConcurrentDownloads]);
 
   useEffect(() => {
-    invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
-  }, [showDockBadge, activeDownloadCount]);
+    if (platform.os === 'macos') {
+      invoke('update_dock_badge', { count: showDockBadge ? activeDownloadCount : 0 }).catch(() => {});
+    }
+  }, [platform.os, showDockBadge, activeDownloadCount]);
 
   useEffect(() => {
     invoke('set_prevent_sleep', {
@@ -360,23 +374,72 @@ function App() {
         isActionable: true
       });
     } else if (settings.scheduler.postQueueAction !== 'none') {
-      invoke('perform_system_action', { action: settings.scheduler.postQueueAction }).catch(error => {
-        console.error('Scheduled post action failed:', error);
-        addToast({
-          message: `Scheduled system action failed: ${String(error)}`,
-          variant: 'error',
-          isActionable: true
-        });
+      const action = settings.scheduler.postQueueAction;
+      let cancelled = false;
+      addToast({
+        variant: 'warning',
+        isActionable: true,
+        message: (
+          <div className="flex items-center gap-3">
+            <span>{action === 'shutdown' ? 'Shut down' : action === 'restart' ? 'Restart' : 'Sleep'} in 10 seconds.</span>
+            <button
+              type="button"
+              className="app-button px-2 py-1"
+              onClick={() => {
+                cancelled = true;
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )
       });
+      window.setTimeout(() => {
+        if (cancelled) return;
+        const activeTransfers = useDownloadStore.getState().downloads.some(download =>
+          isActiveDownloadStatus(download.status)
+        );
+        if (activeTransfers) {
+          addToast({
+            message: 'System action cancelled because another download is active.',
+            variant: 'warning',
+            isActionable: true
+          });
+          return;
+        }
+        invoke('perform_system_action', { action }).catch(error => {
+          console.error('Scheduled post action failed:', error);
+          addToast({
+            message: `Scheduled system action failed: ${String(error)}`,
+            variant: 'error',
+            isActionable: true
+          });
+        });
+      }, 10_000);
     }
   }, [addToast, downloads, schedulerRunning, schedulerActiveDownloadIds]);
 
   useEffect(() => {
     const initNotifications = async () => {
       if (!useSettingsStore.getState().showNotifications) return;
-      let permissionGranted = await isPermissionGranted();
-      if (!permissionGranted) {
-        await requestPermission();
+      try {
+        const permissionGranted = await isPermissionGranted();
+        if (!permissionGranted) {
+          const permission = await requestPermission();
+          if (permission !== 'granted') {
+            addToast({
+              message: 'System notifications are disabled for Firelink.',
+              variant: 'warning',
+              isActionable: true
+            });
+          }
+        }
+      } catch (error) {
+        addToast({
+          message: `Could not configure notifications: ${String(error)}`,
+          variant: 'error',
+          isActionable: true
+        });
       }
     };
 
@@ -387,7 +450,7 @@ function App() {
     return useSettingsStore.persist.onFinishHydration(() => {
       void initNotifications();
     });
-  }, [showNotifications]);
+  }, [addToast, showNotifications]);
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
@@ -450,17 +513,33 @@ function App() {
 
       const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload.id);
       const fileName = item?.fileName || 'A file';
+      const platformOs = platformOsRef.current;
+      const sound = settings.playCompletionSound
+        ? platformOs === 'macos'
+          ? 'Ping'
+          : platformOs === 'linux'
+            ? 'message-new-instant'
+            : undefined
+        : undefined;
       if (event.payload.status === 'completed') {
-        sendNotification({
-          title: 'Download Complete',
-          body: `${fileName} has finished downloading.`,
-          sound: settings.playCompletionSound ? 'default' : undefined
-        });
+        try {
+          sendNotification({
+            title: 'Download Complete',
+            body: `${fileName} has finished downloading.`,
+            sound
+          });
+        } catch (error) {
+          console.error('Completion notification failed:', error);
+        }
       } else {
-        sendNotification({
-          title: 'Download Failed',
-          body: `${fileName} failed to download.`,
-        });
+        try {
+          sendNotification({
+            title: 'Download Failed',
+            body: `${fileName} failed to download.`,
+          });
+        } catch (error) {
+          console.error('Failure notification failed:', error);
+        }
       }
     });
 

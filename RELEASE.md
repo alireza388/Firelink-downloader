@@ -1,74 +1,67 @@
 # Firelink Release Process
 
-## Prerequisites
+Targets:
 
-- macOS ARM64 (aarch64) build host
-- Node.js 22+
-- Rust toolchain
-- Tauri CLI (`cargo install tauri-cli --version "^2"`)
-- Apple Developer account with signing certificates (for notarized builds)
+- macOS arm64 DMG
+- Windows x64 NSIS installer
+- Linux x64 AppImage
 
-## Step-by-step
+## Distribution policy
 
-### 1. Update version
+Firelink does not use an Apple Developer account. macOS releases are unsigned and not notarized. Users must explicitly approve the downloaded app through Finder or macOS Privacy & Security. Release copy must never describe these builds as signed, notarized, or Gatekeeper-approved.
 
-Bump version in these files so they match:
+Windows releases are currently unsigned. SmartScreen may warn until code signing is added.
 
-| File | Field |
-|------|-------|
-| `package.json` | `version` |
-| `src-tauri/Cargo.toml` | `package.version` |
-| `src-tauri/tauri.conf.json` | `version` |
+## Engine supply chain
 
-### 2. Verify engines locally
+Firelink never falls back to system-installed media tools.
 
-```bash
-node scripts/verify-binaries.js
-```
+- `engines.lock.json` pins current committed macOS payload hashes.
+- `engine-sources.lock.json` pins Windows/Linux source archives and checksums.
+- `scripts/provision-engines.js` downloads and verifies target archives.
+- `scripts/stage-engines.js` creates one target-specific bundle payload.
+- `scripts/verify-binaries.js` runs architecture, packaging, version, and RPC checks.
 
-This runs all pre-release checks:
-1. Target-triple sidecars exist
-2. Binaries are executable
-3. `file(1)` identifies correct architecture
-4. `otool -L` shows no local-only dylib paths
-5. No `/opt/homebrew` or `/usr/local/Cellar` linkage
-6. yt-dlp packaging is intact (onedir or standalone)
-7. Every engine runs and reports its version
-8. aria2 RPC daemon starts and responds to JSON-RPC
-9. No forbidden stderr patterns (`Library not loaded`, etc.)
+yt-dlp must remain its official PyInstaller **onedir** distribution: launcher plus adjacent `_internal` runtime. Onefile builds are rejected because repeated extraction caused roughly 17-second startup latency.
 
-The build is **blocked** if any check fails, enforced via `beforeBuildCommand` in `tauri.conf.json`.
+## Version update
 
-### 3. Build
+Keep versions aligned:
+
+- `package.json`
+- `src-tauri/Cargo.toml`
+- `src-tauri/tauri.conf.json`
+
+## Local macOS build
 
 ```bash
-npm run tauri build
+npm ci
+node scripts/stage-engines.js --target aarch64-apple-darwin
+node scripts/verify-binaries.js --staged --target aarch64-apple-darwin
+npm test -- --run
+npm run build
+cd src-tauri && cargo test --all-targets
+cd ..
+npm run tauri build -- --target aarch64-apple-darwin --bundles dmg
 ```
 
-### 4. Build artifacts
+Verify packaged resources, then launch outside repository working directory:
 
-The packaged `.app` and `.dmg` appear in:
-
+```bash
+APP="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Firelink.app"
+node scripts/verify-binaries.js --search-root "$APP" --target aarch64-apple-darwin
+node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
 ```
-src-tauri/target/release/bundle/macos/
-```
 
-### 5. GitHub Release
+## Automated release
 
-Push a tag to trigger the release workflow:
+Push a version tag:
 
 ```bash
 git tag v<version>
 git push origin v<version>
 ```
 
-The release workflow (`.github/workflows/release.yml`) will:
+GitHub Actions builds all targets on native runners, verifies engines inside final package contents, performs packaged launch smoke where supported, creates SHA-256 sums, then publishes one GitHub Release.
 
-| Job | What it does |
-|-----|-------------|
-| `engine-verification` | Runs `verify-binaries.js`, builds `.app`, uploads artifacts |
-| `create-release` | Creates GitHub Release with checksums and release notes |
-
-## CI verification
-
-Every PR and push to `main` also runs `node scripts/verify-binaries.js` (see `.github/workflows/ci.yml`), so broken engines are caught before they reach a release tag.
+No target may silently skip missing engines, failed extraction, checksum mismatch, or missing package output.

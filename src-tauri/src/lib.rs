@@ -984,11 +984,12 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
     let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
     let deno_runtime = format!("deno:{}", deno_path.to_string_lossy());
+    let trusted_path = crate::platform::trusted_system_path()?;
 
     use tauri_plugin_shell::ShellExt;
     let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
     let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
-    cmd = cmd.env("PATH", "/usr/bin:/bin")
+    cmd = cmd.env("PATH", trusted_path)
         .arg("--ffmpeg-location").arg(&ffmpeg_path)
         .arg("--js-runtimes").arg(&deno_runtime)
         .arg("--no-warnings")
@@ -1133,45 +1134,109 @@ pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle
         return false;
     }
 
+    let Some(canonical_path) = canonicalize_with_missing_components(path) else {
+        return false;
+    };
+
+    approved_download_roots(app_handle)
+        .into_iter()
+        .filter_map(|root| canonicalize_with_missing_components(&root))
+        .any(|root| crate::platform::path_is_within(&canonical_path, &root))
+}
+
+fn canonicalize_with_missing_components(path: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut existing = path;
     let mut missing = Vec::new();
     while !existing.exists() {
-        let Some(name) = existing.file_name() else {
-            return false;
-        };
-        missing.push(name.to_owned());
-        let Some(parent) = existing.parent() else {
-            return false;
-        };
-        existing = parent;
+        missing.push(existing.file_name()?.to_owned());
+        existing = existing.parent()?;
     }
-    let Ok(mut canonical_path) = std::fs::canonicalize(existing) else {
-        return false;
-    };
+    let mut canonical = std::fs::canonicalize(existing).ok()?;
     for component in missing.iter().rev() {
-        canonical_path.push(component);
+        canonical.push(component);
     }
+    Some(canonical)
+}
 
-    let mut allowed_prefixes = Vec::new();
+fn approved_download_roots(app_handle: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
     use tauri::Manager;
-    if let Ok(home) = app_handle.path().home_dir() {
-        allowed_prefixes.push(home.join("Downloads"));
-        allowed_prefixes.push(home.join("Music"));
-        allowed_prefixes.push(home.join("Movies"));
-        allowed_prefixes.push(home.join("Pictures"));
-        allowed_prefixes.push(home.join("Documents"));
-        allowed_prefixes.push(home.join("Desktop"));
-    }
-    allowed_prefixes.push(std::path::PathBuf::from("/Volumes"));
 
-    for prefix in allowed_prefixes {
-        let canonical_prefix = std::fs::canonicalize(&prefix).unwrap_or(prefix);
-        if canonical_path.starts_with(&canonical_prefix) {
-            return true;
+    let mut roots = Vec::new();
+    for root in [
+        app_handle.path().download_dir().ok(),
+        app_handle.path().audio_dir().ok(),
+        app_handle.path().video_dir().ok(),
+        app_handle.path().picture_dir().ok(),
+        app_handle.path().document_dir().ok(),
+        app_handle.path().desktop_dir().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        push_unique_path(&mut roots, root);
+    }
+
+    if let Ok(settings) = crate::settings::load_settings(app_handle) {
+        push_unique_path(
+            &mut roots,
+            resolve_path(&settings.base_download_folder, app_handle),
+        );
+        for root in settings.category_directory_overrides.values() {
+            push_unique_path(&mut roots, resolve_path(root, app_handle));
+        }
+        for root in &settings.approved_download_roots {
+            push_unique_path(&mut roots, resolve_path(root, app_handle));
         }
     }
 
-    false
+    roots
+}
+
+#[tauri::command]
+fn approve_download_root(
+    app_handle: tauri::AppHandle,
+    path: String,
+) -> Result<String, String> {
+    let resolved = resolve_path(path.trim(), &app_handle);
+    if !resolved.is_absolute() {
+        return Err("Download root must be an absolute path".to_string());
+    }
+    let canonical = std::fs::canonicalize(&resolved)
+        .map_err(|error| format!("Failed to resolve download root: {error}"))?;
+    if !canonical.is_dir() {
+        return Err("Download root must be an existing directory".to_string());
+    }
+    let canonical_text = canonical.to_string_lossy().to_string();
+
+    crate::settings::update_settings_state(&app_handle, |state| {
+        let roots = state
+            .entry("approvedDownloadRoots".to_string())
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if !roots.is_array() {
+            *roots = serde_json::Value::Array(Vec::new());
+        }
+        let values = roots.as_array_mut().expect("approved roots must be an array");
+        if !values.iter().filter_map(serde_json::Value::as_str).any(|root| {
+            crate::platform::paths_equal(
+                std::path::Path::new(root),
+                std::path::Path::new(&canonical_text),
+            )
+        }) {
+            values.push(serde_json::Value::String(canonical_text.clone()));
+        }
+    })?;
+
+    Ok(canonical_text)
+}
+
+fn push_unique_path(paths: &mut Vec<std::path::PathBuf>, path: std::path::PathBuf) {
+    if path.is_absolute()
+        && !paths
+            .iter()
+            .any(|existing| crate::platform::paths_equal(existing, &path))
+    {
+        paths.push(path);
+    }
 }
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1215,6 +1280,8 @@ pub mod error;
 pub mod commands;
 pub mod download_ownership;
 pub mod retry;
+mod engines;
+mod platform;
 mod settings;
 pub use error::AppError;
 
@@ -1281,7 +1348,10 @@ pub struct EngineStatusResult {
 pub(crate) fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     let mut resolved = std::path::PathBuf::from(path);
-    if let Some(stripped) = path.strip_prefix("~/") {
+    if let Some(stripped) = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\"))
+    {
         if let Ok(home) = app_handle.path().home_dir() {
             resolved = home.join(stripped);
         }
@@ -1641,13 +1711,9 @@ fn generate_remediation_hint(error: &str, _kind: &str) -> Option<String> {
     }
 }
 
-fn arch_suffix() -> &'static str {
-    if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" }
-}
-
 async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> EngineStatusItem {
     let sidecar_name = "aria2c";
-    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+    let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
     let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
@@ -1698,7 +1764,7 @@ async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> 
 
 async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let sidecar_name = "yt-dlp";
-    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+    let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
     let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
@@ -1706,7 +1772,8 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let (has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
         let parent = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
         if let Some(parent) = parent {
-            let internal = parent.join("_internal");
+            let internal = crate::engines::ytdlp_internal_dir(std::path::Path::new(path))
+                .unwrap_or_else(|| parent.join("_internal"));
             let hi = internal.is_dir();
             let hp = if hi {
                 internal.join("Python.framework").is_dir() || internal.join("Python").exists()
@@ -1758,7 +1825,7 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
 
 async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let sidecar_name = "ffmpeg";
-    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+    let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
     let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
@@ -1801,7 +1868,7 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
 
 async fn check_deno(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let sidecar_name = "deno";
-    let expected_sidecar = format!("{}-{}-apple-darwin", sidecar_name, arch_suffix());
+    let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
     let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
@@ -1880,73 +1947,7 @@ async fn get_deno_engine_status(app_handle: tauri::AppHandle) -> Result<EngineSt
 
 
 fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str) -> Result<std::path::PathBuf, String> {
-    let full_name = format!(
-        "{}-{}-apple-darwin",
-        binary_name,
-        if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" },
-    );
-
-    // Production: use the resource copy as the canonical engine location.
-    if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        for candidate in [
-            resource_dir.join("binaries").join(&full_name),
-            resource_dir.join(&full_name),
-        ] {
-            if candidate.is_file() {
-                log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
-                return Ok(candidate);
-            }
-        }
-    }
-
-    // Packaged macOS fallback: resolve directly from Contents/MacOS to
-    // Contents/Resources when Tauri's resource_dir is unavailable.
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(contents_dir) = exe_path.parent().and_then(std::path::Path::parent) {
-            let candidate = contents_dir
-                .join("Resources")
-                .join("binaries")
-                .join(&full_name);
-            if candidate.is_file() {
-                log::info!("Resolved bundled '{}' at: {:?}", binary_name, candidate);
-                return Ok(candidate);
-            }
-        }
-    }
-
-    // Dev mode: search relative to CWD
-    if let Ok(cwd) = std::env::current_dir() {
-        let search_dirs = [
-            cwd.join("binaries"),
-            cwd.join("src-tauri").join("binaries"),
-        ];
-        for dir in &search_dirs {
-            let candidate = dir.join(&full_name);
-            if candidate.is_file() {
-                let abs = candidate.canonicalize().map_err(|e| {
-                    format!("Failed to canonicalize '{}': {}", full_name, e)
-                })?;
-                log::info!("Resolved bundled '{}' at: {:?}", binary_name, abs);
-                return Ok(abs);
-            }
-        }
-    }
-
-    // Compatibility fallback for older bundles produced with externalBin.
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let candidate = exe_dir.join(binary_name);
-            if candidate.is_file() {
-                log::info!("Resolved legacy bundled '{}' at: {:?}", binary_name, candidate);
-                return Ok(candidate);
-            }
-        }
-    }
-
-    Err(format!(
-        "Could not find bundled binary '{}' (expected name: {})",
-        binary_name, full_name
-    ))
+    crate::engines::resolve_bundled_binary_path(app_handle, binary_name)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2037,22 +2038,10 @@ pub(crate) async fn start_media_download_internal(
     log::info!("Using bundled ffmpeg: {:?}", ffmpeg_path);
     log::info!("Using bundled deno: {:?}", deno_path);
 
-    // Create a temp directory with bare-name symlinks so yt-dlp finds the
-    // bundled binaries via PATH when told --downloader aria2c (bare name).
-    let bin_dir = tempfile::tempdir().map_err(|e| format!("failed to create bundling temp dir: {e}"))?;
-    {
-        use std::os::unix::fs::symlink;
-        symlink(&aria2c_path, bin_dir.path().join("aria2c"))
-            .map_err(|e| format!("failed to symlink aria2c: {e}"))?;
-        symlink(&ffmpeg_path, bin_dir.path().join("ffmpeg"))
-            .map_err(|e| format!("failed to symlink ffmpeg: {e}"))?;
-        symlink(&deno_path, bin_dir.path().join("deno"))
-            .map_err(|e| format!("failed to symlink deno: {e}"))?;
-    }
-    let bin_dir_str = bin_dir.path().to_string_lossy().to_string();
-    // Minimal PATH: bundled dir first, then only essential system paths.
-    // No user-writable or Homebrew paths that could shadow our binaries.
-    let path_env = format!("{}:/usr/bin:/bin", bin_dir_str);
+    // yt-dlp accepts an absolute path for its external downloader. Keep every
+    // engine explicit so behavior never depends on PATH, symlink privileges,
+    // user-installed tools, or platform-specific executable aliases.
+    let trusted_path = crate::platform::trusted_system_path()?;
 
     let mut strike = 0_usize;
     let mut processing_started = false;
@@ -2068,16 +2057,16 @@ pub(crate) async fn start_media_download_internal(
            .arg("--socket-timeout").arg("20")
            .arg("--retries").arg("3")
            .arg("--extractor-retries").arg("3")
-           .arg("--downloader").arg("aria2c")
+           .arg("--downloader").arg(&aria2c_path)
            .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M --summary-interval=1")
-           .arg("--ffmpeg-location").arg(&bin_dir_str)
+           .arg("--ffmpeg-location").arg(&ffmpeg_path)
            .arg("--js-runtimes").arg(format!("deno:{}", deno_path.to_string_lossy()))
            .arg("--concurrent-fragments").arg("4")
            .arg("--no-warnings")
            .arg("--continue")
            .arg("--compat-options").arg("no-youtube-unavailable-videos")
            .arg("-o").arg(out_path.to_string_lossy().to_string())
-           .env("PATH", &path_env);
+           .env("PATH", &trusted_path);
 
         if let Some(limit) = speed_limit.as_ref() {
             if !limit.is_empty() {
@@ -2727,6 +2716,15 @@ fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
 }
 
 #[tauri::command]
+fn get_platform_info() -> crate::ipc::PlatformInfo {
+    crate::ipc::PlatformInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        target_triple: crate::platform::target_triple(),
+    }
+}
+
+#[tauri::command]
 fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) -> Result<(), String> {
     let mut current_preventer = state.sleep_preventer.lock().unwrap_or_else(|e| e.into_inner());
     if prevent {
@@ -3044,15 +3042,37 @@ fn delete_keychain_password(id: String) -> Result<(), String> {
 struct PairingTokenHydration {
     token: String,
     token_changed: bool,
+    persistent: bool,
+    error: Option<String>,
 }
 
 #[tauri::command]
 fn hydrate_extension_pairing_token(
-    state: tauri::State<'_, crate::db::DbState>,
+    database: tauri::State<'_, crate::db::DbState>,
+    app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
-    let mut connection = state.lock()?;
-    let (token, token_changed) = crate::db::hydrate_pairing_token(&mut connection)?;
-    Ok(PairingTokenHydration { token, token_changed })
+    let mut connection = database.lock()?;
+    match crate::db::hydrate_pairing_token(&mut connection) {
+        Ok((token, token_changed)) => Ok(PairingTokenHydration {
+            token,
+            token_changed,
+            persistent: true,
+            error: None,
+        }),
+        Err(error) => {
+            let token = app_state
+                .extension_pairing_token
+                .read()
+                .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+                .clone();
+            Ok(PairingTokenHydration {
+                token,
+                token_changed: false,
+                persistent: false,
+                error: Some(error),
+            })
+        }
+    }
 }
 
 #[tauri::command]
@@ -3154,6 +3174,7 @@ async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathB
 fn redact_log_line(line: &str) -> String {
     use std::sync::OnceLock;
     static SECRET: OnceLock<regex::Regex> = OnceLock::new();
+    static HEADER: OnceLock<regex::Regex> = OnceLock::new();
     static QUERY: OnceLock<regex::Regex> = OnceLock::new();
     let secret = SECRET.get_or_init(|| {
         regex::Regex::new(
@@ -3161,12 +3182,31 @@ fn redact_log_line(line: &str) -> String {
         )
         .expect("valid secret redaction regex")
     });
+    let header = HEADER.get_or_init(|| {
+        regex::Regex::new(r"(?i)(authorization|cookie)\s*:\s*[^\r\n]+")
+            .expect("valid sensitive header redaction regex")
+    });
     let query = QUERY.get_or_init(|| {
         regex::Regex::new(r"(https?://[^\s?]+)\?[^\s]+")
             .expect("valid URL query redaction regex")
     });
-    let redacted = secret.replace_all(line, "$1=[redacted]");
+    let redacted = header.replace_all(line, "$1: [redacted]");
+    let redacted = secret.replace_all(&redacted, "$1=[redacted]");
     query.replace_all(&redacted, "$1?[redacted]").into_owned()
+}
+
+fn redact_log_line_for_app(line: &str, app_handle: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    let without_home = app_handle
+        .path()
+        .home_dir()
+        .ok()
+        .map(|home| {
+            let home = home.to_string_lossy();
+            line.replace(home.as_ref(), "~")
+        })
+        .unwrap_or_else(|| line.to_string());
+    redact_log_line(&without_home)
 }
 
 #[tauri::command]
@@ -3176,7 +3216,11 @@ async fn read_logs(app_handle: tauri::AppHandle, limit: usize) -> Result<Vec<Str
         let content = tokio::fs::read_to_string(&file)
             .await
             .map_err(|error| format!("failed to read '{}': {error}", file.display()))?;
-        lines.extend(content.lines().map(redact_log_line));
+        lines.extend(
+            content
+                .lines()
+                .map(|line| redact_log_line_for_app(line, &app_handle)),
+        );
     }
     let keep = limit.clamp(1, 10_000);
     if lines.len() > keep {
@@ -3240,12 +3284,16 @@ async fn export_logs(
         ));
     }
     for file in log_files(&app_handle).await? {
-        output.push_str(&format!("===== {} =====\n", file.display()));
+        let file_name = file
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_else(|| std::borrow::Cow::Borrowed("firelink.log"));
+        output.push_str(&format!("===== {} =====\n", file_name));
         let content = tokio::fs::read_to_string(&file)
             .await
             .map_err(|error| format!("failed to read '{}': {error}", file.display()))?;
         for line in content.lines() {
-            output.push_str(&redact_log_line(line));
+            output.push_str(&redact_log_line_for_app(line, &app_handle));
             output.push('\n');
         }
         output.push('\n');
@@ -3290,11 +3338,13 @@ fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/trayTemplate.png"))
-        .map_err(|e| e.to_string())?;
-    TrayIconBuilder::with_id("main")
+    #[cfg(target_os = "macos")]
+    let tray_icon_bytes = include_bytes!("../icons/trayTemplate.png").as_slice();
+    #[cfg(not(target_os = "macos"))]
+    let tray_icon_bytes = include_bytes!("../icons/128x128.png").as_slice();
+    let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes).map_err(|e| e.to_string())?;
+    let mut tray = TrayIconBuilder::with_id("main")
         .icon(tray_icon)
-        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -3322,8 +3372,12 @@ fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
             ) {
                 restore_main_window(tray.app_handle());
             }
-        })
-        .build(app_handle)
+        });
+    #[cfg(target_os = "macos")]
+    {
+        tray = tray.icon_as_template(true);
+    }
+    tray.build(app_handle)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -3730,7 +3784,7 @@ mod tests {
     }
 }
 
-static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[tauri::command]
 fn toggle_log_pause(pause: bool) {
@@ -3786,7 +3840,20 @@ pub fn run() {
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
             let initial_pairing_token = {
                 let mut connection = database.lock()?;
-                crate::db::hydrate_pairing_token(&mut connection)?.0
+                match crate::db::hydrate_pairing_token(&mut connection) {
+                    Ok((token, _)) => token,
+                    Err(error) => {
+                        log::warn!(
+                            "Secure credential storage unavailable; using session-only extension token: {}",
+                            error
+                        );
+                        format!(
+                            "{}{}",
+                            uuid::Uuid::new_v4().simple(),
+                            uuid::Uuid::new_v4().simple()
+                        )
+                    }
+                }
             };
             {
                 let mut pairing_token = extension_pairing_token
@@ -3862,6 +3929,10 @@ pub fn run() {
             });
 
             let deep_link_app = app.handle().clone();
+            #[cfg(target_os = "linux")]
+            if let Err(error) = app.deep_link().register_all() {
+                log::warn!("Could not register firelink:// handler: {error}");
+            }
             app.deep_link().on_open_url(move |event| {
                 dispatch_deep_links(deep_link_app.clone(), event.urls());
             });
@@ -4123,7 +4194,7 @@ pub fn run() {
  get_engine_status, get_aria2_engine_status, get_ytdlp_engine_status, get_ffmpeg_engine_status,
  get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno,
  pause_download, resume_download, fetch_metadata, fetch_media_metadata,
-            update_dock_badge, set_prevent_sleep, get_free_space, perform_system_action,
+            update_dock_badge, get_platform_info, approve_download_root, set_prevent_sleep, get_free_space, perform_system_action,
             ack_schedule_trigger,
             check_automation_permission, request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,

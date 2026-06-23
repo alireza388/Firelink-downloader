@@ -45,9 +45,13 @@ instructions below. New packaged builds will be published through
 [GitHub Releases](https://github.com/nimbold/Firelink/releases) once the
 migration is complete.
 
-Firelink is currently developed and tested on macOS. Production bundles include
-the media engines, so packaged releases will not require separate aria2, yt-dlp,
-FFmpeg, or Deno installations.
+Production bundles include target-specific media engines, so packaged releases
+do not require separate aria2, yt-dlp, FFmpeg, Deno, Python, or package-manager
+installations.
+
+macOS builds are distributed without Apple code signing or notarization. Users
+must approve the downloaded app through Finder or **System Settings → Privacy &
+Security**. Firelink does not claim Gatekeeper trust.
 
 ### Browser Extension
 
@@ -63,9 +67,9 @@ root.
 
 | Target | Status |
 | --- | --- |
-| macOS | Active development and automated testing |
-| Windows | Core architecture prepared; packaging and validation pending |
-| Linux | Core architecture prepared; packaging and validation pending |
+| macOS arm64 | Automated build, engine validation, and unsigned DMG packaging |
+| Windows x64 | Native CI and NSIS packaging configured; first clean-run validation pending |
+| Linux x64 | Native CI and AppImage packaging configured; desktop-matrix validation pending |
 
 See the [changelog](CHANGELOG.md) for release history and recent work.
 
@@ -106,8 +110,16 @@ Create a production bundle:
 npm run tauri build
 ```
 
-Native media executables and runtime files are expected in
-`src-tauri/binaries` when running or packaging the application locally.
+macOS development uses locked payloads in `src-tauri/binaries`. Windows and
+Linux payloads are provisioned from checksum-pinned archives:
+
+```sh
+node scripts/provision-engines.js --target x86_64-pc-windows-msvc
+node scripts/provision-engines.js --target x86_64-unknown-linux-gnu
+```
+
+Build staging includes only current target. See `engines.lock.json`,
+`engine-sources.lock.json`, and [RELEASE.md](RELEASE.md).
 
 ## Repository Structure
 

@@ -13,6 +13,7 @@ import type { ReleaseCheckOutcome } from './bindings/ReleaseCheckOutcome';
 import type { PairingTokenHydration } from './bindings/PairingTokenHydration';
 import type { EnqueueItem } from './bindings/EnqueueItem';
 import type { EnqueueAccepted } from './bindings/EnqueueAccepted';
+import type { PlatformInfo } from './bindings/PlatformInfo';
 
 type CommandMap = {
   fetch_metadata: {
@@ -34,6 +35,8 @@ type CommandMap = {
   remove_download: { args: { id: string; deleteAssets: boolean }; result: void };
   detach_download_for_reconfigure: { args: { id: string }; result: void };
   update_dock_badge: { args: { count: number }; result: void };
+  get_platform_info: { args: undefined; result: PlatformInfo };
+  approve_download_root: { args: { path: string }; result: string };
   set_prevent_sleep: { args: { prevent: boolean }; result: void };
   perform_system_action: { args: { action: PostQueueAction }; result: void };
   ack_schedule_trigger: { args: { action: 'start' | 'stop'; key: string }; result: void };

@@ -74,6 +74,7 @@ export interface SettingsState {
   baseDownloadFolder: string;
   categorySubfolders: Record<string, string>;
   categoryDirectoryOverrides: Record<string, string>;
+  approvedDownloadRoots: string[];
   maxConcurrentDownloads: number;
   globalSpeedLimit: string;
   isSidebarVisible: boolean;
@@ -108,6 +109,7 @@ export interface SettingsState {
 
   setTheme: (theme: Theme) => void;
   setBaseDownloadFolder: (path: string) => void;
+  approveDownloadRoot: (path: string) => Promise<string>;
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
   setActiveView: (view: ActiveView) => void;
@@ -178,6 +180,7 @@ export const useSettingsStore = create<SettingsState>()(
       baseDownloadFolder: '~/Downloads',
       categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
       categoryDirectoryOverrides: {},
+      approvedDownloadRoots: [],
       maxConcurrentDownloads: 3,
       globalSpeedLimit: '',
       activeView: 'downloads',
@@ -223,6 +226,15 @@ export const useSettingsStore = create<SettingsState>()(
       setBaseDownloadFolder: (path) => {
         info('Settings updated: baseDownloadFolder');
         set({ baseDownloadFolder: path });
+      },
+      approveDownloadRoot: async (path) => {
+        const approvedPath = await invoke('approve_download_root', { path });
+        set(state => ({
+          approvedDownloadRoots: state.approvedDownloadRoots.includes(approvedPath)
+            ? state.approvedDownloadRoots
+            : [...state.approvedDownloadRoots, approvedPath]
+        }));
+        return approvedPath;
       },
       setMaxConcurrentDownloads: (max) => {
         info('Settings updated: maxConcurrentDownloads');
@@ -299,6 +311,9 @@ export const useSettingsStore = create<SettingsState>()(
       hydratePairingToken: async () => {
         const result = await invoke('hydrate_extension_pairing_token');
         set({ extensionPairingToken: result.token });
+        if (!result.persistent && result.error) {
+          throw new Error(`Session-only browser pairing token: ${result.error}`);
+        }
         return result.tokenChanged;
       },
       setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
@@ -330,7 +345,10 @@ export const useSettingsStore = create<SettingsState>()(
                   : [DEFAULT_SCHEDULER_QUEUE_ID]
               }
             : persisted.scheduler,
-          siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : []
+          siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : [],
+          approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
+            ? persisted.approvedDownloadRoots
+            : []
         } as SettingsState;
       },
       partialize: (state): PersistedSettings => ({
@@ -338,6 +356,7 @@ export const useSettingsStore = create<SettingsState>()(
         baseDownloadFolder: state.baseDownloadFolder,
         categorySubfolders: state.categorySubfolders,
         categoryDirectoryOverrides: state.categoryDirectoryOverrides,
+        approvedDownloadRoots: state.approvedDownloadRoots,
         maxConcurrentDownloads: state.maxConcurrentDownloads,
         globalSpeedLimit: state.globalSpeedLimit,
         isSidebarVisible: state.isSidebarVisible,
@@ -376,6 +395,9 @@ export const useSettingsStore = create<SettingsState>()(
         ...currentState,
         ...persisted,
         ...locations,
+        approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
+          ? persisted.approvedDownloadRoots
+          : currentState.approvedDownloadRoots,
         scheduler: {
           ...currentState.scheduler,
           ...persisted.scheduler,

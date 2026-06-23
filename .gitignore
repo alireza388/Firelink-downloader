@@ -1,5 +1,6 @@
 # OS and editor files
 .DS_Store
+skills-lock.json
 .idea/
 .vscode/
 *.suo
@@ -24,6 +25,8 @@ lerna-debug.log*
 target/
 src-tauri/target/
 src-tauri/gen/
+src-tauri/engine-dist/
+src-tauri/provisioned-engines/
 
 # Locally provisioned native engines
 src-tauri/binaries/aria2c

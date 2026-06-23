@@ -13,8 +13,10 @@ import { canonicalizeDownloadFileName, categoryForFileName } from '../utils/down
 import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
 import {
   resolveCategoryDestination,
-  resolveDownloadFilePath
+  resolveDownloadFilePath,
+  downloadLocationEquals
 } from '../utils/downloadLocations';
+import { getPlatformInfo } from '../utils/platform';
 import { isTransferLocked } from '../utils/downloadActions';
 import { useToast } from '../contexts/ToastContext';
 import {
@@ -319,9 +321,10 @@ export const AddDownloadsModal = () => {
         directory: true,
         multiple: false,
         defaultPath: saveLocation.startsWith('~') ? undefined : saveLocation
-      });
+    });
     if (selected && typeof selected === 'string') {
-      setSaveLocation(selected);
+      const approvedPath = await useSettingsStore.getState().approveDownloadRoot(selected);
+      setSaveLocation(approvedPath);
       setIsSaveLocationManual(true);
     }
     } catch (e) {
@@ -347,6 +350,7 @@ export const AddDownloadsModal = () => {
     let useSharedDestination = isSaveLocationManual;
     const destinationOverrides: Record<number, string> = {};
     const settings = useSettingsStore.getState();
+    const platform = await getPlatformInfo().catch(() => ({ os: 'unknown' }));
     if (settings.askWhereToSaveEachFile && parsedItems.length > 0) {
       for (const [index, item] of parsedItems.entries()) {
         try {
@@ -360,7 +364,8 @@ export const AddDownloadsModal = () => {
             defaultPath: suggestedLocation.startsWith('~') ? undefined : suggestedLocation
           });
           if (selected && typeof selected === 'string') {
-            destinationOverrides[index] = selected;
+            const approvedPath = await useSettingsStore.getState().approveDownloadRoot(selected);
+            destinationOverrides[index] = approvedPath;
           } else {
             setIsSubmitting(false);
             return;
@@ -398,8 +403,13 @@ export const AddDownloadsModal = () => {
           const destination = download.destination ||
             await resolveCategoryDestination(settings, download.category);
           if (
-            destination === itemLocation &&
-            download.fileName === finalFile &&
+            downloadLocationEquals(
+              destination,
+              download.fileName,
+              itemLocation,
+              finalFile,
+              platform.os
+            ) &&
             download.status !== 'failed'
           ) {
             fileExistsInStore = true;
@@ -456,6 +466,7 @@ export const AddDownloadsModal = () => {
     destinationOverrides: Record<number, string> = {}
   ) => {
       let itemsToAdd: Array<AddDownloadDraftRow | null> = [...parsedItems];
+      const platform = await getPlatformInfo().catch(() => ({ os: 'unknown' }));
 
       if (resolutions) {
          for (const res of resolutions) {
@@ -491,8 +502,13 @@ export const AddDownloadsModal = () => {
             const destination = download.destination ||
               await resolveCategoryDestination(currentSettings, download.category);
             if (
-              destination === itemLocation &&
-              download.fileName === newName &&
+              downloadLocationEquals(
+                destination,
+                download.fileName,
+                itemLocation,
+                newName,
+                platform.os
+              ) &&
               download.status !== 'failed'
             ) {
               storeHas = true;
@@ -534,8 +550,13 @@ export const AddDownloadsModal = () => {
           const destination = download.destination ||
             await resolveCategoryDestination(currentSettings, download.category);
           if (
-            destination === itemLocation &&
-            download.fileName === finalFile &&
+            downloadLocationEquals(
+              destination,
+              download.fileName,
+              itemLocation,
+              finalFile,
+              platform.os
+            ) &&
             download.status !== 'failed'
           ) {
             existingItem = download;

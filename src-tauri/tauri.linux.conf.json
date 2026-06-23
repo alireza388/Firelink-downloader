@@ -1,0 +1,18 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Firelink",
+        "width": 1280,
+        "height": 760,
+        "minWidth": 960,
+        "minHeight": 640,
+        "transparent": false,
+        "decorations": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["appimage"]
+  }
+}

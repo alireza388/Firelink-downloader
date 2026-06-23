@@ -24,6 +24,7 @@ import {
   DOWNLOAD_CATEGORIES,
   normalizeCategorySubfolder
 } from '../utils/downloadLocations';
+import { usePlatformInfo } from '../utils/platform';
 
 const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[] = [
   { type: 'downloads', label: 'Downloads', icon: Download },
@@ -176,6 +177,7 @@ const CategoryFolderInput = ({
 export default function SettingsView() {
   const settings = useSettingsStore();
   const activeTab = settings.activeSettingsTab;
+  const platform = usePlatformInfo();
 
   // Local state for engine status
 const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
@@ -362,7 +364,8 @@ runEngineChecks(false);
         defaultPath: currentPath.startsWith('~') ? undefined : currentPath
       });
       if (selected && typeof selected === 'string') {
-        settings.setCategoryDirectoryOverride(category, selected);
+        const approvedPath = await settings.approveDownloadRoot(selected);
+        settings.setCategoryDirectoryOverride(category, approvedPath);
       }
     } catch (e) {
       console.error(`Failed to select folder for ${category}:`, e);
@@ -379,7 +382,8 @@ runEngineChecks(false);
           : settings.baseDownloadFolder
       });
       if (base && typeof base === 'string') {
-        settings.setBaseDownloadFolder(base);
+        const approvedBase = await settings.approveDownloadRoot(base);
+        settings.setBaseDownloadFolder(approvedBase);
         try {
           const safeSubfolders = Object.fromEntries(
             DOWNLOAD_CATEGORIES.map(category => [
@@ -391,7 +395,7 @@ runEngineChecks(false);
             ])
           );
           await invoke('create_category_directories', {
-            baseFolder: base,
+            baseFolder: approvedBase,
             subfolders: safeSubfolders
           });
         } catch (e) {
@@ -647,24 +651,28 @@ runEngineChecks(false);
                 </div>
               </div>
 
-              <h2 className="settings-section-title">macOS Integration</h2>
+              <h2 className="settings-section-title">
+                {platform.os === 'macos' ? 'macOS Integration' : 'Desktop Integration'}
+              </h2>
               <div className="mac-settings-group">
+                {platform.os === 'macos' && (
+                  <label className="mac-settings-row cursor-default">
+                    <div className="settings-row-label">
+                      <span>Show badge on Dock icon</span>
+                      <small>Displays active download count on Firelink Dock icon.</small>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings.showDockBadge}
+                      onChange={(e) => settings.setShowDockBadge(e.target.checked)}
+                      className="mac-switch"
+                    />
+                  </label>
+                )}
                 <label className="mac-settings-row cursor-default">
                   <div className="settings-row-label">
-                    <span>Show badge on Dock icon</span>
-                    <small>Displays the number of active downloads on the Firelink Dock icon.</small>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={settings.showDockBadge}
-                    onChange={(e) => settings.setShowDockBadge(e.target.checked)}
-                    className="mac-switch"
-                  />
-                </label>
-                <label className="mac-settings-row cursor-default">
-                  <div className="settings-row-label">
-                    <span>Show menu bar icon</span>
-                    <small>Provides quick access to downloads and queues from the macOS menu bar.</small>
+                    <span>{platform.os === 'macos' ? 'Show menu bar icon' : 'Show system tray icon'}</span>
+                    <small>Provides quick access to downloads and queues.</small>
                   </div>
                   <input
                     type="checkbox"
@@ -732,7 +740,7 @@ runEngineChecks(false);
                 )}
                 <p className="settings-group-footer">
                   {settings.proxyMode === 'none' && 'Downloads ignore configured proxies.'}
-                  {settings.proxyMode === 'system' && 'Downloads use the matching macOS system proxy when one is configured.'}
+                  {settings.proxyMode === 'system' && `Downloads use the detected ${platform.os === 'macos' ? 'macOS' : platform.os === 'windows' ? 'Windows' : 'desktop'} system proxy when available.`}
                   {settings.proxyMode === 'custom' && (settings.proxyHost
                     ? `Downloads use http://${settings.proxyHost}:${settings.proxyPort}.`
                     : 'Enter a proxy host and port to enable the custom proxy.')}

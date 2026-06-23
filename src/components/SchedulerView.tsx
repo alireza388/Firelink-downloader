@@ -8,6 +8,7 @@ import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/u
 import { MAIN_QUEUE_ID, useDownloadStore } from '../store/useDownloadStore';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
+import { usePlatformInfo } from '../utils/platform';
 
 const days = [
   { value: 0, label: 'Su' },
@@ -65,7 +66,8 @@ export default function SchedulerView() {
   const { addToast } = useToast();
   const [permissionMessage, setPermissionMessage] = useState('');
   const [automationPermissionGranted, setAutomationPermissionGranted] = useState<boolean | null>(null);
-  const isMac = navigator.userAgent.includes('Mac');
+  const platform = usePlatformInfo();
+  const isMac = platform.os === 'macos';
 
   useEffect(() => {
     setDraft(savedSettings);
@@ -365,7 +367,7 @@ export default function SchedulerView() {
           </section>
         </div>
 
-        {isMac && (
+        {isMac ? (
           <section className="app-card mt-4 max-w-[760px] p-5">
             <div className="mb-2 flex items-center gap-2 font-semibold text-text-primary">
               <LockKeyhole size={17} className="text-accent" /> System Permissions
@@ -392,6 +394,16 @@ export default function SchedulerView() {
             </button>
           </div>
             {permissionMessage && <p className="mt-3 text-[11px] text-text-muted">{permissionMessage}</p>}
+          </section>
+        ) : (
+          <section className="app-card mt-4 max-w-[760px] p-5">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-text-primary">
+              <LockKeyhole size={17} className="text-accent" /> System Actions
+            </div>
+            <p className="text-[12px] text-text-muted">
+              Sleep, restart, and shut down use {platform.os === 'windows' ? 'Windows system privileges' : 'your Linux desktop and system policy'}.
+              Firelink reports any rejected action when it runs; no permanent permission is claimed in advance.
+            </p>
           </section>
         )}
       </div>

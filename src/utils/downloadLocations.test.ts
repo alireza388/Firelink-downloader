@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/path', () => ({
 }));
 
 import {
+  downloadLocationEquals,
   DEFAULT_CATEGORY_SUBFOLDERS,
   normalizeCategorySubfolder,
   normalizeDownloadLocationSettings,
@@ -16,6 +17,11 @@ import {
 } from './downloadLocations';
 
 describe('download locations', () => {
+  it('compares Windows and macOS locations case-insensitively', () => {
+    expect(downloadLocationEquals('D:\\Downloads', 'Movie.MP4', 'd:/downloads', 'movie.mp4', 'windows')).toBe(true);
+    expect(downloadLocationEquals('/Users/Test', 'Movie.MP4', '/users/test', 'movie.mp4', 'macos')).toBe(true);
+    expect(downloadLocationEquals('/home/Test', 'Movie.MP4', '/home/test', 'movie.mp4', 'linux')).toBe(false);
+  });
   beforeEach(() => {
     vi.clearAllMocks();
   });

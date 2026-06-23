@@ -143,3 +143,20 @@ export const resolveDownloadFilePath = async (
   const expandedDest = await expandTilde(destination);
   return join(expandedDest, fileName);
 };
+
+export const downloadLocationEquals = (
+  leftDirectory: string,
+  leftFileName: string,
+  rightDirectory: string,
+  rightFileName: string,
+  os: string
+): boolean => {
+  const normalize = (value: string) => {
+    const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+    return os === 'windows' || os === 'macos'
+      ? normalized.toLocaleLowerCase()
+      : normalized;
+  };
+  return normalize(`${leftDirectory}/${leftFileName}`)
+    === normalize(`${rightDirectory}/${rightFileName}`);
+};

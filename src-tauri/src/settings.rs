@@ -252,6 +252,7 @@ fn default_settings() -> PersistedSettings {
         base_download_folder: "~/Downloads".to_string(),
         category_subfolders: default_category_subfolders(),
         category_directory_overrides: HashMap::new(),
+        approved_download_roots: Vec::new(),
         max_concurrent_downloads: 3,
         global_speed_limit: String::new(),
         is_sidebar_visible: true,

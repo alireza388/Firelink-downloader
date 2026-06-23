@@ -246,6 +246,7 @@ pub struct PersistedSettings {
     pub base_download_folder: String,
     pub category_subfolders: HashMap<String, String>,
     pub category_directory_overrides: HashMap<String, String>,
+    pub approved_download_roots: Vec<String>,
     pub max_concurrent_downloads: usize,
     pub global_speed_limit: String,
     pub is_sidebar_visible: bool,
@@ -277,6 +278,15 @@ pub struct PersistedSettings {
     // frontend. The field is kept on legacy persisted JSON only; serde ignores
     // unknown fields when decoding, so existing installs migrate cleanly.
     pub auto_check_updates: bool,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct PlatformInfo {
+    pub os: String,
+    pub arch: String,
+    pub target_triple: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, TS)]

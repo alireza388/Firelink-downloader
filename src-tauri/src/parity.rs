@@ -14,7 +14,7 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
                 Ok(None)
             }
         }
-        Err(_) => Ok(None),
+        Err(error) => Err(format!("failed to read system proxy settings: {error}")),
     }
 }
 

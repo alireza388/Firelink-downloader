@@ -36,7 +36,6 @@ uuid = { version = "1", features = ["v4"] }
 ts-rs = { version = "12", features = ["serde-compat", "uuid-impl"] }
 tauri-plugin-notification = "2.3.3"
 sysinfo = "0.39.3"
-keyring = "3"
 hmac = "0.12"
 sha2 = "0.10"
 tauri-plugin-deep-link = "2"
@@ -61,3 +60,10 @@ async-trait = "0.1"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25"
 objc = "0.2.7"
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "vendored"] }

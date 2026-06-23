@@ -211,8 +211,8 @@ export default function LogsView() {
       <div className="bg-black/10 border-y border-border-modal px-4 py-2 shrink-0 flex items-center gap-2 text-text-muted text-[10px] select-none">
         <Info size={12} className="text-text-muted opacity-80 shrink-0" />
         <span className="opacity-90 leading-tight">
-          <strong className="font-medium text-text-primary mr-1">Privacy Note:</strong>
-          Telemetry securely captures basic hardware capabilities (OS, CPU, RAM) exclusively for troubleshooting. No unique identifiers or sensitive paths are collected. Logs remain entirely offline on your device until manually exported.
+          <strong className="font-medium text-text-primary mr-1">Local diagnostics:</strong>
+          Firelink keeps bounded rotating logs on this device for troubleshooting. Common secrets, URL queries, and home-directory paths are redacted during display and export. Nothing is uploaded automatically.
         </span>
       </div>
 

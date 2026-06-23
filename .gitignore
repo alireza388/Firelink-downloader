@@ -47,6 +47,7 @@ build/
 .env.*
 *.key
 *.pem
+!src-tauri/binaries/_internal/certifi/cacert.pem
 *.p8
 *.p12
 *.cer

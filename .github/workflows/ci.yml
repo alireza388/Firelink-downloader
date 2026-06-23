@@ -61,8 +61,15 @@ jobs:
             pkg-config
       - run: npm ci
       - name: Test Rust backend
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: cargo test --all-targets --target ${{ matrix.target }}
+      - name: Test Rust backend
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        run: |
+          cargo test --tests --target ${{ matrix.target }}
+          cargo test --lib --no-run --target ${{ matrix.target }}
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}

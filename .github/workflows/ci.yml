@@ -63,10 +63,10 @@ jobs:
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
+      - name: Test Rust backend
+        working-directory: src-tauri
+        run: cargo test --all-targets --target ${{ matrix.target }}
       - name: Stage and verify engines
         run: |
           node scripts/stage-engines.js --target ${{ matrix.target }}
           node scripts/verify-binaries.js --staged --target ${{ matrix.target }}
-      - name: Test Rust backend
-        working-directory: src-tauri
-        run: cargo test --all-targets --target ${{ matrix.target }}

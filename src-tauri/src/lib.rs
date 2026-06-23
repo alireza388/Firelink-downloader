@@ -3730,7 +3730,7 @@ mod tests {
     }
 }
 
-static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[tauri::command]
 fn toggle_log_pause(pause: bool) {
@@ -4085,13 +4085,15 @@ pub fn run() {
         })
         .plugin(
             tauri_plugin_log::Builder::new()
-                .filter(|_meta| !LOG_PAUSED.load(std::sync::atomic::Ordering::Relaxed))
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
                 ])
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
                 .filter(|metadata| {
+                    if LOG_PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+                        return false;
+                    }
                     let target = metadata.target();
                     !target.starts_with("webview::")
                         && !target.starts_with("hyper")

@@ -8,8 +8,9 @@ vi.mock('../ipc', () => ({
 }));
 
 // Mock window.__TAURI_INTERNALS__ and log to prevent errors
-vi.mock('@tauri-apps/plugin-log', () => ({
+vi.mock('../utils/logger', () => ({
   info: vi.fn(),
+  warn: vi.fn(),
   error: vi.fn(),
 }));
 

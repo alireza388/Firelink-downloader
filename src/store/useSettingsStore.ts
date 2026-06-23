@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import { invokeCommand as invoke } from '../ipc';
-import { info } from '@tauri-apps/plugin-log';
+import { info } from '../utils/logger';
 import type { ActiveView } from '../bindings/ActiveView';
 import type { AppFontSize } from '../bindings/AppFontSize';
 import type { ListRowDensity } from '../bindings/ListRowDensity';

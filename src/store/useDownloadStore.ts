@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { info } from '@tauri-apps/plugin-log';
+import { info } from '../utils/logger';
 import { invokeCommand as invoke } from '../ipc';
 
 import type { DownloadItem } from '../bindings/DownloadItem';

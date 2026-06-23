@@ -4,7 +4,9 @@ import "./index.css";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./contexts/ToastContext";
-import { error as logError, warn as logWarn } from "@tauri-apps/plugin-log";
+import { error as logError, warn as logWarn, initLogger } from "./utils/logger";
+
+void initLogger();
 
 const serializeConsoleArguments = (values: unknown[]) => values.map(value => {
   if (value instanceof Error) return `${value.name}: ${value.message}\n${value.stack || ''}`;

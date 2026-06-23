@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import { error as logError } from '@tauri-apps/plugin-log';
+import { error as logError } from './utils/logger';
 import { listen as tauriListen, type Event, type EventCallback, type UnlistenFn } from '@tauri-apps/api/event';
 import type { DownloadCategory } from './bindings/DownloadCategory';
 import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';

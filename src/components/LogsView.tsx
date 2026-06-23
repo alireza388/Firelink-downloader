@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
-import { attachLogger } from '@tauri-apps/plugin-log';
+import { attachLogger, setLogPaused, getLogPaused, initLogger } from '../utils/logger';
 import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
@@ -28,12 +28,12 @@ export default function LogsView() {
 
     const init = async () => {
       try {
-        const [lines, currentPauseState] = await Promise.all([
-          invoke('read_logs', { limit: MAX_LOG_LINES }),
-          invoke('is_log_paused')
+        await initLogger();
+        const [lines] = await Promise.all([
+          invoke('read_logs', { limit: MAX_LOG_LINES })
         ]);
         if (!active) return;
-        setIsPaused(currentPauseState);
+        setIsPaused(getLogPaused());
         if (!active) return;
         const initialLogs = lines.map(message => {
           const level: LogEntry['level'] = message.includes('[ERROR]') ? 'Error'
@@ -182,7 +182,7 @@ export default function LogsView() {
             onClick={async () => {
               const newState = !isPaused;
               setIsPaused(newState);
-              await invoke('toggle_log_pause', { pause: newState }).catch(console.error);
+              await setLogPaused(newState);
             }}
             className={`app-icon-button ${isPaused ? 'text-accent' : ''}`}
             title={isPaused ? "Resume logs" : "Pause logs system"}

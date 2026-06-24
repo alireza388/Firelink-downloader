@@ -717,6 +717,39 @@ async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: boo
 
 
 
+async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::SocketAddr)>, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| "SSRF blocked: Invalid URL")?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err("SSRF blocked: Only HTTP/HTTPS schemes allowed".to_string());
+    }
+    let host = parsed.host_str().ok_or("SSRF blocked: No host")?;
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    
+    let mut addrs = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|_| "SSRF blocked: DNS resolution failed")?;
+        
+    let addr = addrs.next().ok_or("SSRF blocked: No DNS records")?;
+    let ip = addr.ip();
+    
+    if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
+        return Err("SSRF blocked: Private/local IP not allowed".to_string());
+    }
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            if ipv4.is_private() || ipv4.is_link_local() {
+                return Err("SSRF blocked: Private/local IP not allowed".to_string());
+            }
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            if (ipv6.segments()[0] & 0xfe00) == 0xfc00 { // ULA check
+                return Err("SSRF blocked: Private/local IP not allowed".to_string());
+            }
+        }
+    }
+    Ok(Some((host.to_string(), addr)))
+}
+
 #[tauri::command]
 async fn fetch_metadata(url: String, user_agent: Option<String>, username: Option<String>, password: Option<String>) -> Result<MetadataResponse, String> {
     let mut current_url = url.clone();
@@ -740,26 +773,7 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
             builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
         }
 
-        let mut resolved_addr = None;
-        if let Ok(parsed) = reqwest::Url::parse(&current_url) {
-            if let Some(host) = parsed.host_str() {
-                let port = parsed.port_or_known_default().unwrap_or(80);
-                if let Ok(addrs) = std::net::ToSocketAddrs::to_socket_addrs(&(host, port)) {
-                    if let Some(addr) = addrs.into_iter().next() {
-                        let ip = addr.ip();
-                        if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
-                            return Err("SSRF blocked: Private/local IP not allowed".to_string());
-                        }
-                        if let std::net::IpAddr::V4(ipv4) = ip {
-                            if ipv4.is_private() || ipv4.is_link_local() {
-                                return Err("SSRF blocked: Private/local IP not allowed".to_string());
-                            }
-                        }
-                        resolved_addr = Some((host.to_string(), addr));
-                    }
-                }
-            }
-        }
+        let resolved_addr = validate_url_ssrf(&current_url).await?;
 
         if let Some((host, addr)) = resolved_addr {
             builder = builder.resolve(&host, addr);
@@ -909,6 +923,7 @@ async fn fetch_media_metadata(
     username: Option<String>,
     password: Option<String>,
 ) -> Result<MediaMetadata, String> {
+    validate_url_ssrf(&url).await?;
     let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password);
 
     let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
@@ -1011,12 +1026,14 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
-            config_content.push_str(&format!("--username\n{}\n", user));
+            let safe_user = user.replace('\n', "").replace('\r', "");
+            config_content.push_str(&format!("--username\n{}\n", safe_user));
         }
     }
     if let Some(pass) = password {
         if !pass.is_empty() {
-            config_content.push_str(&format!("--password\n{}\n", pass));
+            let safe_pass = pass.replace('\n', "").replace('\r', "");
+            config_content.push_str(&format!("--password\n{}\n", safe_pass));
         }
     }
     use std::io::Write;
@@ -1246,6 +1263,7 @@ struct Aria2DaemonGuard {
     child: Mutex<Option<std::process::Child>>,
     startup_error: Mutex<Option<String>>,
     last_stderr: Mutex<String>,
+    config_path: Mutex<Option<tempfile::TempPath>>,
 }
 
 impl Aria2DaemonGuard {
@@ -1254,6 +1272,7 @@ impl Aria2DaemonGuard {
             child: Mutex::new(None),
             startup_error: Mutex::new(None),
             last_stderr: Mutex::new(String::new()),
+            config_path: Mutex::new(None),
         }
     }
 }
@@ -3303,7 +3322,6 @@ async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
 async fn export_logs(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    dest_path: String,
 ) -> Result<String, String> {
     let mut output = format!(
         "Firelink support logs\nVersion: {}\nOS: {} {}\nArchitecture: {}\nGenerated: {}\n\n",
@@ -3360,10 +3378,7 @@ async fn export_logs(
         }
         output.push('\n');
     }
-    tokio::fs::write(&dest_path, output)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(dest_path)
+    Ok(output)
 }
 
 #[tauri::command]
@@ -4004,9 +4019,16 @@ pub fn run() {
             match resolve_bundled_binary_path(app.handle(), "aria2c") {
                 Ok(binary_path) => {
                     let mut cmd = std::process::Command::new(&binary_path);
+                    
+                    let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
+                    use std::io::Write;
+                    let config_content = format!("rpc-secret={}\n", aria2_secret);
+                    config_file.write_all(config_content.as_bytes()).expect("failed to write aria2 config file");
+                    let config_path = config_file.into_temp_path();
+
                     cmd.arg("--enable-rpc=true")
+                        .arg(format!("--conf-path={}", config_path.display()))
                         .arg(format!("--rpc-listen-port={}", aria2_port))
-                        .arg(format!("--rpc-secret={}", aria2_secret))
                         .arg("--rpc-listen-all=false")
                         .arg("--continue=true")
                         .arg("--retry-wait=2")
@@ -4053,6 +4075,7 @@ pub fn run() {
 
                             let guard = app.state::<Aria2DaemonGuard>();
                             *guard.child.lock().unwrap() = Some(child);
+                            *guard.config_path.lock().unwrap() = Some(config_path);
 
                             let port = aria2_port;
                             let secret = aria2_secret.clone();
@@ -4141,7 +4164,8 @@ pub fn run() {
                             }
                         }
                     }
-                    // Connection lost, loop and reconnect
+                    // Connection lost, clear permits and reconnect
+                    app_handle_ws.state::<AppState>().queue_manager.clear_aria2_permits().await;
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 }
             });

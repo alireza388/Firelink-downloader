@@ -368,6 +368,8 @@ function App() {
     const allCompleted = scheduledItems.every(item => item?.status === 'completed');
     settings.setSchedulerActiveDownloadIds([]);
     settings.setSchedulerRunning(false);
+    
+    let timer: number | undefined;
     if (!allCompleted) {
       addToast({
         message: 'Scheduled downloads did not all complete. The post-queue system action was skipped.',
@@ -395,7 +397,7 @@ function App() {
           </div>
         )
       });
-      window.setTimeout(() => {
+      timer = window.setTimeout(() => {
         if (cancelled) return;
         const activeTransfers = useDownloadStore.getState().downloads.some(download =>
           isActiveDownloadStatus(download.status)
@@ -418,6 +420,12 @@ function App() {
         });
       }, 10_000);
     }
+
+    return () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [addToast, downloads, schedulerRunning, schedulerActiveDownloadIds]);
 
   useEffect(() => {
@@ -505,7 +513,7 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    initDownloadListener();
+    const unlistenDownload = initDownloadListener();
 
     const unlistenTerminalState = listen('download-state', (event) => {
       if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
@@ -561,6 +569,7 @@ function App() {
       unlistenTerminalState.then(f => f());
       unlistenExtension.then(f => f());
       unlistenDeepLink.then(f => f());
+      unlistenDownload.then(f => { if (f) f(); });
     };
   }, []);
 

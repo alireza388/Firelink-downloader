@@ -98,4 +98,19 @@ export async function initDownloadListener() {
       }
     });
   }
+
+  return () => {
+    if (unlistenProgress) {
+      unlistenProgress();
+      unlistenProgress = null;
+    }
+    if (unlistenState) {
+      unlistenState();
+      unlistenState = null;
+    }
+    if (unlistenTray) {
+      unlistenTray();
+      unlistenTray = null;
+    }
+  };
 }

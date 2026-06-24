@@ -240,13 +240,27 @@ impl<R: tauri::Runtime> QueueManager<R> {
         true
     }
 
-    /// Release the permit parked under `id`, if any. Idempotent. Wakes the
-    /// dispatcher so a freed slot is claimed promptly.
     pub async fn release_permit(&self, id: &str) {
         let removed = self.active_permits.lock().await.remove(id).is_some();
         self.active_kinds.lock().await.remove(id);
         if removed {
             self.notify.notify_one();
+        }
+    }
+
+    /// Clear all permits belonging to aria2. Useful when aria2 WS connection drops.
+    pub async fn clear_aria2_permits(&self) {
+        let ids_to_fail: Vec<String> = {
+            let kinds = self.active_kinds.lock().await;
+            kinds
+                .iter()
+                .filter(|(_, kind)| matches!(kind, TaskKind::Aria2))
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+            
+        for id in ids_to_fail {
+            self.apply_completion(&id, PendingOutcome::Error("Aria2 WebSocket connection lost".to_string())).await;
         }
     }
 

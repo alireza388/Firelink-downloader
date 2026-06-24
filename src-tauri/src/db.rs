@@ -549,6 +549,20 @@ pub fn load_settings(connection: &Connection) -> Result<Option<String>, String> 
         .map_err(|error| format!("failed to load settings: {error}"))
 }
 
+pub fn is_keychain_access_granted(connection: &Connection) -> Result<bool, String> {
+    let Some(settings) = load_settings(connection)? else {
+        return Ok(false);
+    };
+    let document: Value = serde_json::from_str(&settings)
+        .map_err(|error| format!("failed to decode settings: {error}"))?;
+    let granted = document
+        .get("state")
+        .and_then(|s| s.get("keychainAccessGranted"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(granted)
+}
+
 pub fn save_settings(connection: &Connection, data: &str) -> Result<(), String> {
     connection
         .execute(

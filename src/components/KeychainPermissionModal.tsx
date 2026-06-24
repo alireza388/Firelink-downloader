@@ -19,8 +19,15 @@ export const KeychainPermissionModal: React.FC = () => {
     try {
       const result = await invoke('grant_keychain_access');
       if (result.persistent) {
-        useSettingsStore.setState({ keychainAccessGranted: true });
-        await useSettingsStore.getState().hydratePairingToken();
+        // Set all keychain-related state directly from the grant result
+        // instead of calling hydratePairingToken() again, which would
+        // re-read the DB before Zustand's persist middleware has written
+        // keychainAccessGranted and could flip persistent back to false.
+        useSettingsStore.setState({
+          keychainAccessGranted: true,
+          extensionPairingToken: result.token,
+          isPairingTokenPersistent: true
+        });
         setShowKeychainModal(false);
       } else {
         setError(result.error || 'Failed to grant keychain access.');

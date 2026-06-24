@@ -362,8 +362,8 @@ pub fn sanitize_current_settings_and_restore_token(
         return Ok((false, keychain_granted));
     }
     let should_migrate = force_migrate || keychain_granted;
-    if should_migrate {
-        if get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
+    if should_migrate
+        && get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
             if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
                 if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token) {
                     log::warn!(
@@ -374,7 +374,6 @@ pub fn sanitize_current_settings_and_restore_token(
                 }
             }
         }
-    }
     save_settings(connection, &sanitized)?;
     Ok((false, keychain_granted))
 }

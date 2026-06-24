@@ -284,7 +284,7 @@ fn estimated_merged_size(
     audio: Option<&serde_json::Value>,
     duration_seconds: Option<f64>,
 ) -> (Option<u64>, Option<u64>) {
-    let video_has_audio = video.is_some_and(|format| has_audio_stream(format));
+    let video_has_audio = video.is_some_and(has_audio_stream);
     let v_bytes = video.and_then(|format| estimated_stream_bytes(format, duration_seconds));
     let a_bytes = if video_has_audio {
         None
@@ -1029,13 +1029,13 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
-            let safe_user = user.replace('\n', "").replace('\r', "");
+            let safe_user = user.replace(['\n', '\r'], "");
             config_content.push_str(&format!("--username\n{}\n", safe_user));
         }
     }
     if let Some(pass) = password {
         if !pass.is_empty() {
-            let safe_pass = pass.replace('\n', "").replace('\r', "");
+            let safe_pass = pass.replace(['\n', '\r'], "");
             config_content.push_str(&format!("--password\n{}\n", safe_pass));
         }
     }
@@ -4259,19 +4259,15 @@ pub fn run() {
 
             let ext_app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                loop {
-                    if let Err(error) = extension_server::start_server(
-                        ext_app_handle.clone(),
-                        server_pairing_token.clone(),
-                        server_frontend_ready.clone(),
-                        server_extension_port.clone(),
-                        extension_server_shutdown_rx.clone(),
-                    ).await {
-                        log::error!("Browser extension server unavailable: {error}");
-                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-                    } else {
-                        break;
-                    }
+                while let Err(error) = extension_server::start_server(
+                    ext_app_handle.clone(),
+                    server_pairing_token.clone(),
+                    server_frontend_ready.clone(),
+                    server_extension_port.clone(),
+                    extension_server_shutdown_rx.clone(),
+                ).await {
+                    log::error!("Browser extension server unavailable: {error}");
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 }
             });
             Ok(())

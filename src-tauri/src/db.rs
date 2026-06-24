@@ -53,15 +53,15 @@ pub fn init(app_handle: &tauri::AppHandle) -> Result<DbState, String> {
         .path()
         .app_data_dir()
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
-    init_at_path_internal(&app_data_dir, true)
+    init_at_path_internal(&app_data_dir)
 }
 
 #[cfg(test)]
 fn init_at_path(app_data_dir: &Path) -> Result<DbState, String> {
-    init_at_path_internal(app_data_dir, false)
+    init_at_path_internal(app_data_dir)
 }
 
-fn init_at_path_internal(app_data_dir: &Path, force_disable_keychain: bool) -> Result<DbState, String> {
+fn init_at_path_internal(app_data_dir: &Path) -> Result<DbState, String> {
     fs::create_dir_all(app_data_dir)
         .map_err(|error| format!("failed to create app data directory: {error}"))?;
     let database_path = app_data_dir.join(DATABASE_NAME);

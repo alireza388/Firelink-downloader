@@ -480,7 +480,9 @@ async fn download_file(
                     return DownloadOutcome::Paused;
                 }
                 Err(AttemptError::Controlled(DownloadControl::Cancel)) => {
-                    let _ = fs::remove_file(&payload.output_path).await;
+                    if let Err(e) = fs::remove_file(&payload.output_path).await {
+                        log::warn!("Failed to remove cancelled file '{}': {}", payload.output_path.display(), e);
+                    }
                     return DownloadOutcome::Cancelled;
                 }
                 Err(AttemptError::Controlled(DownloadControl::Replace)) => {
@@ -508,7 +510,9 @@ async fn download_file(
                                 return match control.unwrap_or(DownloadControl::Cancel) {
                                     DownloadControl::Pause => DownloadOutcome::Paused,
                                     DownloadControl::Cancel => {
-                                        let _ = fs::remove_file(&payload.output_path).await;
+                                        if let Err(e) = fs::remove_file(&payload.output_path).await {
+                                            log::warn!("Failed to remove cancelled file '{}': {}", payload.output_path.display(), e);
+                                        }
                                         DownloadOutcome::Cancelled
                                     }
                                     DownloadControl::Replace => DownloadOutcome::Cancelled,
@@ -717,7 +721,7 @@ fn build_client(payload: &DownloadPayload) -> Result<(Client, HeaderMap), String
         if proxy == "none" {
             builder = builder.no_proxy();
         } else {
-            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
+            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|_| "Invalid proxy URL configured".to_string())?);
         }
     }
 

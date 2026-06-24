@@ -1374,12 +1374,16 @@ pub(crate) fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::pa
         .strip_prefix("~/")
         .or_else(|| path.strip_prefix("~\\"))
     {
-        if let Ok(home) = app_handle.path().home_dir() {
+        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)) {
             resolved = home.join(stripped);
+        } else {
+            log::warn!("Failed to resolve home directory for ~ expansion");
         }
     } else if path == "~" {
-        if let Ok(home) = app_handle.path().home_dir() {
+        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)) {
             resolved = home;
+        } else {
+            log::warn!("Failed to resolve home directory for ~ expansion");
         }
     }
     resolved
@@ -1655,13 +1659,18 @@ fn version_check_cache(
 }
 
 fn version_cache_key(binary_path: &std::path::Path, args: &[&str]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let modified = std::fs::metadata(binary_path)
         .and_then(|metadata| metadata.modified())
         .ok()
         .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    format!("{}:{modified}:{}", binary_path.display(), args.join("\u{1f}"))
+    binary_path.hash(&mut hasher);
+    modified.hash(&mut hasher);
+    args.hash(&mut hasher);
+    hasher.finish().to_string()
 }
 
 fn validate_bundled_binary(binary_path: &std::path::Path) -> Result<(), String> {
@@ -2598,7 +2607,9 @@ async fn remove_download_assets(
     }
 
     for suffix in [".aria2", ".part", ".ytdl"] {
-        let candidate = std::path::PathBuf::from(format!("{}{}", primary.display(), suffix));
+        let mut candidate_os = primary.as_os_str().to_os_string();
+        candidate_os.push(suffix);
+        let candidate = std::path::PathBuf::from(candidate_os);
         if candidate.exists() && is_safe_path(&candidate, app_handle) {
             tokio::fs::remove_file(&candidate)
                 .await

@@ -422,7 +422,9 @@ export const AddDownloadsModal = () => {
           fileExistsOnDisk = await invoke('check_file_exists', {
             path: await resolveDownloadFilePath(itemLocation, finalFile)
           });
-        } catch (e) {}
+        } catch (e) {
+          console.error("Failed to check if file exists on disk:", e);
+        }
 
         if (fileExistsInStore || fileExistsOnDisk) {
           newConflicts.push({

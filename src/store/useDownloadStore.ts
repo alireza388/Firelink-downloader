@@ -35,7 +35,9 @@ export async function dispatchItem(id: string): Promise<boolean> {
       if (login) {
         try {
           keychainPassword = await invoke('get_keychain_password', { id: login.id });
-        } catch (e) {}
+        } catch (e) {
+          console.warn("Failed to retrieve keychain password for dispatch:", e);
+        }
       }
 
       const enqueueItem = {
@@ -813,18 +815,51 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 }));
 
 let lastSavedDownloads = '';
-let downloadsSave = Promise.resolve();
-let queuesSave = Promise.resolve();
+let isSavingDownloads = false;
+let nextDownloadsData: string | null = null;
 
-useDownloadStore.subscribe(async (state, prevState) => {
+async function processDownloadsSave() {
+  if (isSavingDownloads || !nextDownloadsData) return;
+  isSavingDownloads = true;
+  while (nextDownloadsData) {
+    const data = nextDownloadsData;
+    nextDownloadsData = null;
+    try {
+      await invoke('db_replace_downloads', { data });
+    } catch (error) {
+      console.error('Failed to persist downloads:', error);
+    }
+  }
+  isSavingDownloads = false;
+}
+
+let lastSavedQueues = '';
+let isSavingQueues = false;
+let nextQueuesData: string | null = null;
+
+async function processQueuesSave() {
+  if (isSavingQueues || !nextQueuesData) return;
+  isSavingQueues = true;
+  while (nextQueuesData) {
+    const data = nextQueuesData;
+    nextQueuesData = null;
+    try {
+      await invoke('db_replace_queues', { data });
+    } catch (error) {
+      console.error('Failed to persist queues:', error);
+    }
+  }
+  isSavingQueues = false;
+}
+
+useDownloadStore.subscribe((state, prevState) => {
   if (state.queues !== prevState.queues) {
     const data = JSON.stringify(state.queues);
-    queuesSave = queuesSave
-      .then(() => invoke('db_replace_queues', { data }))
-      .catch(error => {
-        console.error('Failed to persist queues:', error);
-      });
-    await queuesSave;
+    if (data !== lastSavedQueues) {
+      lastSavedQueues = data;
+      nextQueuesData = data;
+      processQueuesSave();
+    }
   }
 
   if (state.downloads !== prevState.downloads) {
@@ -836,12 +871,8 @@ useDownloadStore.subscribe(async (state, prevState) => {
     const currentSerialized = JSON.stringify(staticDownloads);
     if (currentSerialized !== lastSavedDownloads) {
       lastSavedDownloads = currentSerialized;
-      downloadsSave = downloadsSave
-        .then(() => invoke('db_replace_downloads', { data: currentSerialized }))
-        .catch(error => {
-          console.error('Failed to persist downloads:', error);
-        });
-      await downloadsSave;
+      nextDownloadsData = currentSerialized;
+      processDownloadsSave();
     }
   }
 });

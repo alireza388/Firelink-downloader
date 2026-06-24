@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadStore';
+import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { ChevronDown, ChevronRight, FolderPlus, Info, CheckCircle, AlertCircle, Play, Pause } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -15,16 +16,16 @@ type LoginMode = 'matching' | 'custom' | 'none';
 export const PropertiesModal = () => {
   const selectedPropertiesDownloadId = useDownloadStore(state => state.selectedPropertiesDownloadId);
   const setSelectedPropertiesDownloadId = useDownloadStore(state => state.setSelectedPropertiesDownloadId);
-  const item = useDownloadStore(state =>
+  const item = useDownloadStore(useShallow(state =>
     selectedPropertiesDownloadId
       ? state.downloads.find(d => d.id === selectedPropertiesDownloadId) ?? null
       : null
-  );
-  const liveProgress = useDownloadProgressStore(state =>
+  ));
+  const liveProgress = useDownloadProgressStore(useShallow(state =>
     selectedPropertiesDownloadId
       ? state.progressMap[selectedPropertiesDownloadId]
       : undefined
-  );
+  ));
 
   const { baseDownloadFolder, perServerConnections } = useSettingsStore();
 

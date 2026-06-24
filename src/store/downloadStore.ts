@@ -3,6 +3,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { DownloadProgressEvent } from '../bindings/DownloadProgressEvent';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import { listenEvent as listen } from '../ipc';
+import type { DownloadItem } from '../bindings/DownloadItem';
 
 interface DownloadProgressState {
   progressMap: Record<string, DownloadProgressEvent>;
@@ -58,7 +59,7 @@ export async function initDownloadListener() {
       if (current) {
         const status = payload.status as DownloadStatus;
         const progress = useDownloadProgressStore.getState().progressMap[payload.id];
-        const updates: Partial<any> = {
+        const updates: Partial<DownloadItem> = {
           status,
           ...(progress ? { fraction: progress.fraction } : {})
         };

@@ -53,7 +53,10 @@ pub fn preserve_scheduler_runtime_keys(
     let existing_document = match decode_document(&Value::String(existing.to_string())) {
         Ok(doc) => doc,
         Err(e) => {
-            log::warn!("Failed to decode existing settings, dropping runtime keys: {}", e);
+            log::warn!(
+                "Failed to decode existing settings, dropping runtime keys: {}",
+                e
+            );
             return Ok(incoming.to_string());
         }
     };
@@ -147,9 +150,7 @@ fn default_category_subfolders() -> HashMap<String, String> {
 fn normalize_category_subfolder(value: &str, fallback: &str) -> String {
     let parts = value
         .split(['/', '\\'])
-        .filter(|part| {
-            !part.is_empty() && *part != "." && *part != ".." && !part.ends_with(':')
-        })
+        .filter(|part| !part.is_empty() && *part != "." && *part != ".." && !part.ends_with(':'))
         .collect::<Vec<_>>();
     if parts.is_empty() {
         fallback.to_string()
@@ -329,14 +330,8 @@ mod tests {
 
         let merged = preserve_scheduler_runtime_keys(Some(&existing), &incoming).unwrap();
         let merged: Value = serde_json::from_str(&merged).unwrap();
-        assert_eq!(
-            merged["state"]["schedulerLastStartKey"],
-            "2026-06-22-start"
-        );
-        assert_eq!(
-            merged["state"]["schedulerLastStopKey"],
-            "2026-06-22-stop"
-        );
+        assert_eq!(merged["state"]["schedulerLastStartKey"], "2026-06-22-start");
+        assert_eq!(merged["state"]["schedulerLastStopKey"], "2026-06-22-stop");
     }
 
     #[test]

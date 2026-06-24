@@ -72,7 +72,10 @@ fn executable_relative_candidates(
             .join("engine-dist")
             .join(target)
             .join(binary_name),
-        executable_dir.join("engines").join(target).join(binary_name),
+        executable_dir
+            .join("engines")
+            .join(target)
+            .join(binary_name),
     ];
 
     if cfg!(target_os = "macos") {
@@ -99,11 +102,7 @@ fn development_candidates(cwd: &Path, target: &str, binary_name: &str) -> Vec<Pa
     let roots = [cwd.to_path_buf(), cwd.join("src-tauri")];
     let mut candidates = Vec::new();
     for root in roots {
-        candidates.push(
-            root.join("engine-dist")
-                .join(target)
-                .join(binary_name),
-        );
+        candidates.push(root.join("engine-dist").join(target).join(binary_name));
         candidates.push(root.join("binaries").join(target).join(binary_name));
         if cfg!(target_os = "macos") {
             candidates.push(root.join("binaries").join(binary_name));
@@ -130,7 +129,9 @@ mod tests {
         );
         assert_eq!(
             candidates[0],
-            Path::new("/resources/engine-dist/x86_64-unknown-linux-gnu/yt-dlp-x86_64-unknown-linux-gnu")
+            Path::new(
+                "/resources/engine-dist/x86_64-unknown-linux-gnu/yt-dlp-x86_64-unknown-linux-gnu"
+            )
         );
     }
 

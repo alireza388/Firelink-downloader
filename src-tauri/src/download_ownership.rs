@@ -18,7 +18,12 @@ pub fn canonical_download_filename(filename: &str) -> String {
     let sanitized = leaf
         .chars()
         .map(|character| {
-            if character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
                 '-'
             } else {
                 character
@@ -30,7 +35,10 @@ pub fn canonical_download_filename(filename: &str) -> String {
         "download".to_string()
     } else if crate::platform::is_windows_reserved_filename(sanitized) {
         let path = Path::new(sanitized);
-        let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("download");
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("download");
         match path.extension().and_then(|value| value.to_str()) {
             Some(extension) => format!("{stem}-.{extension}"),
             None => format!("{stem}-"),
@@ -135,7 +143,7 @@ fn load_records(app_handle: &tauri::AppHandle) -> Result<Vec<DownloadOwnershipRe
 
 fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
     let settings = crate::settings::load_settings(app_handle).ok();
-    
+
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     let downloads = crate::db::load_downloads(&connection)?
@@ -143,7 +151,6 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
         .map(|value| serde_json::from_str::<crate::ipc::DownloadItem>(&value))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Invalid download queue ownership data: {error}"))?;
-
 
     let mut paths = Vec::new();
     for download in downloads {
@@ -214,7 +221,10 @@ mod tests {
 
     #[test]
     fn canonicalizes_untrusted_download_filenames() {
-        assert_eq!(canonical_download_filename("../folder/video?.mp4"), "video-.mp4");
+        assert_eq!(
+            canonical_download_filename("../folder/video?.mp4"),
+            "video-.mp4"
+        );
         assert_eq!(canonical_download_filename(" report. "), "report");
         assert_eq!(canonical_download_filename(".."), "download");
         assert_eq!(canonical_download_filename("CON.txt"), "CON-.txt");

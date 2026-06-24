@@ -9,6 +9,7 @@ use axum::{
     routing::get,
     Router,
 };
+use firelink_lib::download::{DownloadCmd, DownloadCoordinator, DownloadEvent, DownloadPayload};
 use futures_util::stream;
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,9 +20,12 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use firelink_lib::download::{DownloadCmd, DownloadCoordinator, DownloadEvent, DownloadPayload};
 use tempfile::TempDir;
-use tokio::{net::TcpListener, sync::{mpsc, oneshot}, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use uuid::Uuid;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);

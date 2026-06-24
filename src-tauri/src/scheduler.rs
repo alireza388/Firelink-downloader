@@ -36,18 +36,15 @@ pub fn spawn_scheduler(
         loop {
             interval.tick().await;
 
-            let settings = settings_cache
-                .read()
-                .ok()
-                .and_then(|settings| {
-                    settings.as_ref().map(|settings| {
-                        (
-                            settings.scheduler.clone(),
-                            settings.scheduler_last_start_key.clone(),
-                            settings.scheduler_last_stop_key.clone(),
-                        )
-                    })
-                });
+            let settings = settings_cache.read().ok().and_then(|settings| {
+                settings.as_ref().map(|settings| {
+                    (
+                        settings.scheduler.clone(),
+                        settings.scheduler_last_start_key.clone(),
+                        settings.scheduler_last_stop_key.clone(),
+                    )
+                })
+            });
             if let Some((scheduler, scheduler_last_start_key, scheduler_last_stop_key)) = settings {
                 if !scheduler.enabled {
                     continue;
@@ -78,10 +75,13 @@ pub fn spawn_scheduler(
                         .get("start")
                         .is_none_or(|instant| instant.elapsed() >= Duration::from_secs(5))
                 {
-                    let _ = app_handle.emit("schedule-trigger", serde_json::json!({
-                        "action": "start",
-                        "key": start_key
-                    }));
+                    let _ = app_handle.emit(
+                        "schedule-trigger",
+                        serde_json::json!({
+                            "action": "start",
+                            "key": start_key
+                        }),
+                    );
                     last_emit.insert("start", std::time::Instant::now());
                 }
 
@@ -93,15 +93,17 @@ pub fn spawn_scheduler(
                     &start_key,
                     &scheduler_last_stop_key,
                     &stop_key,
-                )
-                    && last_emit
-                        .get("stop")
-                        .is_none_or(|instant| instant.elapsed() >= Duration::from_secs(5))
+                ) && last_emit
+                    .get("stop")
+                    .is_none_or(|instant| instant.elapsed() >= Duration::from_secs(5))
                 {
-                    let _ = app_handle.emit("schedule-trigger", serde_json::json!({
-                        "action": "stop",
-                        "key": stop_key
-                    }));
+                    let _ = app_handle.emit(
+                        "schedule-trigger",
+                        serde_json::json!({
+                            "action": "stop",
+                            "key": stop_key
+                        }),
+                    );
                     last_emit.insert("stop", std::time::Instant::now());
                 }
             }

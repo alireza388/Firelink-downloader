@@ -97,8 +97,10 @@ pub fn is_windows_reserved_filename(filename: &str) -> bool {
         .unwrap_or(filename)
         .trim_end_matches(['.', ' '])
         .to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$")
-        || numbered_windows_device(&stem, "COM")
+    matches!(
+        stem.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$"
+    ) || numbered_windows_device(&stem, "COM")
         || numbered_windows_device(&stem, "LPT")
 }
 
@@ -125,10 +127,18 @@ mod tests {
 
     #[test]
     fn recognizes_windows_reserved_device_names() {
-        for filename in ["CON", "con.txt", "PRN.", "aux.mp4", "NUL", "COM1.zip", "lpt9"] {
+        for filename in [
+            "CON", "con.txt", "PRN.", "aux.mp4", "NUL", "COM1.zip", "lpt9",
+        ] {
             assert!(is_windows_reserved_filename(filename), "{filename}");
         }
-        for filename in ["console.txt", "com0.zip", "com10.zip", "lpt.txt", "movie.mp4"] {
+        for filename in [
+            "console.txt",
+            "com0.zip",
+            "com10.zip",
+            "lpt.txt",
+            "movie.mp4",
+        ] {
             assert!(!is_windows_reserved_filename(filename), "{filename}");
         }
     }

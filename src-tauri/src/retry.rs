@@ -177,7 +177,14 @@ mod tests {
 
     #[test]
     fn schedule_is_three_strike_exponential() {
-        assert_eq!(BACKOFF_SCHEDULE, [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(10)]);
+        assert_eq!(
+            BACKOFF_SCHEDULE,
+            [
+                Duration::from_secs(2),
+                Duration::from_secs(5),
+                Duration::from_secs(10)
+            ]
+        );
         assert_eq!(MAX_RETRIES, 3);
     }
 
@@ -196,10 +203,16 @@ mod tests {
     #[test]
     fn classifies_reqwest_timeouts_as_transient() {
         assert!(is_transient_network_error("operation timed out"));
-        assert!(is_transient_network_error("error sending request: operation timed out"));
+        assert!(is_transient_network_error(
+            "error sending request: operation timed out"
+        ));
         assert!(is_transient_network_error("connection reset by peer"));
-        assert!(is_transient_network_error("connection refused (os error 61)"));
-        assert!(is_transient_network_error("dns error: failed to lookup address"));
+        assert!(is_transient_network_error(
+            "connection refused (os error 61)"
+        ));
+        assert!(is_transient_network_error(
+            "dns error: failed to lookup address"
+        ));
     }
 
     #[test]
@@ -221,7 +234,9 @@ mod tests {
         assert!(is_transient_network_error(
             "ERROR: unable to download video: Connection timed out"
         ));
-        assert!(is_transient_network_error("Connection was closed by server"));
+        assert!(is_transient_network_error(
+            "Connection was closed by server"
+        ));
         assert!(is_transient_network_error("Timeout."));
         assert!(is_transient_network_error("network is unreachable"));
     }
@@ -234,13 +249,17 @@ mod tests {
         assert!(!is_transient_network_error("HTTP 403 Forbidden"));
         assert!(!is_transient_network_error("HTTP 410 Gone"));
         assert!(!is_transient_network_error("HTTP 401 Unauthorized"));
-        assert!(!is_transient_network_error("HTTP 451 Unavailable For Legal Reasons"));
+        assert!(!is_transient_network_error(
+            "HTTP 451 Unavailable For Legal Reasons"
+        ));
     }
 
     #[test]
     fn refuses_to_retry_permanent_fs_errors() {
         assert!(!is_transient_network_error("No space left on device"));
-        assert!(!is_transient_network_error("Permission denied (os error 13)"));
+        assert!(!is_transient_network_error(
+            "Permission denied (os error 13)"
+        ));
     }
 
     #[test]

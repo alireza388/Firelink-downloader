@@ -1,8 +1,8 @@
 use firelink_lib::queue::{
     QueueManager, QueuedTask, SidecarSpawner, SpawnPayload, TaskKind, MEDIA_RUN_CANCELLED,
 };
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::test::{mock_builder, mock_context, noop_assets};
 use tauri::Listener;
@@ -84,7 +84,10 @@ async fn release_permit_is_idempotent() {
     mgr.release_permit("a").await; // second release: no-op
     let avail_after_second = mgr.available_permits();
     assert_eq!(avail_after_first - avail_before, 1);
-    assert_eq!(avail_after_second, avail_after_first, "second release must not free another slot");
+    assert_eq!(
+        avail_after_second, avail_after_first,
+        "second release must not free another slot"
+    );
 }
 
 #[tokio::test]
@@ -140,7 +143,8 @@ async fn dispatcher_parks_when_idle_no_busy_spin() {
 
     // No permit should have been acquired while idle.
     assert_eq!(
-        mgr_arc.available_permits(), 3,
+        mgr_arc.available_permits(),
+        3,
         "dispatcher must not acquire permits when pending is empty"
     );
 
@@ -190,13 +194,19 @@ async fn grow_releases_immediately_and_dispatches_waiting_tasks() {
     // Give dispatcher time to dispatch 2 (capacity) of the 4.
     tokio::time::sleep(Duration::from_millis(100)).await;
     let native_after_initial = spawner.native_calls.load(Ordering::SeqCst);
-    assert_eq!(native_after_initial, 2, "only capacity-many tasks dispatch initially");
+    assert_eq!(
+        native_after_initial, 2,
+        "only capacity-many tasks dispatch initially"
+    );
 
     // Grow to 4; the remaining 2 should dispatch.
     mgr_arc.set_capacity(4);
     tokio::time::sleep(Duration::from_millis(100)).await;
     let native_after_grow = spawner.native_calls.load(Ordering::SeqCst);
-    assert_eq!(native_after_grow, 4, "grow must allow the waiting tasks to dispatch");
+    assert_eq!(
+        native_after_grow, 4,
+        "grow must allow the waiting tasks to dispatch"
+    );
 
     handle.abort();
 }
@@ -325,8 +335,7 @@ async fn media_terminal_error_emits_failed_without_completed() {
 
 #[tokio::test]
 async fn media_cancellation_does_not_emit_completed() {
-    let (manager, event_rx) =
-        make_media_manager(Err(MEDIA_RUN_CANCELLED.to_string()));
+    let (manager, event_rx) = make_media_manager(Err(MEDIA_RUN_CANCELLED.to_string()));
     let manager = Arc::new(manager);
     manager.push(media_task("media-cancelled")).await.unwrap();
     let dispatcher = {
@@ -358,14 +367,19 @@ async fn aria2_permit_survives_rpc_return() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
-        mgr_arc.available_permits(), 0,
+        mgr_arc.available_permits(),
+        0,
         "permit must remain parked while aria2 download is notionally running"
     );
 
     // Now simulate aria2 completion: release_permit frees the slot.
     mgr_arc.release_permit("a").await;
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(mgr_arc.available_permits(), 1, "release frees the parked permit");
+    assert_eq!(
+        mgr_arc.available_permits(),
+        1,
+        "release frees the parked permit"
+    );
 
     handle.abort();
 }
@@ -432,13 +446,17 @@ async fn move_up_down_reorders_pending() {
     mgr_arc.push(sample_task("b")).await.unwrap();
     mgr_arc.push(sample_task("c")).await.unwrap();
 
-    mgr_arc.move_in_queue("c", "main", QueueDirection::Down).await;
+    mgr_arc
+        .move_in_queue("c", "main", QueueDirection::Down)
+        .await;
     assert_eq!(mgr_arc.pending_order(None).await, vec!["a", "b", "c"]);
 
     mgr_arc.move_in_queue("c", "main", QueueDirection::Up).await;
     assert_eq!(mgr_arc.pending_order(None).await, vec!["a", "c", "b"]);
 
-    mgr_arc.move_in_queue("a", "main", QueueDirection::Down).await;
+    mgr_arc
+        .move_in_queue("a", "main", QueueDirection::Down)
+        .await;
     assert_eq!(mgr_arc.pending_order(None).await, vec!["c", "a", "b"]);
 
     mgr_arc.move_in_queue("c", "main", QueueDirection::Up).await;
@@ -463,7 +481,10 @@ async fn moving_one_queue_does_not_reorder_another_queue() {
     mgr.push(a2).await.unwrap();
     mgr.push(b2).await.unwrap();
 
-    assert_eq!(mgr.move_in_queue("a2", "a", QueueDirection::Up).await, vec!["a2", "a1"]);
+    assert_eq!(
+        mgr.move_in_queue("a2", "a", QueueDirection::Up).await,
+        vec!["a2", "a1"]
+    );
     assert_eq!(mgr.pending_order(Some("b")).await, vec!["b1", "b2"]);
 }
 
@@ -481,17 +502,15 @@ async fn notify_fires_on_push_and_release() {
     };
 
     mgr_arc.push(sample_task("x")).await.unwrap();
-    let dispatched = timeout(
-        Duration::from_millis(150),
-        async {
-            loop {
-                if mgr_arc.available_permits() == 0 {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(5)).await;
+    let dispatched = timeout(Duration::from_millis(150), async {
+        loop {
+            if mgr_arc.available_permits() == 0 {
+                return;
             }
-        },
-    ).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
     assert!(dispatched.is_ok(), "push must wake the idle dispatcher");
 
     handle.abort();

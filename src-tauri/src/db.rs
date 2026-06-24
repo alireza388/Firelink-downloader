@@ -80,11 +80,7 @@ fn init_at_path_internal(app_data_dir: &Path) -> Result<DbState, String> {
     // We no longer touch the keychain on backend startup.
     // Legacy imports will safely preserve any pairing token in the JSON payload.
     // The frontend will manually trigger migration to the keychain via IPC if access is granted.
-    import_legacy_data(
-        &mut connection,
-        app_data_dir,
-        false,
-    )?;
+    import_legacy_data(&mut connection, app_data_dir, false)?;
 
     Ok(DbState {
         conn: Mutex::new(connection),
@@ -357,41 +353,50 @@ pub fn sanitize_current_settings_and_restore_token(
     let Some(settings) = load_settings(connection)? else {
         return Ok((false, false));
     };
-    let (sanitized, legacy_token, keychain_granted) = sanitize_settings_text(&settings, force_migrate)?;
+    let (sanitized, legacy_token, keychain_granted) =
+        sanitize_settings_text(&settings, force_migrate)?;
     if sanitized == settings {
         return Ok((false, keychain_granted));
     }
     let should_migrate = force_migrate || keychain_granted;
-    if should_migrate
-        && get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
-            if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
-                if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token) {
-                    log::warn!(
+    if should_migrate && get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
+        if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
+            if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token) {
+                log::warn!(
                         "Persisted pairing token could not be migrated yet; original settings retained: {}",
                         error
                     );
-                    return Ok((true, keychain_granted));
-                }
+                return Ok((true, keychain_granted));
             }
         }
+    }
     save_settings(connection, &sanitized)?;
     Ok((false, keychain_granted))
 }
 
-fn sanitize_settings_value(value: &Value, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
+fn sanitize_settings_value(
+    value: &Value,
+    force_migrate: bool,
+) -> Result<(String, Option<String>, bool), String> {
     match value {
         Value::String(text) => sanitize_settings_text(text, force_migrate),
         _ => sanitize_settings_document(value.clone(), force_migrate),
     }
 }
 
-fn sanitize_settings_text(text: &str, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
+fn sanitize_settings_text(
+    text: &str,
+    force_migrate: bool,
+) -> Result<(String, Option<String>, bool), String> {
     let document: Value = serde_json::from_str(text)
         .map_err(|error| format!("failed to decode persisted settings: {error}"))?;
     sanitize_settings_document(document, force_migrate)
 }
 
-fn sanitize_settings_document(mut document: Value, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
+fn sanitize_settings_document(
+    mut document: Value,
+    force_migrate: bool,
+) -> Result<(String, Option<String>, bool), String> {
     let state_value = if document.get("state").is_some() {
         document
             .get_mut("state")
@@ -402,14 +407,14 @@ fn sanitize_settings_document(mut document: Value, force_migrate: bool) -> Resul
     let state = state_value
         .as_object_mut()
         .ok_or_else(|| "persisted settings state must be an object".to_string())?;
-        
+
     let keychain_granted = state
         .get("keychainAccessGranted")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-        
+
     let should_migrate = force_migrate || keychain_granted;
-        
+
     let token = if should_migrate {
         state
             .remove("extensionPairingToken")
@@ -417,7 +422,7 @@ fn sanitize_settings_document(mut document: Value, force_migrate: bool) -> Resul
     } else {
         None
     };
-    
+
     let serialized = serde_json::to_string(&document)
         .map_err(|error| format!("failed to encode persisted settings: {error}"))?;
     Ok((serialized, token, keychain_granted))
@@ -755,7 +760,7 @@ pub fn hydrate_pairing_token(
     if skip_keychain {
         return Ok((generate_pairing_token(), false));
     }
-    
+
     let existing = get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).ok();
     let generated = generate_pairing_token();
     let decision = decide_pairing_token(

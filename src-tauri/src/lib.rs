@@ -1,17 +1,17 @@
 #![allow(unexpected_cfgs)]
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use tauri::{Manager, Emitter};
 use regex::Regex;
 use serde::Serialize;
-use ts_rs::TS;
-use uuid::Uuid;
-use tauri_plugin_deep_link::DeepLinkExt;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
+use ts_rs::TS;
+use uuid::Uuid;
 
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -60,7 +60,11 @@ fn is_media_processing_line(line: &str) -> bool {
 }
 
 fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty())
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
 }
 
 fn json_lower(value: &serde_json::Value, key: &str) -> String {
@@ -68,11 +72,16 @@ fn json_lower(value: &serde_json::Value, key: &str) -> String {
 }
 
 fn json_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
-    value.get(key).and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
+    value
+        .get(key)
+        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
 }
 
 fn json_f64(value: &serde_json::Value, key: &str) -> Option<f64> {
-    value.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+    value.get(key).and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+    })
 }
 
 fn media_filesize(value: &serde_json::Value) -> Option<u64> {
@@ -84,7 +93,10 @@ fn media_exact_filesize(value: &serde_json::Value) -> Option<u64> {
 }
 
 fn media_approx_filesize(value: &serde_json::Value) -> Option<u64> {
-    media_exact_filesize(value).is_none().then(|| json_u64(value, "filesize_approx")).flatten()
+    media_exact_filesize(value)
+        .is_none()
+        .then(|| json_u64(value, "filesize_approx"))
+        .flatten()
 }
 
 fn media_sized_bytes(value: &serde_json::Value) -> Option<(u64, bool)> {
@@ -126,7 +138,11 @@ fn split_size_estimate(bytes: Option<(u64, bool)>) -> (Option<u64>, Option<u64>)
 }
 
 fn codec_is_present(codec: Option<&str>) -> bool {
-    codec.map(str::trim).filter(|codec| !codec.is_empty()).map(|codec| codec.to_lowercase() != "none").unwrap_or(false)
+    codec
+        .map(str::trim)
+        .filter(|codec| !codec.is_empty())
+        .map(|codec| codec.to_lowercase() != "none")
+        .unwrap_or(false)
 }
 
 fn has_video_stream(value: &serde_json::Value) -> bool {
@@ -146,7 +162,11 @@ fn is_excluded_yt_dlp_format(value: &serde_json::Value) -> bool {
 
     for key in ["format_note", "format", "format_id", "protocol"] {
         let text = json_lower(value, key);
-        if text.contains("storyboard") || text.contains("thumbnail") || text.contains("subtitle") || text.contains("subtitles") {
+        if text.contains("storyboard")
+            || text.contains("thumbnail")
+            || text.contains("subtitle")
+            || text.contains("subtitles")
+        {
             return true;
         }
     }
@@ -197,19 +217,30 @@ fn format_score(value: &serde_json::Value) -> u64 {
     height_score + bitrate_score + size_score
 }
 
-fn best_matching_format<'a, F>(formats: &'a [&'a serde_json::Value], predicate: F) -> Option<&'a serde_json::Value>
+fn best_matching_format<'a, F>(
+    formats: &'a [&'a serde_json::Value],
+    predicate: F,
+) -> Option<&'a serde_json::Value>
 where
     F: Fn(&serde_json::Value) -> bool,
 {
-    formats.iter().copied().filter(|format| predicate(format)).max_by_key(|format| format_score(format))
+    formats
+        .iter()
+        .copied()
+        .filter(|format| predicate(format))
+        .max_by_key(|format| format_score(format))
 }
 
-fn best_audio_format<'a>(formats: &'a [&'a serde_json::Value], ext: Option<&str>) -> Option<&'a serde_json::Value> {
+fn best_audio_format<'a>(
+    formats: &'a [&'a serde_json::Value],
+    ext: Option<&str>,
+) -> Option<&'a serde_json::Value> {
     best_matching_format(formats, |format| {
         if !has_audio_stream(format) || has_video_stream(format) {
             return false;
         }
-        ext.map(|wanted| json_lower(format, "ext") == wanted).unwrap_or(true)
+        ext.map(|wanted| json_lower(format, "ext") == wanted)
+            .unwrap_or(true)
     })
 }
 
@@ -231,7 +262,11 @@ fn display_codec(codec: Option<&str>, fallback: &str) -> String {
         "VP9".to_string()
     } else if lower.starts_with("vp8") {
         "VP8".to_string()
-    } else if lower.starts_with("hev1") || lower.starts_with("hvc1") || lower.contains("h265") || lower.contains("hevc") {
+    } else if lower.starts_with("hev1")
+        || lower.starts_with("hvc1")
+        || lower.contains("h265")
+        || lower.contains("hevc")
+    {
         "H.265".to_string()
     } else if lower.starts_with("mp4a") || lower.contains("aac") {
         "AAC".to_string()
@@ -246,7 +281,11 @@ fn display_codec(codec: Option<&str>, fallback: &str) -> String {
     }
 }
 
-fn joined_format_label(container: &str, video_codec: Option<&str>, audio_codec: Option<&str>) -> String {
+fn joined_format_label(
+    container: &str,
+    video_codec: Option<&str>,
+    audio_codec: Option<&str>,
+) -> String {
     let mut codecs = Vec::new();
     if video_codec.is_some() {
         codecs.push(display_codec(video_codec, "Video"));
@@ -320,7 +359,10 @@ fn raw_media_format(
         split_size_estimate(estimated_stream_bytes(value, duration_seconds));
 
     let resolution = if has_video_stream(value) {
-        format_height(value).map(|height| format!("{height}p")).or_else(|| json_str(value, "resolution").map(ToOwned::to_owned)).unwrap_or_else(|| "Video".to_string())
+        format_height(value)
+            .map(|height| format!("{height}p"))
+            .or_else(|| json_str(value, "resolution").map(ToOwned::to_owned))
+            .unwrap_or_else(|| "Video".to_string())
     } else {
         "Audio only".to_string()
     };
@@ -333,14 +375,25 @@ fn raw_media_format(
         joined_format_label(&ext, None, json_str(value, "acodec"))
     };
 
-    Some(MediaFormat { format_id, resolution, ext, format_label, fps, filesize, filesize_approx })
+    Some(MediaFormat {
+        format_id,
+        resolution,
+        ext,
+        format_label,
+        fps,
+        filesize,
+        filesize_approx,
+    })
 }
 
 fn build_media_format_options(
     formats_arr: &[serde_json::Value],
     duration_seconds: Option<f64>,
 ) -> Vec<MediaFormat> {
-    let clean_formats: Vec<&serde_json::Value> = formats_arr.iter().filter(|format| !is_excluded_yt_dlp_format(format)).collect();
+    let clean_formats: Vec<&serde_json::Value> = formats_arr
+        .iter()
+        .filter(|format| !is_excluded_yt_dlp_format(format))
+        .collect();
     let has_video = clean_formats.iter().any(|format| has_video_stream(format));
     let has_audio = clean_formats.iter().any(|format| has_audio_stream(format));
     let mut options = Vec::new();
@@ -348,31 +401,51 @@ fn build_media_format_options(
     if has_video {
         let available_heights: Vec<u64> = [2160_u64, 1440, 1080, 720, 480, 360]
             .into_iter()
-            .filter(|height| clean_formats.iter().any(|format| matches_media_height(format, *height)))
+            .filter(|height| {
+                clean_formats
+                    .iter()
+                    .any(|format| matches_media_height(format, *height))
+            })
             .collect();
 
         for height in available_heights {
-            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height)) {
-                let audio = if has_audio_stream(video) { None } else { best_audio_format(&clean_formats, None) };
+            if let Some(video) = best_matching_format(&clean_formats, |format| {
+                has_video_stream(format) && matches_media_height(format, height)
+            }) {
+                let audio = if has_audio_stream(video) {
+                    None
+                } else {
+                    best_audio_format(&clean_formats, None)
+                };
                 let (filesize, filesize_approx) =
                     estimated_merged_size(Some(video), audio, duration_seconds);
                 options.push(MediaFormat {
-                    format_id: selected_format_id(Some(video), audio)
-                        .unwrap_or_else(|| format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]")),
+                    format_id: selected_format_id(Some(video), audio).unwrap_or_else(|| {
+                        format!("bestvideo[height<={height}]+bestaudio/best[height<={height}]")
+                    }),
                     resolution: format!("{height}p"),
                     ext: "mkv".to_string(),
-                    format_label: joined_format_label("mkv", json_str(video, "vcodec"), audio.and_then(|format| json_str(format, "acodec"))),
+                    format_label: joined_format_label(
+                        "mkv",
+                        json_str(video, "vcodec"),
+                        audio.and_then(|format| json_str(format, "acodec")),
+                    ),
                     fps: json_f64(video, "fps"),
                     filesize,
                     filesize_approx,
                 });
             }
 
-            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "mp4") {
+            if let Some(video) = best_matching_format(&clean_formats, |format| {
+                has_video_stream(format)
+                    && matches_media_height(format, height)
+                    && json_lower(format, "ext") == "mp4"
+            }) {
                 let audio = if has_audio_stream(video) {
                     None
                 } else {
-                    best_audio_format(&clean_formats, Some("m4a")).or_else(|| best_audio_format(&clean_formats, None))
+                    best_audio_format(&clean_formats, Some("m4a"))
+                        .or_else(|| best_audio_format(&clean_formats, None))
                 };
                 let (filesize, filesize_approx) =
                     estimated_merged_size(Some(video), audio, duration_seconds);
@@ -389,11 +462,17 @@ fn build_media_format_options(
                 });
             }
 
-            if let Some(video) = best_matching_format(&clean_formats, |format| has_video_stream(format) && matches_media_height(format, height) && json_lower(format, "ext") == "webm") {
+            if let Some(video) = best_matching_format(&clean_formats, |format| {
+                has_video_stream(format)
+                    && matches_media_height(format, height)
+                    && json_lower(format, "ext") == "webm"
+            }) {
                 let audio = if has_audio_stream(video) {
                     None
                 } else {
-                    best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))).or_else(|| best_audio_format(&clean_formats, None))
+                    best_audio_format(&clean_formats, Some("webm"))
+                        .or_else(|| best_audio_format(&clean_formats, Some("opus")))
+                        .or_else(|| best_audio_format(&clean_formats, None))
                 };
                 let (filesize, filesize_approx) =
                     estimated_merged_size(Some(video), audio, duration_seconds);
@@ -429,7 +508,9 @@ fn build_media_format_options(
             });
         }
 
-        if let Some(audio) = best_audio_format(&clean_formats, Some("webm")).or_else(|| best_audio_format(&clean_formats, Some("opus"))) {
+        if let Some(audio) = best_audio_format(&clean_formats, Some("webm"))
+            .or_else(|| best_audio_format(&clean_formats, Some("opus")))
+        {
             let (filesize, filesize_approx) =
                 split_size_estimate(estimated_stream_bytes(audio, duration_seconds));
             options.push(MediaFormat {
@@ -449,7 +530,9 @@ fn build_media_format_options(
             let (filesize, filesize_approx) =
                 split_size_estimate(estimated_stream_bytes(audio, duration_seconds));
             options.push(MediaFormat {
-                format_id: json_str(audio, "format_id").unwrap_or("bestaudio/best").to_string(),
+                format_id: json_str(audio, "format_id")
+                    .unwrap_or("bestaudio/best")
+                    .to_string(),
                 resolution: "Audio only".to_string(),
                 ext: "mp3".to_string(),
                 format_label: "MP3 • Best audio".to_string(),
@@ -522,13 +605,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             downloaded / total
         } else {
             progress_json_string(&progress, "_percent_str")
-                .and_then(|percent| {
-                    percent
-                        .trim_end_matches('%')
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                })
+                .and_then(|percent| percent.trim_end_matches('%').trim().parse::<f64>().ok())
                 .unwrap_or(0.0)
                 / 100.0
         };
@@ -547,9 +624,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             .unwrap_or_else(|| "-".to_string());
         let size = progress_json_string(&progress, "_total_bytes_str")
             .or_else(|| progress_json_string(&progress, "_total_bytes_estimate_str"))
-            .or_else(|| {
-                (total > 0.0).then(|| crate::download::format_size(total))
-            });
+            .or_else(|| (total > 0.0).then(|| crate::download::format_size(total)));
 
         return Some(MediaProgress {
             fraction: fraction.clamp(0.0, 1.0),
@@ -591,14 +666,12 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         });
     }
 
-    let percent_re = YTDLP_PCT_RE
-        .get_or_init(|| Regex::new(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%").unwrap());
+    let percent_re =
+        YTDLP_PCT_RE.get_or_init(|| Regex::new(r"\[download\]\s+~?\s*(\d+(?:\.\d+)?)%").unwrap());
     let captures = percent_re.captures(line)?;
     let fraction = captures.get(1)?.as_str().parse::<f64>().ok()? / 100.0;
-    let speed_re =
-        YTDLP_SPD_RE.get_or_init(|| Regex::new(r"\bat\s+([^\s]+)").unwrap());
-    let eta_re =
-        YTDLP_ETA_RE.get_or_init(|| Regex::new(r"\bETA\s+([^\s]+)").unwrap());
+    let speed_re = YTDLP_SPD_RE.get_or_init(|| Regex::new(r"\bat\s+([^\s]+)").unwrap());
+    let eta_re = YTDLP_ETA_RE.get_or_init(|| Regex::new(r"\bETA\s+([^\s]+)").unwrap());
 
     Some(MediaProgress {
         fraction: fraction.clamp(0.0, 1.0),
@@ -617,7 +690,11 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
     })
 }
 
-fn media_progress_speed(progress: &MediaProgress, now: Instant, last_sample: &mut Option<(Instant, f64)>) -> String {
+fn media_progress_speed(
+    progress: &MediaProgress,
+    now: Instant,
+    last_sample: &mut Option<(Instant, f64)>,
+) -> String {
     let Some(downloaded_bytes) = progress.downloaded_bytes else {
         return progress.speed.clone();
     };
@@ -714,9 +791,6 @@ async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: boo
     }
 }
 
-
-
-
 async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::SocketAddr)>, String> {
     let parsed = reqwest::Url::parse(url).map_err(|_| "SSRF blocked: Invalid URL")?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
@@ -724,14 +798,14 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
     }
     let host = parsed.host_str().ok_or("SSRF blocked: No host")?;
     let port = parsed.port_or_known_default().unwrap_or(80);
-    
+
     let mut addrs = tokio::net::lookup_host((host, port))
         .await
         .map_err(|_| "SSRF blocked: DNS resolution failed")?;
-        
+
     let addr = addrs.next().ok_or("SSRF blocked: No DNS records")?;
     let ip = addr.ip();
-    
+
     if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
         return Err("SSRF blocked: Private/local IP not allowed".to_string());
     }
@@ -742,10 +816,12 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
             }
         }
         std::net::IpAddr::V6(ipv6) => {
-            if (ipv6.segments()[0] & 0xfe00) == 0xfc00 { // ULA check
+            if (ipv6.segments()[0] & 0xfe00) == 0xfc00 {
+                // ULA check
                 return Err("SSRF blocked: Private/local IP not allowed".to_string());
             }
-            if (ipv6.segments()[0] & 0xffc0) == 0xfe80 { // Link-local check
+            if (ipv6.segments()[0] & 0xffc0) == 0xfe80 {
+                // Link-local check
                 return Err("SSRF blocked: Private/local IP not allowed".to_string());
             }
         }
@@ -754,18 +830,23 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
 }
 
 #[tauri::command]
-async fn fetch_metadata(url: String, user_agent: Option<String>, username: Option<String>, password: Option<String>) -> Result<MetadataResponse, String> {
+async fn fetch_metadata(
+    url: String,
+    user_agent: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<MetadataResponse, String> {
     let mut current_url = url.clone();
     let mut redirects = 0;
     let res;
-    
+
     loop {
         if redirects >= 5 {
             return Err("Too many redirects".to_string());
         }
-        
+
         let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-        
+
         if let Some(ref ua) = user_agent {
             if !ua.is_empty() {
                 builder = builder.user_agent(ua);
@@ -873,15 +954,23 @@ async fn fetch_metadata(url: String, user_agent: Option<String>, username: Optio
         }
     }
 
-    Ok(MetadataResponse { url: current_url, filename, size: size_str, size_bytes })
+    Ok(MetadataResponse {
+        url: current_url,
+        filename,
+        size: size_str,
+        size_bytes,
+    })
 }
 
 const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);
 const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
 const MEDIA_METADATA_CACHE_MAX_ENTRIES: usize = 128;
 
-static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> = OnceLock::new();
-static MEDIA_METADATA_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<u64, std::sync::Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> =
+    OnceLock::new();
+static MEDIA_METADATA_LOCKS: OnceLock<
+    tokio::sync::Mutex<HashMap<u64, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = OnceLock::new();
 
 fn media_metadata_cache_key(
     url: &str,
@@ -912,7 +1001,9 @@ async fn release_media_metadata_lock(
     }
 }
 
-fn resolve_metadata_ytdlp_path(app_handle: &tauri::AppHandle) -> Result<(PathBuf, &'static str), String> {
+fn resolve_metadata_ytdlp_path(
+    app_handle: &tauri::AppHandle,
+) -> Result<(PathBuf, &'static str), String> {
     resolve_bundled_binary_path(app_handle, "yt-dlp")
         .map(|path| (path, "bundled"))
         .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))
@@ -958,14 +1049,8 @@ async fn fetch_media_metadata(
     }
     drop(cache_guard);
 
-    let result = fetch_media_metadata_uncached(
-        app_handle,
-        url,
-        cookie_browser,
-        username,
-        password,
-    )
-    .await;
+    let result =
+        fetch_media_metadata_uncached(app_handle, url, cookie_browser, username, password).await;
 
     let result = match result {
         Ok(metadata) if metadata.formats.is_empty() => {
@@ -996,36 +1081,58 @@ async fn fetch_media_metadata(
     result
 }
 
-async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String, cookie_browser: Option<String>, username: Option<String>, password: Option<String>) -> Result<MediaMetadata, String> {
+async fn fetch_media_metadata_uncached(
+    app_handle: tauri::AppHandle,
+    url: String,
+    cookie_browser: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<MediaMetadata, String> {
     // Pass bundled tools by absolute path so extraction never depends on
     // system Python, a user-managed PATH, or auto-detection heuristics.
-    let deno_path = resolve_bundled_binary_path(&app_handle, "deno").map_err(|e| format!("failed to find bundled deno: {e}"))?;
-    let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg").map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
+    let deno_path = resolve_bundled_binary_path(&app_handle, "deno")
+        .map_err(|e| format!("failed to find bundled deno: {e}"))?;
+    let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")
+        .map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
     let deno_runtime = format!("deno:{}", deno_path.to_string_lossy());
     let trusted_path = crate::platform::trusted_system_path()?;
 
     use tauri_plugin_shell::ShellExt;
     let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
-    let mut cmd = app_handle.shell().command(ytdlp_path.to_string_lossy().to_string());
-    cmd = cmd.env("PATH", trusted_path)
-        .arg("--ffmpeg-location").arg(&ffmpeg_path)
-        .arg("--js-runtimes").arg(&deno_runtime)
+    let mut cmd = app_handle
+        .shell()
+        .command(ytdlp_path.to_string_lossy().to_string());
+    cmd = cmd
+        .env("PATH", trusted_path)
+        .arg("--ffmpeg-location")
+        .arg(&ffmpeg_path)
+        .arg("--js-runtimes")
+        .arg(&deno_runtime)
         .arg("--no-warnings")
         .arg("--no-playlist")
         .arg("--skip-download")
-        .arg("--socket-timeout").arg("20")
-        .arg("--retries").arg("3")
-        .arg("--extractor-retries").arg("3")
-        .arg("--compat-options").arg("no-youtube-unavailable-videos")
-        .arg("--print").arg("%(.{title,duration,thumbnail,formats})j");
+        .arg("--socket-timeout")
+        .arg("20")
+        .arg("--retries")
+        .arg("3")
+        .arg("--extractor-retries")
+        .arg("3")
+        .arg("--compat-options")
+        .arg("no-youtube-unavailable-videos")
+        .arg("--print")
+        .arg("%(.{title,duration,thumbnail,formats})j");
 
     if let Some(browser) = cookie_browser {
         if !browser.is_empty() {
             cmd = cmd.arg("--cookies-from-browser").arg(&browser);
         }
     }
-    
-    let mut config_file = tempfile::Builder::new().prefix("ytdlp-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
+
+    let mut config_file = tempfile::Builder::new()
+        .prefix("ytdlp-")
+        .suffix(".conf")
+        .tempfile()
+        .map_err(|e| e.to_string())?;
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
@@ -1040,7 +1147,9 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         }
     }
     use std::io::Write;
-    config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
+    config_file
+        .write_all(config_content.as_bytes())
+        .map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
     if !config_content.is_empty() {
         cmd = cmd.arg("--config-location").arg(&config_path);
@@ -1058,25 +1167,44 @@ async fn fetch_media_metadata_uncached(app_handle: tauri::AppHandle, url: String
         })?
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
     if output.status.success() {
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-        
-        let title = value.get("title").and_then(|v| v.as_str()).unwrap_or("Unknown Title").to_string();
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let title = value
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown Title")
+            .to_string();
         let duration_seconds = value.get("duration").and_then(|v| v.as_f64());
         let duration = duration_seconds.map(|v| v as u64);
-        let thumbnail = value.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let thumbnail = value
+            .get("thumbnail")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let formats = value
             .get("formats")
             .and_then(|v| v.as_array())
             .map(|formats_arr| build_media_format_options(formats_arr, duration_seconds))
             .unwrap_or_default();
 
-        Ok(MediaMetadata { title, duration, thumbnail, formats })
+        Ok(MediaMetadata {
+            title,
+            duration,
+            thumbnail,
+            formats,
+        })
     } else {
         let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if err.is_empty() {
-            Err(format!("yt-dlp failed while fetching media metadata (exit status: {:?})", output.status.code()))
+            Err(format!(
+                "yt-dlp failed while fetching media metadata (exit status: {:?})",
+                output.status.code()
+            ))
         } else {
-            Err(format!("yt-dlp failed while fetching media metadata: {}", err))
+            Err(format!(
+                "yt-dlp failed while fetching media metadata: {}",
+                err
+            ))
         }
     }
 }
@@ -1096,7 +1224,9 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_shell::ShellExt;
 
     let binary_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
-    let output = app_handle.shell().command(&binary_path)
+    let output = app_handle
+        .shell()
+        .command(&binary_path)
         .arg("-version")
         .output()
         .await
@@ -1106,12 +1236,19 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let first_line = text.lines().next().unwrap_or("");
         let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
-        let clean = re.captures(first_line)
+        let clean = re
+            .captures(first_line)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_string())
             .unwrap_or_else(|| {
                 let parts: Vec<&str> = first_line.split_whitespace().collect();
-                parts.get(2).unwrap_or(&first_line).split('-').next().unwrap_or("").to_string()
+                parts
+                    .get(2)
+                    .unwrap_or(&first_line)
+                    .split('-')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
             });
         Ok(clean)
     } else {
@@ -1125,7 +1262,9 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_shell::ShellExt;
 
     let binary_path = resolve_bundled_binary_path(&app_handle, "deno")?;
-    let output = app_handle.shell().command(&binary_path)
+    let output = app_handle
+        .shell()
+        .command(&binary_path)
         .arg("--version")
         .output()
         .await
@@ -1134,7 +1273,12 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     if output.status.success() {
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").unwrap();
-        let clean = re.captures(&text).and_then(|c| c.get(1)).map(|m| m.as_str()).unwrap_or(&text).to_string();
+        let clean = re
+            .captures(&text)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or(&text)
+            .to_string();
         Ok(clean)
     } else {
         let err = String::from_utf8_lossy(&output.stderr);
@@ -1213,10 +1357,7 @@ fn approved_download_roots(app_handle: &tauri::AppHandle) -> Vec<std::path::Path
 }
 
 #[tauri::command]
-fn approve_download_root(
-    app_handle: tauri::AppHandle,
-    path: String,
-) -> Result<String, String> {
+fn approve_download_root(app_handle: tauri::AppHandle, path: String) -> Result<String, String> {
     let resolved = resolve_path(path.trim(), &app_handle);
     if !resolved.is_absolute() {
         return Err("Download root must be an absolute path".to_string());
@@ -1235,13 +1376,19 @@ fn approve_download_root(
         if !roots.is_array() {
             *roots = serde_json::Value::Array(Vec::new());
         }
-        let values = roots.as_array_mut().expect("approved roots must be an array");
-        if !values.iter().filter_map(serde_json::Value::as_str).any(|root| {
-            crate::platform::paths_equal(
-                std::path::Path::new(root),
-                std::path::Path::new(&canonical_text),
-            )
-        }) {
+        let values = roots
+            .as_array_mut()
+            .expect("approved roots must be an array");
+        if !values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|root| {
+                crate::platform::paths_equal(
+                    std::path::Path::new(root),
+                    std::path::Path::new(&canonical_text),
+                )
+            })
+        {
             values.push(serde_json::Value::String(canonical_text.clone()));
         }
     })?;
@@ -1291,19 +1438,17 @@ impl Drop for Aria2DaemonGuard {
     }
 }
 
-
-
+pub mod commands;
 pub mod download;
-pub mod queue;
+pub mod download_ownership;
+mod engines;
+pub mod error;
 #[allow(dead_code)]
 pub mod ipc;
 mod parity;
-pub mod error;
-pub mod commands;
-pub mod download_ownership;
-pub mod retry;
-mod engines;
 mod platform;
+pub mod queue;
+pub mod retry;
 mod settings;
 pub use error::AppError;
 
@@ -1366,21 +1511,25 @@ pub struct EngineStatusResult {
     pub engines: Vec<EngineStatusItem>,
 }
 
-
 pub(crate) fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
     use tauri::Manager;
     let mut resolved = std::path::PathBuf::from(path);
-    if let Some(stripped) = path
-        .strip_prefix("~/")
-        .or_else(|| path.strip_prefix("~\\"))
-    {
-        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)) {
+    if let Some(stripped) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .map(std::path::PathBuf::from)
+        }) {
             resolved = home.join(stripped);
         } else {
             log::warn!("Failed to resolve home directory for ~ expansion");
         }
     } else if path == "~" {
-        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)) {
+        if let Some(home) = app_handle.path().home_dir().ok().or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .map(std::path::PathBuf::from)
+        }) {
             resolved = home;
         } else {
             log::warn!("Failed to resolve home directory for ~ expansion");
@@ -1516,13 +1665,18 @@ fn dispatch_deep_links(app_handle: tauri::AppHandle, deep_links: Vec<url::Url>) 
     });
 }
 
-pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+pub(crate) async fn rpc_call(
+    port: u16,
+    secret: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let url = format!("http://127.0.0.1:{}/jsonrpc", port);
     let mut payload = serde_json::Map::new();
     payload.insert("jsonrpc".to_string(), serde_json::json!("2.0"));
     payload.insert("id".to_string(), serde_json::json!("1"));
     payload.insert("method".to_string(), serde_json::json!(method));
-    
+
     let mut p = vec![serde_json::json!(format!("token:{}", secret))];
     if let serde_json::Value::Array(arr) = params {
         p.extend(arr);
@@ -1534,12 +1688,13 @@ pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serd
         .build()
         .map_err(|e| e.to_string())?;
 
-    let res = client.post(&url)
+    let res = client
+        .post(&url)
         .json(&payload)
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    
+
     let json: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
     if let Some(error) = json.get("error") {
         return Err(error.to_string());
@@ -1550,9 +1705,16 @@ pub(crate) async fn rpc_call(port: u16, secret: &str, method: &str, params: serd
 }
 
 #[tauri::command]
-async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn test_aria2c(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
     let guard = app_handle.state::<Aria2DaemonGuard>();
-    let startup_err = guard.startup_error.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let startup_err = guard
+        .startup_error
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if let Some(err) = startup_err {
         return Err(format!("aria2 daemon unavailable: {err}"));
     }
@@ -1582,7 +1744,13 @@ async fn run_sidecar_version(
 ) -> (Option<String>, Option<String>, Option<String>) {
     let binary_path = match resolve_bundled_binary_path(app_handle, sidecar_name) {
         Ok(p) => p,
-        Err(e) => return (None, Some(format!("Missing bundled binary '{}': {}", sidecar_name, e)), None),
+        Err(e) => {
+            return (
+                None,
+                Some(format!("Missing bundled binary '{}': {}", sidecar_name, e)),
+                None,
+            )
+        }
     };
 
     if let Err(error) = validate_bundled_binary(&binary_path) {
@@ -1608,7 +1776,13 @@ async fn run_sidecar_version(
 
     let output = match result {
         Ok(Ok(output)) => output,
-        Ok(Err(e)) => return (None, Some(format!("Failed to execute '{}': {}", sidecar_name, e)), None),
+        Ok(Err(e)) => {
+            return (
+                None,
+                Some(format!("Failed to execute '{}': {}", sidecar_name, e)),
+                None,
+            )
+        }
         Err(timeout) => {
             return (
                 None,
@@ -1624,7 +1798,11 @@ async fn run_sidecar_version(
     };
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stderr_tail = if stderr.is_empty() { None } else { Some(stderr.clone()) };
+    let stderr_tail = if stderr.is_empty() {
+        None
+    } else {
+        Some(stderr.clone())
+    };
 
     let result = if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1636,7 +1814,15 @@ async fn run_sidecar_version(
         } else {
             format!("Exited with code {:?}", output.status.code())
         };
-        (if stdout.is_empty() { None } else { Some(stdout) }, Some(err), stderr_tail)
+        (
+            if stdout.is_empty() {
+                None
+            } else {
+                Some(stdout)
+            },
+            Some(err),
+            stderr_tail,
+        )
     };
 
     if result.1.is_none() {
@@ -1747,18 +1933,34 @@ async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> 
     let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
-    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+    let resolved_path = resolved
+        .as_ref()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
 
     let (startup_err, daemon_stderr) = {
         let guard = app_handle.state::<Aria2DaemonGuard>();
-        let se = guard.startup_error.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let stderr = guard.last_stderr.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let se = guard
+            .startup_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let stderr = guard
+            .last_stderr
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         (se, stderr)
     };
     let daemon_alive = startup_err.is_none();
-    let last_stderr_tail = if daemon_stderr.is_empty() { None } else { Some(daemon_stderr) };
+    let last_stderr_tail = if daemon_stderr.is_empty() {
+        None
+    } else {
+        Some(daemon_stderr)
+    };
 
-    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let (version_raw, run_error, stderr_tail) =
+        run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
     let version = version_raw.and_then(|v| v.lines().next().map(|l| l.trim().to_string()));
 
     let rpc_ready = if daemon_alive {
@@ -1771,7 +1973,9 @@ async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> 
 
     let error = startup_err.or(run_error);
     let ready = daemon_alive && rpc_ready && version.is_some();
-    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+    let remediation_hint = error
+        .as_ref()
+        .and_then(|e| generate_remediation_hint(e, sidecar_name));
 
     EngineStatusItem {
         name: "Aria2".to_string(),
@@ -1798,7 +2002,10 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
-    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+    let resolved_path = resolved
+        .as_ref()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
 
     let (has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
         let parent = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
@@ -1819,7 +2026,8 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
         (false, false)
     };
 
-    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let (version_raw, run_error, stderr_tail) =
+        run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
     let version = version_raw.and_then(|v| v.lines().next().map(|l| l.trim().to_string()));
 
     let mut error = run_error;
@@ -1827,11 +2035,16 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
 
     if error.is_none() && has_internal_dir && !has_python_framework {
         error = Some("_internal/Python.framework was not found beside yt-dlp sidecar".to_string());
-        remediation_hint = Some("The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink.".to_string());
+        remediation_hint = Some(
+            "The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink."
+                .to_string(),
+        );
     }
 
     if remediation_hint.is_none() {
-        remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+        remediation_hint = error
+            .as_ref()
+            .and_then(|e| generate_remediation_hint(e, sidecar_name));
     }
 
     EngineStatusItem {
@@ -1859,9 +2072,13 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
-    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+    let resolved_path = resolved
+        .as_ref()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
 
-    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
+    let (version_raw, run_error, stderr_tail) =
+        run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
     let version = version_raw.as_ref().and_then(|text| {
         text.lines().next().and_then(|first| {
             let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
@@ -1869,13 +2086,17 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
                 caps.get(1).map(|m| m.as_str().to_string())
             } else {
                 let parts: Vec<&str> = first.split_whitespace().collect();
-                parts.get(2).map(|v| v.split('-').next().unwrap_or(v).to_string())
+                parts
+                    .get(2)
+                    .map(|v| v.split('-').next().unwrap_or(v).to_string())
             }
         })
     });
 
     let error = run_error;
-    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+    let remediation_hint = error
+        .as_ref()
+        .and_then(|e| generate_remediation_hint(e, sidecar_name));
 
     EngineStatusItem {
         name: "FFmpeg".to_string(),
@@ -1902,16 +2123,27 @@ async fn check_deno(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let expected_sidecar = crate::platform::engine_binary_name(sidecar_name);
 
     let resolved = resolve_bundled_binary_path(app_handle, sidecar_name);
-    let resolved_path = resolved.as_ref().ok().map(|p| p.to_string_lossy().to_string());
+    let resolved_path = resolved
+        .as_ref()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
 
-    let (version_raw, run_error, stderr_tail) = run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
-    let version = version_raw.as_ref().and_then(|text| {
-        let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").ok()?;
-        re.captures(text).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
-    }).or(version_raw);
+    let (version_raw, run_error, stderr_tail) =
+        run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
+    let version = version_raw
+        .as_ref()
+        .and_then(|text| {
+            let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").ok()?;
+            re.captures(text)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+        })
+        .or(version_raw);
 
     let error = run_error;
-    let remediation_hint = error.as_ref().and_then(|e| generate_remediation_hint(e, sidecar_name));
+    let remediation_hint = error
+        .as_ref()
+        .and_then(|e| generate_remediation_hint(e, sidecar_name));
 
     EngineStatusItem {
         name: "Deno".to_string(),
@@ -1958,7 +2190,12 @@ async fn get_aria2_engine_status(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<EngineStatusItem, String> {
-    Ok(check_aria2(&app_handle, state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret).await)
+    Ok(check_aria2(
+        &app_handle,
+        state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+        &state.aria2_secret,
+    )
+    .await)
 }
 
 #[tauri::command]
@@ -1967,7 +2204,9 @@ async fn get_ytdlp_engine_status(app_handle: tauri::AppHandle) -> Result<EngineS
 }
 
 #[tauri::command]
-async fn get_ffmpeg_engine_status(app_handle: tauri::AppHandle) -> Result<EngineStatusItem, String> {
+async fn get_ffmpeg_engine_status(
+    app_handle: tauri::AppHandle,
+) -> Result<EngineStatusItem, String> {
     Ok(check_ffmpeg(&app_handle).await)
 }
 
@@ -1976,8 +2215,10 @@ async fn get_deno_engine_status(app_handle: tauri::AppHandle) -> Result<EngineSt
     Ok(check_deno(&app_handle).await)
 }
 
-
-fn resolve_bundled_binary_path(app_handle: &tauri::AppHandle, binary_name: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_bundled_binary_path(
+    app_handle: &tauri::AppHandle,
+    binary_name: &str,
+) -> Result<std::path::PathBuf, String> {
     crate::engines::resolve_bundled_binary_path(app_handle, binary_name)
 }
 
@@ -2001,7 +2242,6 @@ pub(crate) async fn start_media_download_internal(
 ) -> Result<(), String> {
     let safe_filename = crate::download_ownership::canonical_download_filename(&filename);
 
-
     let resolved_dest = resolve_path(&destination, &app_handle);
 
     if !is_safe_path(&resolved_dest, &app_handle) {
@@ -2015,14 +2255,22 @@ pub(crate) async fn start_media_download_internal(
     let out_path = resolved_dest.join(&safe_filename);
 
     let total_tracks: f64 = if let Some(ref format) = format_selector {
-        if format.contains('+') { 2.0 } else { 1.0 }
+        if format.contains('+') {
+            2.0
+        } else {
+            1.0
+        }
     } else {
         1.0
     };
 
     use tauri_plugin_shell::ShellExt;
 
-    let mut config_file = tempfile::Builder::new().prefix("ytdlp-").suffix(".conf").tempfile().map_err(|e| e.to_string())?;
+    let mut config_file = tempfile::Builder::new()
+        .prefix("ytdlp-")
+        .suffix(".conf")
+        .tempfile()
+        .map_err(|e| e.to_string())?;
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
@@ -2035,16 +2283,24 @@ pub(crate) async fn start_media_download_internal(
         }
     }
     if let Some(headers) = headers {
-        for header in headers.lines().map(str::trim).filter(|header| !header.is_empty()) {
+        for header in headers
+            .lines()
+            .map(str::trim)
+            .filter(|header| !header.is_empty())
+        {
             config_content.push_str(&format!("--add-header\n{}\n", header));
         }
     }
     use std::io::Write;
-    config_file.write_all(config_content.as_bytes()).map_err(|e| e.to_string())?;
+    config_file
+        .write_all(config_content.as_bytes())
+        .map_err(|e| e.to_string())?;
     let config_path = config_file.into_temp_path();
 
     use crate::ipc::DownloadStateEvent;
-    use crate::retry::{BackoffOutcome, MAX_RETRIES, backoff_and_emit_cancel, is_transient_network_error};
+    use crate::retry::{
+        backoff_and_emit_cancel, is_transient_network_error, BackoffOutcome, MAX_RETRIES,
+    };
 
     const STDERR_TAIL: usize = 2048;
 
@@ -2079,25 +2335,37 @@ pub(crate) async fn start_media_download_internal(
 
     while strike <= MAX_RETRIES {
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
-        let mut cmd = app_handle.shell().command(&ytdlp_path)
-           .arg("--newline")
-           .arg("--progress-delta").arg("0.2")
-           .arg("--progress-template")
-           .arg(format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"))
-
-           .arg("--socket-timeout").arg("20")
-           .arg("--retries").arg("3")
-           .arg("--extractor-retries").arg("3")
-           .arg("--downloader").arg(&aria2c_path)
-           .arg("--downloader-args").arg("aria2c:-c -x 16 -s 16 -k 1M --summary-interval=1")
-           .arg("--ffmpeg-location").arg(&ffmpeg_path)
-           .arg("--js-runtimes").arg(format!("deno:{}", deno_path.to_string_lossy()))
-           .arg("--concurrent-fragments").arg("4")
-           .arg("--no-warnings")
-           .arg("--continue")
-           .arg("--compat-options").arg("no-youtube-unavailable-videos")
-           .arg("-o").arg(out_path.to_string_lossy().to_string())
-           .env("PATH", &trusted_path);
+        let mut cmd = app_handle
+            .shell()
+            .command(&ytdlp_path)
+            .arg("--newline")
+            .arg("--progress-delta")
+            .arg("0.2")
+            .arg("--progress-template")
+            .arg(format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"))
+            .arg("--socket-timeout")
+            .arg("20")
+            .arg("--retries")
+            .arg("3")
+            .arg("--extractor-retries")
+            .arg("3")
+            .arg("--downloader")
+            .arg(&aria2c_path)
+            .arg("--downloader-args")
+            .arg("aria2c:-c -x 16 -s 16 -k 1M --summary-interval=1")
+            .arg("--ffmpeg-location")
+            .arg(&ffmpeg_path)
+            .arg("--js-runtimes")
+            .arg(format!("deno:{}", deno_path.to_string_lossy()))
+            .arg("--concurrent-fragments")
+            .arg("4")
+            .arg("--no-warnings")
+            .arg("--continue")
+            .arg("--compat-options")
+            .arg("no-youtube-unavailable-videos")
+            .arg("-o")
+            .arg(out_path.to_string_lossy().to_string())
+            .env("PATH", &trusted_path);
 
         if let Some(limit) = speed_limit.as_ref() {
             if !limit.is_empty() {
@@ -2116,7 +2384,9 @@ pub(crate) async fn start_media_download_internal(
         if let Some(cs) = cookie_source.as_ref() {
             let mut cs = cs.clone();
             if !cs.is_empty() && cs != "none" {
-                if cs == "safari" { cs = "safari:".to_string() }
+                if cs == "safari" {
+                    cs = "safari:".to_string()
+                }
                 cmd = cmd.arg("--cookies-from-browser").arg(cs);
             }
         }
@@ -2154,7 +2424,9 @@ pub(crate) async fn start_media_download_internal(
 
         cmd = cmd.arg("--").arg(&url);
 
-        let (mut rx, child) = cmd.spawn().map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
+        let (mut rx, child) = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
         log::info!("yt-dlp spawned for id: {} (strike {})", id, strike);
 
         let mut stderr_tail = String::new();
@@ -2303,17 +2575,12 @@ pub(crate) async fn start_media_download_internal(
         }
 
         let reason = failure_reason.clone();
-        let outcome = backoff_and_emit_cancel(
-            strike,
-            reason,
-            cancel_rx,
-            |retry_reason| {
-                let _ = app_handle.emit(
-                    "download-state",
-                    DownloadStateEvent::retrying(id, retry_reason),
-                );
-            },
-        )
+        let outcome = backoff_and_emit_cancel(strike, reason, cancel_rx, |retry_reason| {
+            let _ = app_handle.emit(
+                "download-state",
+                DownloadStateEvent::retrying(id, retry_reason),
+            );
+        })
         .await;
 
         if outcome == BackoffOutcome::Aborted {
@@ -2416,7 +2683,10 @@ async fn resume_download(
     id: String,
 ) -> Result<bool, String> {
     let Some(gid) = state.queue_manager.aria2_gid_for_download(&id) else {
-        log::info!("aria2 resume [{}]: no mapped gid; re-enqueue is permitted", id);
+        log::info!(
+            "aria2 resume [{}]: no mapped gid; re-enqueue is permitted",
+            id
+        );
         state.queue_manager.release_registered_id(&id).await;
         return Ok(false);
     };
@@ -2427,7 +2697,12 @@ async fn resume_download(
         return Ok(false);
     }
 
-    let status = aria2_download_status(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, &gid).await?;
+    let status = aria2_download_status(
+        state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+        &state.aria2_secret,
+        &gid,
+    )
+    .await?;
     match status.as_str() {
         "paused" => {
             use tauri::Emitter;
@@ -2435,13 +2710,13 @@ async fn resume_download(
                 "download-state",
                 crate::ipc::DownloadStateEvent::new(&id, crate::ipc::DownloadStatus::Queued),
             );
-            
+
             let queue_manager = state.queue_manager.clone();
             let aria2_port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
             let aria2_secret = state.aria2_secret.clone();
             let id_clone = id.clone();
             let gid_clone = gid.clone();
-            
+
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
@@ -2540,8 +2815,18 @@ async fn remove_download(
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let removal_result = async {
-            force_remove_aria2_gid(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await?;
-            wait_for_aria2_stopped(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await
+            force_remove_aria2_gid(
+                state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+                &state.aria2_secret,
+                gid,
+            )
+            .await?;
+            wait_for_aria2_stopped(
+                state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+                &state.aria2_secret,
+                gid,
+            )
+            .await
         }
         .await;
         if let Err(error) = removal_result {
@@ -2553,10 +2838,12 @@ async fn remove_download(
         state.queue_manager.release_permit(&id).await;
         log::info!("aria2 remove [{}]: gid {} stopped and forgotten", id, gid);
     } else {
-
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-            state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
+            state
+                .download_coordinator
+                .pause_media_with_ack(id.clone(), tx)
+                .await?;
         } else if let Ok(download_id) = Uuid::parse_str(&id) {
             let command = if delete_assets {
                 download::DownloadCmd::CancelWithAck(download_id, tx)
@@ -2643,7 +2930,12 @@ async fn detach_download_for_reconfigure(
                 serde_json::json!([gid]),
             )
             .await?;
-            wait_for_aria2_stopped(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await
+            wait_for_aria2_stopped(
+                state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+                &state.aria2_secret,
+                gid,
+            )
+            .await
         }
         .await;
         if let Err(error) = removal_result {
@@ -2656,12 +2948,17 @@ async fn detach_download_for_reconfigure(
         state.queue_manager.release_registered_id(&id).await;
         log::info!("aria2 detach [{}]: gid {} stopped and forgotten", id, gid);
     } else {
-
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-            state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
+            state
+                .download_coordinator
+                .pause_media_with_ack(id.clone(), tx)
+                .await?;
         } else if let Ok(download_id) = Uuid::parse_str(&id) {
-            state.download_coordinator.send(crate::download::DownloadCmd::PauseWithAck(download_id, tx)).await?;
+            state
+                .download_coordinator
+                .send(crate::download::DownloadCmd::PauseWithAck(download_id, tx))
+                .await?;
         } else {
             let _ = tx.send(()); // Fallback if no task exists
         }
@@ -2720,14 +3017,7 @@ fn aria2_gid_not_found(error: &str) -> bool {
 }
 
 async fn force_remove_aria2_gid(port: u16, secret: &str, gid: &str) -> Result<(), String> {
-    match rpc_call(
-        port,
-        secret,
-        "aria2.forceRemove",
-        serde_json::json!([gid]),
-    )
-    .await
-    {
+    match rpc_call(port, secret, "aria2.forceRemove", serde_json::json!([gid])).await {
         Ok(result) => ensure_aria2_gid_result("forceRemove", gid, &result),
         Err(error) if aria2_gid_not_found(&error) => {
             log::info!("aria2 forceRemove: gid {} was already absent", gid);
@@ -2769,14 +3059,18 @@ fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
     #[cfg(target_os = "macos")]
     {
         use cocoa::appkit::NSApp;
-        use cocoa::base::{nil, id};
+        use cocoa::base::{id, nil};
         use cocoa::foundation::NSString;
         use objc::{msg_send, sel, sel_impl};
-        
+
         unsafe {
             let app = NSApp();
             let dock_tile: id = msg_send![app, dockTile];
-            let label = if count > 0 { count.to_string() } else { "".to_string() };
+            let label = if count > 0 {
+                count.to_string()
+            } else {
+                "".to_string()
+            };
             let ns_label = NSString::alloc(nil).init_str(&label);
             let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
         }
@@ -2794,7 +3088,10 @@ fn get_platform_info() -> crate::ipc::PlatformInfo {
 
 #[tauri::command]
 fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) -> Result<(), String> {
-    let mut current_preventer = state.sleep_preventer.lock().unwrap_or_else(|e| e.into_inner());
+    let mut current_preventer = state
+        .sleep_preventer
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if prevent {
         if current_preventer.is_none() {
             let keepawake = keepawake::Builder::default()
@@ -2818,9 +3115,7 @@ pub(crate) fn execute_system_action(action: crate::ipc::PostQueueAction) -> Resu
         crate::ipc::PostQueueAction::Restart => {
             system_shutdown::reboot().map_err(|e| e.to_string())
         }
-        crate::ipc::PostQueueAction::Sleep => {
-            system_shutdown::sleep().map_err(|e| e.to_string())
-        }
+        crate::ipc::PostQueueAction::Sleep => system_shutdown::sleep().map_err(|e| e.to_string()),
         crate::ipc::PostQueueAction::None => Err("Invalid action".to_string()),
     }
 }
@@ -2914,7 +3209,10 @@ async fn enqueue_many(
             &item.filename,
         )?;
     }
-    let tasks = items.into_iter().map(queue::EnqueueItem::into_task).collect();
+    let tasks = items
+        .into_iter()
+        .map(queue::EnqueueItem::into_task)
+        .collect();
     let results = state.queue_manager.enqueue_many(tasks).await;
 
     for result in &results {
@@ -2955,7 +3253,10 @@ async fn remove_from_queue(
 }
 
 #[tauri::command]
-async fn set_concurrent_limit(state: tauri::State<'_, AppState>, limit: usize) -> Result<(), String> {
+async fn set_concurrent_limit(
+    state: tauri::State<'_, AppState>,
+    limit: usize,
+) -> Result<(), String> {
     state.queue_manager.set_capacity(limit);
     Ok(())
 }
@@ -2973,7 +3274,10 @@ fn normalize_speed_limit_for_aria2(limit: &str) -> Option<String> {
         return None;
     }
 
-    let unit = captures.get(2).map(|m| m.as_str().to_ascii_uppercase()).unwrap_or_default();
+    let unit = captures
+        .get(2)
+        .map(|m| m.as_str().to_ascii_uppercase())
+        .unwrap_or_default();
     Some(if unit.is_empty() {
         format!("{amount}K")
     } else {
@@ -2982,7 +3286,10 @@ fn normalize_speed_limit_for_aria2(limit: &str) -> Option<String> {
 }
 
 #[tauri::command]
-async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option<String>) -> Result<(), String> {
+async fn set_global_speed_limit(
+    state: tauri::State<'_, AppState>,
+    limit: Option<String>,
+) -> Result<(), String> {
     let limit_str = limit
         .as_deref()
         .and_then(normalize_speed_limit_for_aria2)
@@ -2991,8 +3298,11 @@ async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option
         state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
         &state.aria2_secret,
         "aria2.changeGlobalOption",
-        serde_json::json!([{"max-overall-download-limit": limit_str}])
-    ).await.map(|_| ()).map_err(|e| {
+        serde_json::json!([{"max-overall-download-limit": limit_str}]),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| {
         eprintln!("Failed to set global speed limit: {}", e);
         e
     })
@@ -3043,7 +3353,12 @@ fn open_automation_settings(app_handle: tauri::AppHandle) -> Result<(), String> 
     #[cfg(target_os = "macos")]
     {
         use tauri_plugin_opener::OpenerExt;
-        app_handle.opener().open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", None::<String>)
+        app_handle
+            .opener()
+            .open_url(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+                None::<String>,
+            )
             .map_err(|e| format!("Failed to open Automation settings: {}", e))?;
         Ok(())
     }
@@ -3155,10 +3470,10 @@ fn grant_keychain_access(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
-    
+
     // Explicitly force migration of any legacy token to the keychain
     let _ = crate::db::sanitize_current_settings_and_restore_token(&connection, true);
-    
+
     match crate::db::hydrate_pairing_token(&mut connection, false) {
         Ok((token, token_changed)) => {
             // Update the extension server's token in memory
@@ -3214,9 +3529,7 @@ fn db_save_settings(
 }
 
 #[tauri::command]
-fn db_load_settings(
-    state: tauri::State<'_, crate::db::DbState>,
-) -> Result<Option<String>, String> {
+fn db_load_settings(state: tauri::State<'_, crate::db::DbState>) -> Result<Option<String>, String> {
     let connection = state.lock()?;
     crate::db::load_settings(&connection)
 }
@@ -3239,9 +3552,7 @@ fn db_replace_downloads(
 }
 
 #[tauri::command]
-fn db_get_all_queues(
-    state: tauri::State<'_, crate::db::DbState>,
-) -> Result<Vec<String>, String> {
+fn db_get_all_queues(state: tauri::State<'_, crate::db::DbState>) -> Result<Vec<String>, String> {
     let connection = state.lock()?;
     crate::db::load_queues(&connection)
 }
@@ -3290,18 +3601,15 @@ fn redact_log_line(line: &str) -> String {
     static HEADER: OnceLock<regex::Regex> = OnceLock::new();
     static QUERY: OnceLock<regex::Regex> = OnceLock::new();
     let secret = SECRET.get_or_init(|| {
-        regex::Regex::new(
-            r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\s,;]+)",
-        )
-        .expect("valid secret redaction regex")
+        regex::Regex::new(r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\s,;]+)")
+            .expect("valid secret redaction regex")
     });
     let header = HEADER.get_or_init(|| {
         regex::Regex::new(r"(?i)(authorization|cookie)\s*:\s*[^\r\n]+")
             .expect("valid sensitive header redaction regex")
     });
     let query = QUERY.get_or_init(|| {
-        regex::Regex::new(r"(https?://[^\s?]+)\?[^\s]+")
-            .expect("valid URL query redaction regex")
+        regex::Regex::new(r"(https?://[^\s?]+)\?[^\s]+").expect("valid URL query redaction regex")
     });
     let redacted = header.replace_all(line, "$1: [redacted]");
     let redacted = secret.replace_all(&redacted, "$1=[redacted]");
@@ -3345,7 +3653,9 @@ async fn read_logs(app_handle: tauri::AppHandle, limit: usize) -> Result<Vec<Str
 #[tauri::command]
 async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
     for file in log_files(&app_handle).await? {
-        tokio::fs::write(&file, "").await.map_err(|e| format!("Failed to clear log file {:?}: {}", file, e))?;
+        tokio::fs::write(&file, "")
+            .await
+            .map_err(|e| format!("Failed to clear log file {:?}: {}", file, e))?;
     }
     Ok(())
 }
@@ -3364,7 +3674,11 @@ async fn export_logs(
         chrono::Utc::now().to_rfc3339(),
     );
     let (aria2, ytdlp, ffmpeg, deno) = tokio::join!(
-        check_aria2(&app_handle, state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret),
+        check_aria2(
+            &app_handle,
+            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+            &state.aria2_secret
+        ),
         check_ytdlp(&app_handle),
         check_ffmpeg(&app_handle),
         check_deno(&app_handle),
@@ -3437,15 +3751,13 @@ fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let pause_all_i = MenuItem::with_id(app_handle, "pause_all", "Pause All", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let resume_all_i = MenuItem::with_id(app_handle, "resume_all", "Resume All", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
+    let resume_all_i =
+        MenuItem::with_id(app_handle, "resume_all", "Resume All", true, None::<&str>)
+            .map_err(|e| e.to_string())?;
     let quit_i = MenuItem::with_id(app_handle, "quit", "Quit", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let menu = Menu::with_items(
-        app_handle,
-        &[&show_i, &pause_all_i, &resume_all_i, &quit_i],
-    )
-    .map_err(|e| e.to_string())?;
+    let menu = Menu::with_items(app_handle, &[&show_i, &pause_all_i, &resume_all_i, &quit_i])
+        .map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "macos")]
     let tray_icon_bytes = include_bytes!("../icons/trayTemplate.png").as_slice();
@@ -3486,8 +3798,7 @@ fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
     {
         tray = tray.icon_as_template(true);
     }
-    tray.build(app_handle)
-        .map_err(|e| e.to_string())?;
+    tray.build(app_handle).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -3519,10 +3830,7 @@ fn get_extension_server_port(state: tauri::State<'_, AppState>) -> Option<u16> {
 }
 
 #[tauri::command]
-fn set_extension_frontend_ready(
-    state: tauri::State<'_, AppState>,
-    ready: bool,
-) {
+fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) {
     state
         .extension_frontend_ready
         .store(ready, Ordering::Release);
@@ -3540,24 +3848,33 @@ mod tests {
         aggregate_media_fraction, build_media_format_options, collect_download_uris,
         is_excluded_yt_dlp_format, json_lower, media_progress_speed,
         normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_media_progress_line,
-        FirelinkDeepLink,
-        redact_log_line, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        redact_log_line, FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
 
     #[test]
     fn normalizes_bare_global_speed_limits_as_kib_per_second() {
-        assert_eq!(normalize_speed_limit_for_aria2("1024"), Some("1024K".to_string()));
-        assert_eq!(normalize_speed_limit_for_aria2("512K"), Some("512K".to_string()));
-        assert_eq!(normalize_speed_limit_for_aria2("1.5 MB/s"), Some("1.5M".to_string()));
+        assert_eq!(
+            normalize_speed_limit_for_aria2("1024"),
+            Some("1024K".to_string())
+        );
+        assert_eq!(
+            normalize_speed_limit_for_aria2("512K"),
+            Some("512K".to_string())
+        );
+        assert_eq!(
+            normalize_speed_limit_for_aria2("1.5 MB/s"),
+            Some("1.5M".to_string())
+        );
         assert_eq!(normalize_speed_limit_for_aria2("0"), None);
         assert_eq!(normalize_speed_limit_for_aria2("bad"), None);
     }
 
     #[test]
     fn redacts_secrets_and_signed_url_queries_from_support_logs() {
-        let line = "Authorization: bearer-secret Cookie=session=abc https://example.com/file?token=secret";
+        let line =
+            "Authorization: bearer-secret Cookie=session=abc https://example.com/file?token=secret";
         let redacted = redact_log_line(line);
         assert!(!redacted.contains("bearer-secret"));
         assert!(!redacted.contains("session=abc"));
@@ -3668,25 +3985,25 @@ mod tests {
                 "vcodec": "none",
                 "acodec": "mp4a.40.2",
                 "filesize": 10_000_000_u64
-            })
+            }),
         ];
 
         let options = build_media_format_options(&formats, Some(600.0));
 
-    assert!(!options.iter().any(|format| format.ext == "mhtml"));
-    assert!(!options.iter().any(|format| format.resolution == "Best"));
-    assert!(!options.iter().any(|format| format.resolution == "1440p"));
-    assert!(options.iter().any(|format| {
-        format.resolution == "1080p"
-            && format.ext == "mkv"
-            && format.format_label == "MKV • H.264 + AAC"
-            && format.filesize == Some(110_000_000)
-    }));
-    assert!(options.iter().any(|format| {
-        format.resolution == "1080p"
-            && format.ext == "mp4"
-            && format.format_label == "MP4 • H.264 + AAC"
-            && format.filesize == Some(110_000_000)
+        assert!(!options.iter().any(|format| format.ext == "mhtml"));
+        assert!(!options.iter().any(|format| format.resolution == "Best"));
+        assert!(!options.iter().any(|format| format.resolution == "1440p"));
+        assert!(options.iter().any(|format| {
+            format.resolution == "1080p"
+                && format.ext == "mkv"
+                && format.format_label == "MKV • H.264 + AAC"
+                && format.filesize == Some(110_000_000)
+        }));
+        assert!(options.iter().any(|format| {
+            format.resolution == "1080p"
+                && format.ext == "mp4"
+                && format.format_label == "MP4 • H.264 + AAC"
+                && format.filesize == Some(110_000_000)
         }));
         assert!(options.iter().any(|format| {
             format.resolution == "Audio only" && format.format_label == "M4A • AAC"
@@ -3711,7 +4028,7 @@ mod tests {
                 "vcodec": "none",
                 "acodec": "opus",
                 "filesize": 28_000_000_u64
-            })
+            }),
         ];
         let options = build_media_format_options(&formats, Some(1_800.0));
         let option = options
@@ -3913,7 +4230,8 @@ pub fn run() {
     let server_frontend_ready = extension_frontend_ready.clone();
     let extension_server_port = Arc::new(RwLock::new(None));
     let server_extension_port = extension_server_port.clone();
-    let (extension_server_shutdown_tx, extension_server_shutdown_rx) = tokio::sync::watch::channel(false);
+    let (extension_server_shutdown_tx, extension_server_shutdown_rx) =
+        tokio::sync::watch::channel(false);
 
     let initial_aria2_port = 6800; // Will be determined dynamically in background
     let aria2_port = Arc::new(std::sync::atomic::AtomicU16::new(initial_aria2_port));
@@ -3947,7 +4265,7 @@ pub fn run() {
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
             let initial_pairing_token = {
                 // Generate a temporary session token for the extension server on startup.
-                // The frontend will hydrate the real token via IPC once it mounts, 
+                // The frontend will hydrate the real token via IPC once it mounts,
                 // avoiding any macOS system prompts before the UI is fully visible.
                 format!(
                     "{}{}",
@@ -4057,13 +4375,13 @@ pub fn run() {
                         let mut success = false;
                         for attempt_port in 6800..6900 {
                             let mut cmd = std::process::Command::new(&binary_path);
-                            
+
                             let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
                             use std::io::Write;
                             let config_content = format!("rpc-secret={}\n", aria2_secret_clone);
                             config_file.write_all(config_content.as_bytes()).expect("failed to write aria2 config file");
                             let config_path = config_file.into_temp_path();
-        
+
                             cmd.arg("--enable-rpc=true")
                                 .arg(format!("--conf-path={}", config_path.display()))
                                 .arg(format!("--rpc-listen-port={}", attempt_port))
@@ -4076,14 +4394,14 @@ pub fn run() {
                                 .arg("--download-result=hide")
                                 .arg("--max-concurrent-downloads=9999")
                                 .arg("--check-certificate=true");
-        
+
                             if let Some(limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {
                                 cmd.arg(format!("--max-overall-download-limit={}", limit));
                             }
-        
+
                             cmd.stdout(std::process::Stdio::null());
                             cmd.stderr(std::process::Stdio::piped());
-        
+
                             match cmd.spawn() {
                                 Ok(mut child) => {
                                     // Give it a moment to fail if port is in use
@@ -4098,7 +4416,7 @@ pub fn run() {
                                     aria2_port_clone.store(attempt_port, std::sync::atomic::Ordering::Relaxed);
                                     ws_port = attempt_port;
                                     success = true;
-        
+
                                     let daemon_app = app_handle_bg.clone();
                                     if let Some(stderr) = child.stderr.take() {
                                         std::thread::spawn(move || {
@@ -4121,11 +4439,11 @@ pub fn run() {
                                             }
                                         });
                                     }
-        
+
                                     let guard = app_handle_bg.state::<Aria2DaemonGuard>();
                                     *guard.child.lock().unwrap() = Some(child);
                                     *guard.config_path.lock().unwrap() = Some(config_path);
-        
+
                                     let mut last_err = String::new();
                                     let start = std::time::Instant::now();
                                     let mut ready = false;
@@ -4237,7 +4555,7 @@ pub fn run() {
                                     let total = status_info.get("totalLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let completed = status_info.get("completedLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let speed_bytes = status_info.get("downloadSpeed").and_then(|s| s.as_str()).unwrap_or("0").parse::<f64>().unwrap_or(0.0);
-                                    
+
                                     let fraction = if total > 0 { completed as f64 / total as f64 } else { 0.0 };
                                     let speed = crate::download::format_speed(speed_bytes);
                                     let eta = if speed_bytes > 0.0 && total > completed {
@@ -4250,7 +4568,7 @@ pub fn run() {
                                     } else {
                                         None
                                     };
-                                    
+
                                     use tauri::Emitter;
                                     let _ = app_handle_poll.emit("download-progress", DownloadProgressEvent {
                                         id,
@@ -4348,6 +4666,6 @@ pub fn run() {
             }
         });
 }
-mod extension_server;
 mod db;
+mod extension_server;
 mod scheduler;

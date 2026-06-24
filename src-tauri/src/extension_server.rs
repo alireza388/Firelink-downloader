@@ -124,13 +124,14 @@ pub async fn start_server(
 
 async fn add_server_identity(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
-  response
-    .headers_mut()
-    .insert(SERVER_HEADER, HeaderValue::from_static("1"));
-  response
-    .headers_mut()
-    .insert(PROTOCOL_VERSION_HEADER, HeaderValue::from_static(PROTOCOL_VERSION));
-  response
+    response
+        .headers_mut()
+        .insert(SERVER_HEADER, HeaderValue::from_static("1"));
+    response.headers_mut().insert(
+        PROTOCOL_VERSION_HEADER,
+        HeaderValue::from_static(PROTOCOL_VERSION),
+    );
+    response
 }
 
 async fn bind_extension_listener() -> Result<(u16, tokio::net::TcpListener), String> {
@@ -382,7 +383,7 @@ fn is_allowed_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-  use super::{add_server_identity, PROTOCOL_VERSION_HEADER, SERVER_HEADER};
+    use super::{add_server_identity, PROTOCOL_VERSION_HEADER, SERVER_HEADER};
     use axum::{http::StatusCode, middleware, routing::get, Router};
 
     #[tokio::test]
@@ -398,13 +399,15 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let response = reqwest::get(format!("http://{address}/ping")).await.unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
-    assert_eq!(
-      response.headers().get(PROTOCOL_VERSION_HEADER).unwrap(),
-      "2"
-    );
+        let response = reqwest::get(format!("http://{address}/ping"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
+        assert_eq!(
+            response.headers().get(PROTOCOL_VERSION_HEADER).unwrap(),
+            "2"
+        );
 
         server.abort();
     }

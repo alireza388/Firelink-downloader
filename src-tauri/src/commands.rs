@@ -168,24 +168,20 @@ mod tests {
         assert!(
             authorize_exact_path(Path::new("owned.bin"), std::slice::from_ref(&owned)).is_err()
         );
-        assert!(
-            authorize_exact_path(
-                &root.path().join("sub/../owned.bin"),
-                std::slice::from_ref(&owned)
-            )
-            .is_err()
-        );
+        assert!(authorize_exact_path(
+            &root.path().join("sub/../owned.bin"),
+            std::slice::from_ref(&owned)
+        )
+        .is_err());
         assert!(
             authorize_exact_path(Path::new("/etc/hosts"), std::slice::from_ref(&owned)).is_err()
         );
         if let Some(home) = std::env::var_os("HOME") {
-            assert!(
-                authorize_exact_path(
-                    &PathBuf::from(home).join(".ssh"),
-                    std::slice::from_ref(&owned)
-                )
-                .is_err()
-            );
+            assert!(authorize_exact_path(
+                &PathBuf::from(home).join(".ssh"),
+                std::slice::from_ref(&owned)
+            )
+            .is_err());
         }
     }
 

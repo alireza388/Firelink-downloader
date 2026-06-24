@@ -118,7 +118,11 @@ impl DownloadCoordinator {
             .map_err(|_| "download coordinator is unavailable".to_string())
     }
 
-    pub async fn pause_media_with_ack(&self, id: String, ack: tokio::sync::oneshot::Sender<()>) -> Result<(), String> {
+    pub async fn pause_media_with_ack(
+        &self,
+        id: String,
+        ack: tokio::sync::oneshot::Sender<()>,
+    ) -> Result<(), String> {
         self.media_tx
             .send(MediaCmd::PauseWithAck(id, ack))
             .await
@@ -474,14 +478,27 @@ async fn download_file(
         let mut attempts = 0_usize;
         loop {
             attempts += 1;
-            match download_attempt(&events, &client, &default_headers, &payload, url, &mut control_rx).await {
+            match download_attempt(
+                &events,
+                &client,
+                &default_headers,
+                &payload,
+                url,
+                &mut control_rx,
+            )
+            .await
+            {
                 Ok(()) => return DownloadOutcome::Completed,
                 Err(AttemptError::Controlled(DownloadControl::Pause)) => {
                     return DownloadOutcome::Paused;
                 }
                 Err(AttemptError::Controlled(DownloadControl::Cancel)) => {
                     if let Err(e) = fs::remove_file(&payload.output_path).await {
-                        log::warn!("Failed to remove cancelled file '{}': {}", payload.output_path.display(), e);
+                        log::warn!(
+                            "Failed to remove cancelled file '{}': {}",
+                            payload.output_path.display(),
+                            e
+                        );
                     }
                     return DownloadOutcome::Cancelled;
                 }
@@ -591,7 +608,9 @@ async fn download_attempt(
             .get(reqwest::header::CONTENT_RANGE)
             .and_then(|h| h.to_str().ok());
         if !content_range.is_some_and(|r| r.starts_with(&format!("bytes {}-", existing_len))) {
-            return Err(AttemptError::Failed("Server returned invalid Content-Range for resume".to_string()));
+            return Err(AttemptError::Failed(
+                "Server returned invalid Content-Range for resume".to_string(),
+            ));
         }
     }
     let completed_at_start = if resumed { existing_len } else { 0 };
@@ -721,11 +740,17 @@ fn build_client(payload: &DownloadPayload) -> Result<(Client, HeaderMap), String
         if proxy == "none" {
             builder = builder.no_proxy();
         } else {
-            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|_| "Invalid proxy URL configured".to_string())?);
+            builder = builder.proxy(
+                reqwest::Proxy::all(proxy)
+                    .map_err(|_| "Invalid proxy URL configured".to_string())?,
+            );
         }
     }
 
-    builder.build().map_err(|error| error.to_string()).map(|c| (c, headers))
+    builder
+        .build()
+        .map_err(|error| error.to_string())
+        .map(|c| (c, headers))
 }
 
 pub(crate) fn format_speed(bytes_per_second: f64) -> String {
@@ -808,14 +833,16 @@ mod tests {
         let (coordinator, mut events) = DownloadCoordinator::spawn_headless();
         coordinator
             .send(DownloadCmd::CaptureUrls(vec![
-                "https://example.com/startup.zip".to_string()
+                "https://example.com/startup.zip".to_string(),
             ]))
             .await
             .unwrap();
 
-        assert!(tokio::time::timeout(Duration::from_millis(20), events.recv())
-            .await
-            .is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), events.recv())
+                .await
+                .is_err()
+        );
 
         coordinator
             .send(DownloadCmd::FrontendReady(true))
@@ -827,9 +854,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap(),
-            DownloadEvent::CapturedUrls(
-                "https://example.com/startup.zip".to_string()
-            )
+            DownloadEvent::CapturedUrls("https://example.com/startup.zip".to_string())
         );
     }
 }

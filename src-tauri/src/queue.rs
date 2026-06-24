@@ -1,14 +1,14 @@
 use crate::ipc::{DownloadStateEvent, DownloadStatus, QueueDirection};
-use crate::retry::{BackoffOutcome, MAX_RETRIES, backoff_and_emit, is_transient_network_error};
+use crate::retry::{backoff_and_emit, is_transient_network_error, BackoffOutcome, MAX_RETRIES};
+use log;
 use serde::Deserialize;
+use serde_json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 use ts_rs::TS;
-use serde_json;
-use log;
 
 /// Default capacity when no setting is read yet.
 pub const DEFAULT_MAX_CONCURRENT: usize = 3;
@@ -120,14 +120,12 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
 impl QueueManager<tauri::Wry> {
     /// Production constructor. Wired up in lib.rs setup().
     pub fn new(app_handle: AppHandle<tauri::Wry>, capacity: usize) -> Self {
-        let spawner: Arc<dyn SidecarSpawner> =
-            Arc::new(ProductionSpawner::new(app_handle.clone()));
+        let spawner: Arc<dyn SidecarSpawner> = Arc::new(ProductionSpawner::new(app_handle.clone()));
         Self::test_new(app_handle, capacity, spawner)
     }
 }
 
 impl<R: tauri::Runtime> QueueManager<R> {
-
     /// Test-only constructor injecting a fake spawner.
     pub fn test_new(
         app_handle: AppHandle<R>,
@@ -193,11 +191,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     /// Acquire a permit from the semaphore (blocks until one is available).
     pub async fn acquire_permit(&self) -> Option<OwnedSemaphorePermit> {
-        self.semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .ok()
+        self.semaphore.clone().acquire_owned().await.ok()
     }
 
     /// Park an already-acquired permit under `id`.
@@ -258,9 +252,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 .map(|(id, _)| id.clone())
                 .collect()
         };
-            
+
         for id in ids_to_fail {
-            self.apply_completion(&id, PendingOutcome::Error("Aria2 WebSocket connection lost".to_string())).await;
+            self.apply_completion(
+                &id,
+                PendingOutcome::Error("Aria2 WebSocket connection lost".to_string()),
+            )
+            .await;
         }
     }
 
@@ -271,10 +269,9 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     fn emit_state(&self, id: impl Into<String>, status: DownloadStatus) {
         use tauri::Emitter;
-        let _ = self.app_handle.emit(
-            "download-state",
-            DownloadStateEvent::new(id, status),
-        );
+        let _ = self
+            .app_handle
+            .emit("download-state", DownloadStateEvent::new(id, status));
     }
 
     /// Resize the global concurrency limit. Grow adds permits immediately;
@@ -328,12 +325,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 continue;
             }
             // (2) Acquire a slot.
-            let permit_opt = self
-                .semaphore
-                .clone()
-                .acquire_owned()
-                .await
-                .ok();
+            let permit_opt = self.semaphore.clone().acquire_owned().await.ok();
             let permit = match permit_opt {
                 Some(p) => p,
                 None => break, // Semaphore closed, exit dispatcher
@@ -380,7 +372,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
         // aria2's RPC returns instantly, so the permit must outlive the
         // dispatch_one call. Media/Native runners release on exit.
         self.park_permit(&id, permit).await;
-        self.active_kinds.lock().await.insert(id.clone(), task.kind.clone());
+        self.active_kinds
+            .lock()
+            .await
+            .insert(id.clone(), task.kind.clone());
         self.emit_state(&id, DownloadStatus::Downloading);
 
         match task.kind {
@@ -513,8 +508,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.aria2_retry_cancelled.lock().await.remove(id);
     }
 
-
-
     pub fn aria2_gid_for_download(&self, id: &str) -> Option<String> {
         self.aria2_gids
             .read()
@@ -592,10 +585,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let id = match id {
             Some(id) => id,
             None => {
-                self.pending_completion
-                    .lock()
-                    .await
-                    .insert(gid.to_string(), (String::new(), PendingOutcome::Error(error)));
+                self.pending_completion.lock().await.insert(
+                    gid.to_string(),
+                    (String::new(), PendingOutcome::Error(error)),
+                );
                 return;
             }
         };
@@ -617,13 +610,15 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let transient = is_transient_network_error(&error);
         let strikes_left = strike < MAX_RETRIES;
         if !(transient && strikes_left) {
-            self.apply_completion(&id, PendingOutcome::Error(error)).await;
+            self.apply_completion(&id, PendingOutcome::Error(error))
+                .await;
             return;
         }
 
         let payload = self.aria2_payloads.lock().await.get(&id).cloned();
         if payload.is_none() {
-            self.apply_completion(&id, PendingOutcome::Error(error)).await;
+            self.apply_completion(&id, PendingOutcome::Error(error))
+                .await;
             return;
         }
         let payload = payload.unwrap();
@@ -702,11 +697,8 @@ impl<R: tauri::Runtime> QueueManager<R> {
                     this.emit_state(&id_for_task, DownloadStatus::Downloading);
                 }
                 Err(retry_error) => {
-                    this.apply_completion(
-                        &id_for_task,
-                        PendingOutcome::Error(retry_error),
-                    )
-                    .await;
+                    this.apply_completion(&id_for_task, PendingOutcome::Error(retry_error))
+                        .await;
                 }
             }
         });
@@ -853,7 +845,8 @@ impl SidecarSpawner for ProductionSpawner {
             "dir".to_string(),
             serde_json::json!(resolved_dest.to_string_lossy().to_string()),
         );
-        let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
+        let safe_filename =
+            crate::download_ownership::canonical_download_filename(&payload.filename);
         options.insert("out".to_string(), serde_json::json!(safe_filename));
         let conn = payload.connections.unwrap_or(1);
         options.insert("split".to_string(), serde_json::json!(conn.to_string()));
@@ -904,7 +897,14 @@ impl SidecarSpawner for ProductionSpawner {
         let uris = crate::collect_download_uris(&payload.url, payload.mirrors.as_deref());
         let params = serde_json::json!([uris, options]);
 
-        match crate::rpc_call(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, "aria2.addUri", params).await {
+        match crate::rpc_call(
+            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+            &state.aria2_secret,
+            "aria2.addUri",
+            params,
+        )
+        .await
+        {
             Ok(result) => {
                 let gid = result.as_str().unwrap_or("").to_string();
                 if gid.is_empty() {
@@ -919,13 +919,17 @@ impl SidecarSpawner for ProductionSpawner {
                 log::warn!("aria2 addUri failed, falling back to native: {}", e);
                 let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
                 let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
-                let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
+                let safe_filename =
+                    crate::download_ownership::canonical_download_filename(&payload.filename);
                 state
                     .download_coordinator
                     .send(crate::download::DownloadCmd::Start(Box::new(
                         crate::download::DownloadPayload {
                             id: download_id,
-                            urls: crate::collect_download_uris(&payload.url, payload.mirrors.as_deref()),
+                            urls: crate::collect_download_uris(
+                                &payload.url,
+                                payload.mirrors.as_deref(),
+                            ),
                             output_path: resolved_dest.join(safe_filename),
                             speed_limit: payload.speed_limit.clone(),
                             username: payload.username.clone(),
@@ -995,7 +999,10 @@ impl SidecarSpawner for ProductionSpawner {
                 let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &path);
             }
         }
-        let _ = state.download_coordinator.finish_media(id.to_string()).await;
+        let _ = state
+            .download_coordinator
+            .finish_media(id.to_string())
+            .await;
         outcome
     }
 
@@ -1004,7 +1011,8 @@ impl SidecarSpawner for ProductionSpawner {
         let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
         let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
         let resolved_dest = crate::resolve_path(&payload.destination, &self.app_handle);
-        let safe_filename = crate::download_ownership::canonical_download_filename(&payload.filename);
+        let safe_filename =
+            crate::download_ownership::canonical_download_filename(&payload.filename);
         let output_path = resolved_dest.join(safe_filename);
         let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &output_path);
         state

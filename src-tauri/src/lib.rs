@@ -2397,7 +2397,7 @@ async fn resume_download(
     match status.as_str() {
         "paused" => {
             use tauri::Emitter;
-            let _ = state.emit(
+            let _ = app_handle.emit(
                 "download-state",
                 crate::ipc::DownloadStateEvent::new(&id, crate::ipc::DownloadStatus::Queued),
             );

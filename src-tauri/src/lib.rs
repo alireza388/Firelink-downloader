@@ -2396,30 +2396,45 @@ async fn resume_download(
     let status = aria2_download_status(state.aria2_port, &state.aria2_secret, &gid).await?;
     match status.as_str() {
         "paused" => {
-            let acquired = state.queue_manager.ensure_aria2_permit(&id).await;
-            let result = match rpc_call(
-                state.aria2_port,
-                &state.aria2_secret,
-                "aria2.unpause",
-                serde_json::json!([gid]),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(error) => {
-                    if acquired {
-                        state.queue_manager.release_permit(&id).await;
+            use tauri::Emitter;
+            let _ = state.emit(
+                "download-state",
+                crate::ipc::DownloadStateEvent::new(&id, crate::ipc::DownloadStatus::Queued),
+            );
+            
+            let app_state = state.inner().clone();
+            let id_clone = id.clone();
+            let gid_clone = gid.clone();
+            
+            tauri::async_runtime::spawn(async move {
+                let acquired = app_state.queue_manager.ensure_aria2_permit(&id_clone).await;
+                let result = match rpc_call(
+                    app_state.aria2_port,
+                    &app_state.aria2_secret,
+                    "aria2.unpause",
+                    serde_json::json!([gid_clone]),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        if acquired {
+                            app_state.queue_manager.release_permit(&id_clone).await;
+                        }
+                        log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
+                        return;
                     }
-                    return Err(format!("failed to resume aria2 gid {gid}: {error}"));
+                };
+                if let Err(error) = ensure_aria2_gid_result("unpause", &gid_clone, &result) {
+                    if acquired {
+                        app_state.queue_manager.release_permit(&id_clone).await;
+                    }
+                    log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
+                    return;
                 }
-            };
-            if let Err(error) = ensure_aria2_gid_result("unpause", &gid, &result) {
-                if acquired {
-                    state.queue_manager.release_permit(&id).await;
-                }
-                return Err(error);
-            }
-            log::info!("aria2 resume [{}]: unpaused gid {}", id, gid);
+                log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
+            });
+            return Ok(true);
         }
         "active" | "waiting" => {
             state.queue_manager.ensure_aria2_permit(&id).await;
@@ -3960,6 +3975,7 @@ pub fn run() {
                         .arg("--summary-interval=1")
                         .arg("--console-log-level=warn")
                         .arg("--download-result=hide")
+                        .arg("--max-concurrent-downloads=9999")
                         .arg("--check-certificate=true");
 
             if let Some(global_speed_limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {

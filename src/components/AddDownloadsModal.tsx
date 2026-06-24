@@ -734,8 +734,8 @@ export const AddDownloadsModal = () => {
                   </div>
                 </div>
                 <textarea
-                  className="add-download-control add-download-links-input w-full h-32 p-3 text-[13px] resize-none font-mono"
-                  placeholder="Paste HTTP, HTTPS, FTP, or SFTP URLs here..."
+                  className="add-download-control add-download-links-input w-full h-32 p-3 text-[13px] resize-none"
+                  placeholder={"Paste HTTP, HTTPS, FTP, or SFTP URLs here...\n\nFor media downloads, paste links from Youtube, X, TikTok, Instagram, Reddit, etc."}
                   value={urls}
                   onChange={(e) => setUrls(e.target.value)}
                 />

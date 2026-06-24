@@ -971,7 +971,7 @@ runEngineChecks(false);
 type="button"
 onClick={() => runEngineChecks(true)}
 disabled={isRecheckingEngines}
-className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-bg-modal hover:bg-item-hover disabled:opacity-60 text-[12px] text-text-primary"
+className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled:opacity-60"
 >
 <RefreshCw size={13} className={isRecheckingEngines ? 'animate-spin' : ''} />
 {isRecheckingEngines ? 'Checking…' : 'Recheck engines'}

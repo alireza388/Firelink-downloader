@@ -58,10 +58,19 @@ export default function SpeedLimiterView() {
       <WindowDragRegion />
 
       <div className="flex items-center gap-3 border-b border-border-color px-6 pb-4">
-        <label className="flex items-center gap-3 text-[17px] font-semibold tracking-tight text-text-primary">
-          <input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)} className="h-4 w-4 accent-accent" />
+        <div className="flex items-center gap-3 text-[17px] font-semibold tracking-tight text-text-primary select-none">
+          <button
+            onClick={() => setEnabled(!enabled)}
+            className={`relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${enabled ? 'bg-accent' : 'bg-item-hover'}`}
+            aria-checked={enabled}
+            role="switch"
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${enabled ? 'translate-x-4' : 'translate-x-1'}`}
+            />
+          </button>
           Speed Limiter
-        </label>
+        </div>
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
           enabled ? 'bg-accent/15 text-accent' : 'bg-item-hover text-text-muted'
         }`}>

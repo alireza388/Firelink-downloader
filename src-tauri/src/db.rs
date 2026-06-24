@@ -718,7 +718,14 @@ pub fn consume_notice(connection: &Connection, key: &str) -> Result<(), String> 
     Ok(())
 }
 
-pub fn hydrate_pairing_token(connection: &mut Connection) -> Result<(String, bool), String> {
+pub fn hydrate_pairing_token(
+    connection: &mut Connection,
+    skip_keychain: bool,
+) -> Result<(String, bool), String> {
+    if skip_keychain {
+        return Ok((generate_pairing_token(), false));
+    }
+    
     let existing = get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).ok();
     let generated = generate_pairing_token();
     let decision = decide_pairing_token(

@@ -15,6 +15,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
 import LogsView from "./components/LogsView";
+import { KeychainPermissionModal } from "./components/KeychainPermissionModal";
 import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { usePlatformInfo } from './utils/platform';
@@ -611,6 +612,7 @@ function App() {
       <AddDownloadsModal />
       <PropertiesModal />
       <DeleteConfirmationModal />
+      <KeychainPermissionModal />
 
     </div>
   );

@@ -105,7 +105,9 @@ export interface SettingsState {
   mediaCookieSource: MediaCookieSource;
   siteLogins: SiteLogin[];
   extensionPairingToken: string;
+  isPairingTokenPersistent: boolean;
   autoCheckUpdates: boolean;
+  showKeychainModal: boolean;
 
   setTheme: (theme: Theme) => void;
   setBaseDownloadFolder: (path: string) => void;
@@ -145,6 +147,7 @@ export interface SettingsState {
   regeneratePairingToken: () => Promise<void>;
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
   hydratePairingToken: () => Promise<boolean>;
+  setShowKeychainModal: (show: boolean) => void;
 }
 
 const generateSecureToken = () => {
@@ -220,7 +223,9 @@ export const useSettingsStore = create<SettingsState>()(
       mediaCookieSource: 'none',
       siteLogins: [],
       extensionPairingToken: '',
+      isPairingTokenPersistent: true,
       autoCheckUpdates: true,
+      showKeychainModal: false,
 
       setTheme: (theme) => { info('Settings updated: theme'); set({ theme }); },
       setBaseDownloadFolder: (path) => {
@@ -310,13 +315,17 @@ export const useSettingsStore = create<SettingsState>()(
       },
       hydratePairingToken: async () => {
         const result = await invoke('hydrate_extension_pairing_token');
-        set({ extensionPairingToken: result.token });
-        if (!result.persistent && result.error) {
-          throw new Error(`Session-only browser pairing token: ${result.error}`);
+        set({ 
+          extensionPairingToken: result.token,
+          isPairingTokenPersistent: result.persistent 
+        });
+        if (!result.persistent) {
+          set({ showKeychainModal: true });
         }
         return result.tokenChanged;
       },
       setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
+      setShowKeychainModal: (show) => set({ showKeychainModal: show }),
     }),
     {
       name: 'firelink-settings',

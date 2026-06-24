@@ -8,7 +8,7 @@ import {
 } from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
-  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code
+  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code, ShieldAlert
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
@@ -1054,6 +1054,25 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                   <p className="text-text-secondary text-xs">Capture downloads directly from your browser in three easy steps.</p>
                 </div>
               </div>
+
+              {!settings.isPairingTokenPersistent && (
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-text-primary mb-1">Keychain Access Needed</h4>
+                    <p className="text-xs text-text-secondary mb-3">
+                      Firelink needs macOS Keychain access to securely save your pairing token across app restarts. 
+                      Currently, your extension will only stay connected for this session.
+                    </p>
+                    <button 
+                      onClick={() => settings.setShowKeychainModal(true)}
+                      className="app-button primary text-xs py-1"
+                    >
+                      Grant Keychain Access
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Step Guide Cards */}
               <div className="grid grid-cols-3 gap-4">

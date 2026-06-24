@@ -811,12 +811,57 @@ fn decide_pairing_token(
     }
 }
 
-fn generate_pairing_token() -> String {
+pub(crate) fn generate_pairing_token() -> String {
     format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
         uuid::Uuid::new_v4().simple()
     )
+}
+
+/// Read the extension pairing token from the persisted settings JSON.
+/// Returns `None` when the field is missing, empty, or the settings haven't
+/// been saved yet.  This is the **primary read path** — it does not touch the
+/// OS keychain and therefore never triggers a system credential prompt.
+pub fn load_pairing_token_from_settings(connection: &Connection) -> Result<Option<String>, String> {
+    let Some(settings_json) = load_settings(connection)? else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_str(&settings_json)
+        .map_err(|error| format!("failed to decode settings: {error}"))?;
+    let state = value.get("state").unwrap_or(&value);
+    let token = state
+        .get("extensionPairingToken")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    Ok(token)
+}
+
+/// Write (or update) the extension pairing token inside the persisted settings
+/// JSON document.  Keeps all other settings fields intact.
+pub fn save_pairing_token_to_settings(
+    connection: &Connection,
+    token: &str,
+) -> Result<(), String> {
+    let Some(settings_json) = load_settings(connection)? else {
+        // Settings haven't been persisted yet — nothing to update.
+        return Ok(());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(&settings_json)
+        .map_err(|error| format!("failed to decode settings: {error}"))?;
+    let state = if value.get("state").is_some() {
+        value
+            .get_mut("state")
+            .expect("state is an object")
+    } else {
+        &mut value
+    };
+    state["extensionPairingToken"] =
+        serde_json::Value::String(token.to_string());
+    let updated = serde_json::to_string(&value)
+        .map_err(|error| format!("failed to encode settings: {error}"))?;
+    save_settings(connection, &updated)
 }
 
 pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {

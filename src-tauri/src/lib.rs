@@ -3429,39 +3429,48 @@ struct PairingTokenHydration {
     error: Option<String>,
 }
 
+/// Hydrate the extension pairing token on startup **without touching the OS
+/// keychain**.  The token is read from the persisted settings (SQLite) so the
+/// operating system never presents a credential-access prompt before the UI is
+/// visible — even after a build update where the code signature changed.
+///
+/// When no token has been persisted yet (fresh install) a new one is generated
+/// and `persistent` is returned as `false`, which causes the frontend to show
+/// the `KeychainPermissionModal`.
 #[tauri::command]
 fn hydrate_extension_pairing_token(
     database: tauri::State<'_, crate::db::DbState>,
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
-    let mut connection = database.lock()?;
-    let skip_keychain = !crate::db::is_keychain_access_granted(&connection).unwrap_or(false);
-    match crate::db::hydrate_pairing_token(&mut connection, skip_keychain) {
-        Ok((token, token_changed)) => {
-            if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
-                *pairing_token = token.clone();
-            }
-            Ok(PairingTokenHydration {
-                token,
-                token_changed,
-                persistent: !skip_keychain,
-                error: None,
-            })
+    let connection = database.lock()?;
+
+    // Primary path: read the token from the settings DB.  This is always safe
+    // and never triggers an OS prompt.
+    if let Some(existing) = crate::db::load_pairing_token_from_settings(&connection)? {
+        if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+            *pairing_token = existing.clone();
         }
-        Err(error) => {
-            let token = app_state
-                .extension_pairing_token
-                .read()
-                .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
-                .clone();
-            Ok(PairingTokenHydration {
-                token,
-                token_changed: false,
-                persistent: false,
-                error: Some(error),
-            })
-        }
+        return Ok(PairingTokenHydration {
+            token: existing,
+            token_changed: false,
+            persistent: true,
+            error: None,
+        });
     }
+
+    // No token in the DB yet — generate one and save it so future launches
+    // find it without prompting.
+    let generated = crate::db::generate_pairing_token();
+    crate::db::save_pairing_token_to_settings(&connection, &generated)?;
+    if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+        *pairing_token = generated.clone();
+    }
+    Ok(PairingTokenHydration {
+        token: generated,
+        token_changed: false,
+        persistent: false,
+        error: None,
+    })
 }
 
 #[tauri::command]
@@ -3471,12 +3480,17 @@ fn grant_keychain_access(
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
 
-    // Explicitly force migration of any legacy token to the keychain
+    // Explicitly force migration of any legacy token to the keychain.
+    // This is the ONLY code path that touches the OS keychain and it is
+    // reached exclusively through the frontend's "Grant Access" button,
+    // so any system prompt is user-initiated.
     let _ = crate::db::sanitize_current_settings_and_restore_token(&connection, true);
 
     match crate::db::hydrate_pairing_token(&mut connection, false) {
         Ok((token, token_changed)) => {
-            // Update the extension server's token in memory
+            // Persist the token to the settings DB so future startups
+            // can read it without touching the keychain at all.
+            let _ = crate::db::save_pairing_token_to_settings(&connection, &token);
             if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
                 *pairing_token = token.clone();
             }

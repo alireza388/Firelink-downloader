@@ -298,6 +298,7 @@ fn default_settings() -> PersistedSettings {
         prevents_sleep_while_downloading: true,
         media_cookie_source: MediaCookieSource::None,
         site_logins: Vec::new(),
+        extension_pairing_token: String::new(),
         auto_check_updates: true,
         keychain_access_granted: false,
     }

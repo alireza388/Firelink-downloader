@@ -398,6 +398,7 @@ export const useSettingsStore = create<SettingsState>()(
         preventsSleepWhileDownloading: state.preventsSleepWhileDownloading,
         mediaCookieSource: state.mediaCookieSource,
         siteLogins: state.siteLogins,
+        extensionPairingToken: state.extensionPairingToken,
         keychainAccessGranted: state.keychainAccessGranted,
         autoCheckUpdates: state.autoCheckUpdates
       }),

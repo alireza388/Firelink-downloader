@@ -3103,6 +3103,10 @@ fn grant_keychain_access(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
+    
+    // Explicitly force migration of any legacy token to the keychain
+    let _ = crate::db::sanitize_current_settings_and_restore_token(&connection, true);
+    
     match crate::db::hydrate_pairing_token(&mut connection, false) {
         Ok((token, token_changed)) => {
             // Update the extension server's token in memory

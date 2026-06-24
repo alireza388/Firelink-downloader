@@ -61,7 +61,7 @@ fn init_at_path(app_data_dir: &Path) -> Result<DbState, String> {
     init_at_path_internal(app_data_dir, false)
 }
 
-fn init_at_path_internal(app_data_dir: &Path, migrate_keychain: bool) -> Result<DbState, String> {
+fn init_at_path_internal(app_data_dir: &Path, force_disable_keychain: bool) -> Result<DbState, String> {
     fs::create_dir_all(app_data_dir)
         .map_err(|error| format!("failed to create app data directory: {error}"))?;
     let database_path = app_data_dir.join(DATABASE_NAME);
@@ -76,12 +76,15 @@ fn init_at_path_internal(app_data_dir: &Path, migrate_keychain: bool) -> Result<
         backup_database(&connection, &database_path, &format!("schema-v{version}"))?;
     }
     migrate_schema(&mut connection, version)?;
-    let current_token_pending =
-        sanitize_current_settings_and_restore_token(&connection, migrate_keychain)?;
+    let (current_token_pending, keychain_granted) =
+        sanitize_current_settings_and_restore_token(&connection, false)?;
+        
+    let allow_keychain = keychain_granted && !force_disable_keychain;
+
     import_legacy_data(
         &mut connection,
         app_data_dir,
-        migrate_keychain && !current_token_pending,
+        allow_keychain && !current_token_pending,
     )?;
 
     Ok(DbState {
@@ -201,9 +204,9 @@ fn import_legacy_data(
             .file_name()
             .is_some_and(|name| name == DATABASE_NAME)
         {
-            read_legacy_database(&candidate)?
+            read_legacy_database(&candidate, migrate_keychain)?
         } else {
-            read_legacy_store(&candidate)?
+            read_legacy_store(&candidate, migrate_keychain)?
         };
         let mut migration_complete = true;
         if migrate_keychain
@@ -283,7 +286,7 @@ fn merge_legacy_data(connection: &mut Connection, legacy: LegacyData) -> Result<
     Ok(())
 }
 
-fn read_legacy_store(path: &Path) -> Result<LegacyData, String> {
+fn read_legacy_store(path: &Path, force_migrate: bool) -> Result<LegacyData, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("failed to read legacy store '{}': {error}", path.display()))?;
     let document: Value = serde_json::from_str(&text).map_err(|error| {
@@ -295,7 +298,7 @@ fn read_legacy_store(path: &Path) -> Result<LegacyData, String> {
 
     let mut data = LegacyData::default();
     if let Some(settings) = document.get("settings") {
-        let (sanitized, token) = sanitize_settings_value(settings)?;
+        let (sanitized, token, _) = sanitize_settings_value(settings, force_migrate)?;
         data.settings = Some(sanitized);
         data.pairing_token = token;
     }
@@ -316,7 +319,7 @@ fn read_legacy_store(path: &Path) -> Result<LegacyData, String> {
     Ok(data)
 }
 
-fn read_legacy_database(path: &Path) -> Result<LegacyData, String> {
+fn read_legacy_database(path: &Path, force_migrate: bool) -> Result<LegacyData, String> {
     let connection = Connection::open(path).map_err(|error| {
         format!(
             "failed to open legacy database '{}': {error}",
@@ -333,7 +336,7 @@ fn read_legacy_database(path: &Path) -> Result<LegacyData, String> {
             .optional()
             .map_err(|error| format!("failed to read legacy settings: {error}"))?
         {
-            let (sanitized, token) = sanitize_settings_text(&settings)?;
+            let (sanitized, token, _) = sanitize_settings_text(&settings, force_migrate)?;
             data.settings = Some(sanitized);
             data.pairing_token = token;
         }
@@ -347,18 +350,19 @@ fn read_legacy_database(path: &Path) -> Result<LegacyData, String> {
     Ok(data)
 }
 
-fn sanitize_current_settings_and_restore_token(
+pub fn sanitize_current_settings_and_restore_token(
     connection: &Connection,
-    migrate_keychain: bool,
-) -> Result<bool, String> {
+    force_migrate: bool,
+) -> Result<(bool, bool), String> {
     let Some(settings) = load_settings(connection)? else {
-        return Ok(false);
+        return Ok((false, false));
     };
-    let (sanitized, legacy_token) = sanitize_settings_text(&settings)?;
+    let (sanitized, legacy_token, keychain_granted) = sanitize_settings_text(&settings, force_migrate)?;
     if sanitized == settings {
-        return Ok(false);
+        return Ok((false, keychain_granted));
     }
-    if migrate_keychain {
+    let should_migrate = force_migrate || keychain_granted;
+    if should_migrate {
         if get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
             if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
                 if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token) {
@@ -366,29 +370,29 @@ fn sanitize_current_settings_and_restore_token(
                         "Persisted pairing token could not be migrated yet; original settings retained: {}",
                         error
                     );
-                    return Ok(true);
+                    return Ok((true, keychain_granted));
                 }
             }
         }
     }
     save_settings(connection, &sanitized)?;
-    Ok(false)
+    Ok((false, keychain_granted))
 }
 
-fn sanitize_settings_value(value: &Value) -> Result<(String, Option<String>), String> {
+fn sanitize_settings_value(value: &Value, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
     match value {
-        Value::String(text) => sanitize_settings_text(text),
-        _ => sanitize_settings_document(value.clone()),
+        Value::String(text) => sanitize_settings_text(text, force_migrate),
+        _ => sanitize_settings_document(value.clone(), force_migrate),
     }
 }
 
-fn sanitize_settings_text(text: &str) -> Result<(String, Option<String>), String> {
+fn sanitize_settings_text(text: &str, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
     let document: Value = serde_json::from_str(text)
         .map_err(|error| format!("failed to decode persisted settings: {error}"))?;
-    sanitize_settings_document(document)
+    sanitize_settings_document(document, force_migrate)
 }
 
-fn sanitize_settings_document(mut document: Value) -> Result<(String, Option<String>), String> {
+fn sanitize_settings_document(mut document: Value, force_migrate: bool) -> Result<(String, Option<String>, bool), String> {
     let state_value = if document.get("state").is_some() {
         document
             .get_mut("state")
@@ -399,12 +403,25 @@ fn sanitize_settings_document(mut document: Value) -> Result<(String, Option<Str
     let state = state_value
         .as_object_mut()
         .ok_or_else(|| "persisted settings state must be an object".to_string())?;
-    let token = state
-        .remove("extensionPairingToken")
-        .and_then(|value| value.as_str().map(str::to_string));
+        
+    let keychain_granted = state
+        .get("keychainAccessGranted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+        
+    let should_migrate = force_migrate || keychain_granted;
+        
+    let token = if should_migrate {
+        state
+            .remove("extensionPairingToken")
+            .and_then(|value| value.as_str().map(str::to_string))
+    } else {
+        None
+    };
+    
     let serialized = serde_json::to_string(&document)
         .map_err(|error| format!("failed to encode persisted settings: {error}"))?;
-    Ok((serialized, token))
+    Ok((serialized, token, keychain_granted))
 }
 
 fn json_array_as_strings(value: Option<&Value>) -> Result<Vec<String>, String> {
@@ -849,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn imports_legacy_bundle_store_and_sanitizes_token() {
+    fn imports_legacy_bundle_store_and_preserves_token() {
         let root = TempDir::new().unwrap();
         let current = root.path().join("com.nimbold.firelink");
         let legacy = root.path().join(LEGACY_BUNDLE_IDENTIFIER);
@@ -888,7 +905,7 @@ mod tests {
         assert_eq!(load_queues(&connection).unwrap().len(), 1);
         let settings = load_settings(&connection).unwrap().unwrap();
         assert!(settings.contains("\"theme\":\"dark\""));
-        assert!(!settings.contains("legacy-secret"));
+        assert!(settings.contains("legacy-secret"));
         assert!(fs::read_dir(&legacy).unwrap().flatten().any(|entry| {
             entry
                 .file_name()

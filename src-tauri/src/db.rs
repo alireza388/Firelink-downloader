@@ -76,15 +76,14 @@ fn init_at_path_internal(app_data_dir: &Path, force_disable_keychain: bool) -> R
         backup_database(&connection, &database_path, &format!("schema-v{version}"))?;
     }
     migrate_schema(&mut connection, version)?;
-    let (current_token_pending, keychain_granted) =
-        sanitize_current_settings_and_restore_token(&connection, false)?;
-        
-    let allow_keychain = keychain_granted && !force_disable_keychain;
 
+    // We no longer touch the keychain on backend startup.
+    // Legacy imports will safely preserve any pairing token in the JSON payload.
+    // The frontend will manually trigger migration to the keychain via IPC if access is granted.
     import_legacy_data(
         &mut connection,
         app_data_dir,
-        allow_keychain && !current_token_pending,
+        false,
     )?;
 
     Ok(DbState {

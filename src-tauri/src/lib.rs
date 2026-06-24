@@ -3900,22 +3900,14 @@ pub fn run() {
             let database = crate::db::init(app.handle())
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
             let initial_pairing_token = {
-                let mut connection = database.lock()?;
-                let skip_keychain = !crate::db::is_keychain_access_granted(&connection).unwrap_or(false);
-                match crate::db::hydrate_pairing_token(&mut connection, skip_keychain) {
-                    Ok((token, _)) => token,
-                    Err(error) => {
-                        log::warn!(
-                            "Secure credential storage unavailable; using session-only extension token: {}",
-                            error
-                        );
-                        format!(
-                            "{}{}",
-                            uuid::Uuid::new_v4().simple(),
-                            uuid::Uuid::new_v4().simple()
-                        )
-                    }
-                }
+                // Generate a temporary session token for the extension server on startup.
+                // The frontend will hydrate the real token via IPC once it mounts, 
+                // avoiding any macOS system prompts before the UI is fully visible.
+                format!(
+                    "{}{}",
+                    uuid::Uuid::new_v4().simple(),
+                    uuid::Uuid::new_v4().simple()
+                )
             };
             {
                 let mut pairing_token = extension_pairing_token

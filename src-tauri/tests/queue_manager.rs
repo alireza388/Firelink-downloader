@@ -77,7 +77,7 @@ async fn push_appends_to_pending_and_emits_queued() {
 async fn release_permit_is_idempotent() {
     let (mgr, _spawner) = make_manager(2);
     let permit = mgr.acquire_permit().await;
-    mgr.park_permit("a", permit).await;
+    mgr.park_permit("a", permit.unwrap()).await;
     let avail_before = mgr.available_permits();
     mgr.release_permit("a").await; // first release: frees the slot
     let avail_after_first = mgr.available_permits();
@@ -105,7 +105,7 @@ async fn ensure_aria2_permit_does_not_double_acquire() {
 async fn forgetting_aria2_gid_clears_mapping_without_releasing_twice() {
     let (mgr, _spawner) = make_manager(1);
     let permit = mgr.acquire_permit().await;
-    mgr.park_permit("a", permit).await;
+    mgr.park_permit("a", permit.unwrap()).await;
     mgr.remember_gid("a".to_string(), "gid-a".to_string()).await;
 
     assert_eq!(mgr.forget_aria2_gid("a").await.as_deref(), Some("gid-a"));
@@ -427,7 +427,7 @@ async fn aria2_completion_forgets_gid_and_releases_permit() {
 
     let (mgr, _spawner) = make_manager(1);
     let permit = mgr.acquire_permit().await;
-    mgr.park_permit("a", permit).await;
+    mgr.park_permit("a", permit.unwrap()).await;
     mgr.remember_gid("a".to_string(), "gid-a".to_string()).await;
 
     mgr.apply_completion("a", PendingOutcome::Complete).await;
@@ -494,7 +494,7 @@ async fn notify_fires_on_push_and_release() {
     let mgr_arc = Arc::new(mgr);
 
     let permit = mgr_arc.acquire_permit().await;
-    mgr_arc.park_permit("a", permit).await;
+    mgr_arc.park_permit("a", permit.unwrap()).await;
 
     let handle = {
         let mgr_clone = Arc::clone(&mgr_arc);

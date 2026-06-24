@@ -26,6 +26,8 @@ pub const EXTENSION_SERVER_PORT_RANGE: std::ops::RangeInclusive<u16> = EXTENSION
 const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
 const SERVER_HEADER: &str = "x-firelink-server";
+const PROTOCOL_VERSION_HEADER: &str = "x-firelink-protocol-version";
+const PROTOCOL_VERSION: &str = "2";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -122,10 +124,13 @@ pub async fn start_server(
 
 async fn add_server_identity(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
-    response
-        .headers_mut()
-        .insert(SERVER_HEADER, HeaderValue::from_static("1"));
-    response
+  response
+    .headers_mut()
+    .insert(SERVER_HEADER, HeaderValue::from_static("1"));
+  response
+    .headers_mut()
+    .insert(PROTOCOL_VERSION_HEADER, HeaderValue::from_static(PROTOCOL_VERSION));
+  response
 }
 
 async fn bind_extension_listener() -> Result<(u16, tokio::net::TcpListener), String> {
@@ -374,7 +379,7 @@ fn is_allowed_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_server_identity, SERVER_HEADER};
+  use super::{add_server_identity, PROTOCOL_VERSION_HEADER, SERVER_HEADER};
     use axum::{http::StatusCode, middleware, routing::get, Router};
 
     #[tokio::test]
@@ -391,8 +396,12 @@ mod tests {
         });
 
         let response = reqwest::get(format!("http://{address}/ping")).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
+    assert_eq!(
+      response.headers().get(PROTOCOL_VERSION_HEADER).unwrap(),
+      "2"
+    );
 
         server.abort();
     }

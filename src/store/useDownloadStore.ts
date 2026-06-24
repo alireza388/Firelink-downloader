@@ -7,7 +7,7 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
-import { categoryForFileName, isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
+import { canonicalizeDownloadFileName, categoryForFileName, isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import {
   resolveCategoryDestination
 } from '../utils/downloadLocations';
@@ -125,6 +125,16 @@ export const getSiteLogin = (url: string, settings: ReturnType<typeof useSetting
   return null;
 };
 
+const suggestedFileNameFromUrl = (rawUrl: string): string => {
+  try {
+    const url = new URL(rawUrl);
+    const lastSegment = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
+    return lastSegment || 'download';
+  } catch {
+    return 'download';
+  }
+};
+
 const syncSystemIntegrations = () => {
   const settings = useSettingsStore.getState();
   const activeCount = useDownloadStore.getState().downloads.filter(d => d.status === 'downloading').length;
@@ -192,7 +202,7 @@ interface DownloadState {
     headers?: string | null,
     cookies?: string | null
   ) => void;
-  handleExtensionDownload: (request: ExtensionDownloadRequest) => void;
+  handleExtensionDownload: (request: ExtensionDownloadRequest) => Promise<void>;
   deleteModalState: DeleteModalState;
   openDeleteModal: (downloadIds?: string | string[]) => void;
   closeDeleteModal: () => void;
@@ -302,9 +312,27 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       pendingAddCookies: cookies?.trim() || state.pendingAddCookies || ''
     };
   }),
-  handleExtensionDownload: (request) => {
+  handleExtensionDownload: async (request) => {
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
+
+    if (request.silent) {
+      for (const url of urls) {
+        const filename = canonicalizeDownloadFileName(
+          urls.length === 1 && request.filename ? request.filename : suggestedFileNameFromUrl(url)
+        );
+        await get().addDownload({
+          id: crypto.randomUUID(),
+          url,
+          fileName: filename,
+          category: categoryForFileName(filename),
+          dateAdded: new Date().toISOString(),
+          headers: request.headers?.trim() || undefined,
+          cookies: urls.length === 1 ? request.cookies?.trim() || undefined : undefined,
+        }, { type: 'start-now' });
+      }
+      return;
+    }
 
     get().openAddModalWithUrls(
       urls.join('\n'),

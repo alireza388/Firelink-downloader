@@ -1061,9 +1061,9 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                     <Check size={16} strokeWidth={2.5} />
                   </div>
                   <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-green-500 m-0">Keychain Access Granted</h4>
+                    <h4 className="text-sm font-semibold text-green-500 m-0">Credential Storage Available</h4>
                     <p className="text-xs text-text-secondary m-0 mt-0.5">
-                      Your pairing token is securely saved and will persist across restarts.
+                      Your pairing token is securely saved in this system's credential store and will persist across restarts.
                     </p>
                   </div>
                 </div>
@@ -1071,16 +1071,16 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                 <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 flex items-start gap-3">
                   <ShieldAlert className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-text-primary mb-1">Keychain Access Needed</h4>
+                    <h4 className="text-sm font-semibold text-text-primary mb-1">Credential Storage Needed</h4>
                     <p className="text-xs text-text-secondary mb-3">
-                      Firelink needs macOS Keychain access to securely save your pairing token across app restarts. 
+                      Firelink needs access to this system's credential store to securely save your pairing token across app restarts.
                       Currently, your extension will only stay connected for this session.
                     </p>
                     <button 
                       onClick={() => settings.setShowKeychainModal(true)}
                       className="px-4 py-1.5 rounded-md text-xs font-medium transition-colors bg-accent text-white hover:bg-accent/90 shadow-sm"
                     >
-                      Grant Keychain Access
+                    Grant Credential Access
                     </button>
                   </div>
                 </div>

@@ -3069,14 +3069,18 @@ fn hydrate_extension_pairing_token(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
-    // Frontend always skips keychain on regular hydration to avoid system prompts.
-    match crate::db::hydrate_pairing_token(&mut connection, true) {
-        Ok((token, token_changed)) => Ok(PairingTokenHydration {
-            token,
-            token_changed,
-            persistent: false, // Explicitly false since we skipped the keychain
-            error: None,
-        }),
+    match crate::db::hydrate_pairing_token(&mut connection, false) {
+        Ok((token, token_changed)) => {
+            if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+                *pairing_token = token.clone();
+            }
+            Ok(PairingTokenHydration {
+                token,
+                token_changed,
+                persistent: true,
+                error: None,
+            })
+        }
         Err(error) => {
             let token = app_state
                 .extension_pairing_token
@@ -3893,7 +3897,7 @@ pub fn run() {
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
             let initial_pairing_token = {
                 let mut connection = database.lock()?;
-                match crate::db::hydrate_pairing_token(&mut connection, true) {
+        match crate::db::hydrate_pairing_token(&mut connection, false) {
                     Ok((token, _)) => token,
                     Err(error) => {
                         log::warn!(

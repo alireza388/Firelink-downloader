@@ -46,17 +46,17 @@ export const KeychainPermissionModal: React.FC = () => {
           <div className="p-2 bg-blue-500/10 rounded-full flex items-center justify-center">
             <KeyRound size={20} className="text-blue-500" />
           </div>
-          <h2 className="text-lg font-semibold text-text-primary m-0">Keychain Access Needed</h2>
+        <h2 className="text-lg font-semibold text-text-primary m-0">Credential Storage Access Needed</h2>
         </div>
         
         <div className="px-5 py-6 flex-1 text-sm text-text-secondary leading-relaxed space-y-4">
           <p>
-            Firelink uses a browser extension to seamlessly capture downloads. 
-            To securely store the pairing token that connects the app and the extension, 
-            we need access to the macOS Keychain.
+            Firelink uses the browser extension to seamlessly capture downloads.
+            To securely store the pairing token that connects the app and the extension,
+            we need access to this system's credential store.
           </p>
           <p>
-            <strong>Note:</strong> Firelink only requests access to its own dedicated entry in the Keychain. It cannot and will not access any other passwords or Keychain items on your system.
+            <strong>Note:</strong> Firelink only requests access to its own dedicated credential entry. It cannot and will not access other saved passwords or credential items on your system.
           </p>
           
           {error && (

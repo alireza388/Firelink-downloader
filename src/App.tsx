@@ -545,7 +545,9 @@ function App() {
     });
 
     const unlistenExtension = listen('extension-add-download', (event) => {
-      useDownloadStore.getState().handleExtensionDownload(event.payload);
+      useDownloadStore.getState().handleExtensionDownload(event.payload).catch(error => {
+        console.error('Failed to handle browser extension download:', error);
+      });
     });
     const unlistenDeepLink = listen('deep-link-add-download', (event) => {
       useDownloadStore.getState().openAddModalWithUrls(event.payload);

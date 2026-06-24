@@ -337,7 +337,7 @@ fn claim_request(signature: &str, timestamp: u64, replay_cache: &ReplayCache) ->
     };
     cache.retain(|_, seen_at| now.saturating_sub(*seen_at) < SIGNATURE_MAX_AGE_MS);
     if cache.len() > 10_000 {
-        cache.clear();
+        return false;
     }
     let key = format!("{timestamp}:{}", signature.to_ascii_lowercase());
     cache.insert(key, now).is_none()

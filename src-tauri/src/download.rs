@@ -580,14 +580,14 @@ async fn download_attempt(
         )));
     }
 
-    let mut resumed = existing_len > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+    let resumed = existing_len > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
     if resumed {
         let content_range = response
             .headers()
             .get(reqwest::header::CONTENT_RANGE)
             .and_then(|h| h.to_str().ok());
         if !content_range.is_some_and(|r| r.starts_with(&format!("bytes {}-", existing_len))) {
-            resumed = false;
+            return Err(AttemptError::Failed("Server returned invalid Content-Range for resume".to_string()));
         }
     }
     let completed_at_start = if resumed { existing_len } else { 0 };

@@ -30,33 +30,34 @@
     "dev": "vite",
     "bindings": "cd src-tauri && cargo test export_bindings --lib",
     "build": "tsc && vite build",
+    "check:updates": "node scripts/check-updates.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.3.0",
-    "@tauri-apps/api": "^2",
+    "@tailwindcss/vite": "^4.3.1",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-log": "^2.8.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2",
-    "lucide-react": "^1.17.0",
+    "lucide-react": "^1.21.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "^2.11.3",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^6.0.2",
-    "autoprefixer": "^10.5.0",
+    "@vitejs/plugin-react": "^6.0.3",
+    "autoprefixer": "^10.5.1",
     "postcss": "^8.5.15",
-    "tailwindcss": "^4.3.0",
-    "typescript": "~5.8.3",
-    "vite": "^8.0.16",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.0",
     "vitest": "^4.1.9"
   }
 }

@@ -8,6 +8,16 @@ skills-lock.json
 *.xcuserdata/
 *.xcuserstate
 
+# Local agent and planning notes
+AGENT.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+implementation_plan.md
+CROSS_PLATFORM_CHECKLIST.md
+Cross-platform-checklist-gemini.MD
+YouTube_media_download_handoff.md
+
 # Frontend output and logs
 node_modules/
 dist/

@@ -106,6 +106,7 @@ export interface SettingsState {
   siteLogins: SiteLogin[];
   extensionPairingToken: string;
   isPairingTokenPersistent: boolean;
+  keychainAccessGranted: boolean;
   autoCheckUpdates: boolean;
   showKeychainModal: boolean;
 
@@ -178,7 +179,7 @@ const generateSecureToken = () => {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       theme: 'system',
       baseDownloadFolder: '~/Downloads',
       categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
@@ -224,6 +225,7 @@ export const useSettingsStore = create<SettingsState>()(
       siteLogins: [],
       extensionPairingToken: '',
       isPairingTokenPersistent: true,
+      keychainAccessGranted: false,
       autoCheckUpdates: true,
       showKeychainModal: false,
 
@@ -314,7 +316,8 @@ export const useSettingsStore = create<SettingsState>()(
         set({ extensionPairingToken: token });
       },
       hydratePairingToken: async () => {
-        const result = await invoke('hydrate_extension_pairing_token');
+        const granted = get().keychainAccessGranted;
+        const result = await invoke(granted ? 'grant_keychain_access' : 'hydrate_extension_pairing_token');
         set({ 
           extensionPairingToken: result.token,
           isPairingTokenPersistent: result.persistent 
@@ -324,8 +327,8 @@ export const useSettingsStore = create<SettingsState>()(
         }
         return result.tokenChanged;
       },
-      setAutoCheckUpdates: (autoCheckUpdates) => set({ autoCheckUpdates }),
-      setShowKeychainModal: (show) => set({ showKeychainModal: show }),
+      setAutoCheckUpdates: (autoCheckUpdates: boolean) => set({ autoCheckUpdates }),
+      setShowKeychainModal: (show: boolean) => set({ showKeychainModal: show }),
     }),
     {
       name: 'firelink-settings',
@@ -393,6 +396,7 @@ export const useSettingsStore = create<SettingsState>()(
         preventsSleepWhileDownloading: state.preventsSleepWhileDownloading,
         mediaCookieSource: state.mediaCookieSource,
         siteLogins: state.siteLogins,
+        keychainAccessGranted: state.keychainAccessGranted,
         autoCheckUpdates: state.autoCheckUpdates
       }),
       merge: (persistedState: unknown, currentState) => {

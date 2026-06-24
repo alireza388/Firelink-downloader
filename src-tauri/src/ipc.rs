@@ -278,6 +278,8 @@ pub struct PersistedSettings {
     // frontend. The field is kept on legacy persisted JSON only; serde ignores
     // unknown fields when decoding, so existing installs migrate cleanly.
     pub auto_check_updates: bool,
+    #[serde(default)]
+    pub keychain_access_granted: bool,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]

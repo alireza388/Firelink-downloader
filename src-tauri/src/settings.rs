@@ -289,6 +289,7 @@ fn default_settings() -> PersistedSettings {
         media_cookie_source: MediaCookieSource::None,
         site_logins: Vec::new(),
         auto_check_updates: true,
+        keychain_access_granted: false,
     }
 }
 

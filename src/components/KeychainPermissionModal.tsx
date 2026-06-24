@@ -19,6 +19,7 @@ export const KeychainPermissionModal: React.FC = () => {
     try {
       const result = await invoke('grant_keychain_access');
       if (result.persistent) {
+        useSettingsStore.setState({ keychainAccessGranted: true });
         await useSettingsStore.getState().hydratePairingToken();
         setShowKeychainModal(false);
       } else {

@@ -8,7 +8,7 @@ import {
 } from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
-  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code, ShieldAlert
+  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code, ShieldAlert, Check
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
@@ -1055,7 +1055,19 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                 </div>
               </div>
 
-              {!settings.isPairingTokenPersistent && (
+              {settings.isPairingTokenPersistent ? (
+                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 flex items-center gap-3">
+                  <div className="p-1.5 bg-green-500/20 rounded-full text-green-500 flex-shrink-0">
+                    <Check size={16} strokeWidth={2.5} />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-semibold text-green-500 m-0">Keychain Access Granted</h4>
+                    <p className="text-xs text-text-secondary m-0 mt-0.5">
+                      Your pairing token is securely saved and will persist across restarts.
+                    </p>
+                  </div>
+                </div>
+              ) : (
                 <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 flex items-start gap-3">
                   <ShieldAlert className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
                   <div className="flex-1">
@@ -1066,7 +1078,7 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                     </p>
                     <button 
                       onClick={() => settings.setShowKeychainModal(true)}
-                      className="app-button primary text-xs py-1"
+                      className="px-4 py-1.5 rounded-md text-xs font-medium transition-colors bg-accent text-white hover:bg-accent/90 shadow-sm"
                     >
                       Grant Keychain Access
                     </button>

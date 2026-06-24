@@ -45,3 +45,11 @@ if (rootElement) {
     </StrictMode>,
   );
 }
+
+// Prevent the webview's default context menu ("Reload", etc.) on right-click.
+// Individual components that provide custom context menus call preventDefault()
+// in their own onContextMenu handlers, which fires before this document-level
+// listener and is unaffected.
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+});

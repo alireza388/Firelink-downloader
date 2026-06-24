@@ -3435,7 +3435,12 @@ fn hydrate_extension_pairing_token(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
-    let skip_keychain = !crate::db::is_keychain_access_granted(&connection).unwrap_or(false);
+    // Always skip the keychain during automatic hydration so the operating
+    // system never presents a credential-access prompt before the app's own
+    // modal is visible.  The frontend will display the KeychainPermissionModal
+    // and only call grant_keychain_access — which touches the keychain — after
+    // the user explicitly clicks "Grant Access".
+    let skip_keychain = true;
     match crate::db::hydrate_pairing_token(&mut connection, skip_keychain) {
         Ok((token, token_changed)) => {
             if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
@@ -4210,7 +4215,7 @@ mod tests {
     }
 }
 
-static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[tauri::command]
 fn toggle_log_pause(pause: bool) {

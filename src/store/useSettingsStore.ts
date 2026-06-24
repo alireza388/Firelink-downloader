@@ -179,7 +179,7 @@ const generateSecureToken = () => {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       theme: 'system',
       baseDownloadFolder: '~/Downloads',
       categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
@@ -316,8 +316,10 @@ export const useSettingsStore = create<SettingsState>()(
         set({ extensionPairingToken: token });
       },
       hydratePairingToken: async () => {
-        const granted = get().keychainAccessGranted;
-        const result = await invoke(granted ? 'grant_keychain_access' : 'hydrate_extension_pairing_token');
+        // Always use the safe hydration path that never touches the OS keychain
+        // on its own.  The modal will be shown when needed and only the explicit
+        // "Grant Access" action (→ grant_keychain_access) triggers the OS prompt.
+        const result = await invoke('hydrate_extension_pairing_token');
         set({ 
           extensionPairingToken: result.token,
           isPairingTokenPersistent: result.persistent 

@@ -2,7 +2,7 @@ import { info as tauriInfo, warn as tauriWarn, error as tauriError, debug as tau
 import { invoke } from '@tauri-apps/api/core';
 
 // Default to true to match backend default
-let isPaused = false;
+let isPaused = true;
 
 let initPromise: Promise<void> | null = null;
 

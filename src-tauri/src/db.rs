@@ -553,6 +553,7 @@ pub fn load_settings(connection: &Connection) -> Result<Option<String>, String> 
         .map_err(|error| format!("failed to load settings: {error}"))
 }
 
+#[allow(dead_code)]
 pub fn is_keychain_access_granted(connection: &Connection) -> Result<bool, String> {
     let Some(settings) = load_settings(connection)? else {
         return Ok(false);

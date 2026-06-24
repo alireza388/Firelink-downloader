@@ -182,6 +182,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       default: return d.category === filter;
     }
   });
+
+  // Sort by queue position when viewing a specific queue so the visual
+  // order matches the queue order and move-up/down buttons reflect reality.
+  const sortedDownloads = filter.startsWith('queue:')
+    ? [...filteredDownloads].sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
+    : filteredDownloads;
   const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
     if (e.metaKey || e.ctrlKey) {
       const newSelected = new Set(selectedIds);
@@ -193,8 +199,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       setSelectedIds(newSelected);
       setLastSelectedId(item.id);
     } else if (e.shiftKey && lastSelectedId) {
-      const currentIndex = filteredDownloads.findIndex(d => d.id === item.id);
-      const lastIndex = filteredDownloads.findIndex(d => d.id === lastSelectedId);
+      const currentIndex = sortedDownloads.findIndex(d => d.id === item.id);
+      const lastIndex = sortedDownloads.findIndex(d => d.id === lastSelectedId);
       
       if (currentIndex !== -1 && lastIndex !== -1) {
         const start = Math.min(currentIndex, lastIndex);
@@ -202,7 +208,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
         
         const newSelected = new Set(selectedIds);
         for (let i = start; i <= end; i++) {
-          newSelected.add(filteredDownloads[i].id);
+          newSelected.add(sortedDownloads[i].id);
         }
         setSelectedIds(newSelected);
       }
@@ -290,9 +296,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
           <button 
             className="main-control-button" 
-            disabled={filteredDownloads.length === 0}
+            disabled={sortedDownloads.length === 0}
             onClick={() => {
-              filteredDownloads
+              sortedDownloads
                 .filter(d => canStartDownload(d.status))
                 .forEach(d => handleResume(d));
             }}
@@ -303,9 +309,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
           <button 
             className="main-control-button" 
-            disabled={filteredDownloads.length === 0}
+            disabled={sortedDownloads.length === 0}
             onClick={() => {
-              filteredDownloads.filter(d => canPauseDownload(d.status)).forEach(d => handlePause(d.id));
+              sortedDownloads.filter(d => canPauseDownload(d.status)).forEach(d => handlePause(d.id));
             }}
             title="Pause All"
           >
@@ -317,12 +323,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       <div className="downloads-content-header">
         <div className="downloads-title">
           {getFilterTitle()}
-          <span className="downloads-count">{filteredDownloads.length}</span>
+          <span className="downloads-count">{sortedDownloads.length}</span>
         </div>
       </div>
 
       <div className="downloads-table flex-1 flex flex-col">
-        {filteredDownloads.length === 0 ? (
+        {sortedDownloads.length === 0 ? (
           <div className="downloads-empty-state">
             <ArrowDownCircle aria-hidden="true" />
             <div className="downloads-empty-title">No Downloads</div>
@@ -357,7 +363,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
             <div className="download-table-body">
             <div className="download-table-list">
-              {filteredDownloads.map((d, index) => (
+              {sortedDownloads.map((d, index) => (
                 <DownloadItemComponent
                   key={d.id}
                   downloadId={d.id}

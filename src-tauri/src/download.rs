@@ -451,7 +451,7 @@ async fn download_file(
         }
     }
 
-    let client = match build_client(&payload) {
+    let (client, default_headers) = match build_client(&payload) {
         Ok(client) => client,
         Err(error) => return DownloadOutcome::Failed(error),
     };
@@ -474,7 +474,7 @@ async fn download_file(
         let mut attempts = 0_usize;
         loop {
             attempts += 1;
-            match download_attempt(&events, &client, &payload, url, &mut control_rx).await {
+            match download_attempt(&events, &client, &default_headers, &payload, url, &mut control_rx).await {
                 Ok(()) => return DownloadOutcome::Completed,
                 Err(AttemptError::Controlled(DownloadControl::Pause)) => {
                     return DownloadOutcome::Paused;
@@ -522,6 +522,7 @@ async fn download_file(
                     if !transient && !crate::retry::is_permanent_network_error(&error) {
                         // Legacy `max_tries` cap for ambiguous HTTP statuses (e.g.
                         // 500) that are neither clearly transient nor permanent.
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
 
@@ -543,6 +544,7 @@ enum AttemptError {
 async fn download_attempt(
     events: &CoordinatorEventSink,
     client: &Client,
+    default_headers: &reqwest::header::HeaderMap,
     payload: &DownloadPayload,
     url: &str,
     control_rx: &mut mpsc::Receiver<DownloadControl>,
@@ -551,7 +553,7 @@ async fn download_attempt(
         .await
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let mut request = client.get(url);
+    let mut request = client.get(url).headers(default_headers.clone());
     if existing_len > 0 {
         request = request.header(header::RANGE, format!("bytes={existing_len}-"));
     }
@@ -578,7 +580,16 @@ async fn download_attempt(
         )));
     }
 
-    let resumed = existing_len > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+    let mut resumed = existing_len > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+    if resumed {
+        let content_range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|h| h.to_str().ok());
+        if !content_range.is_some_and(|r| r.starts_with(&format!("bytes {}-", existing_len))) {
+            resumed = false;
+        }
+    }
     let completed_at_start = if resumed { existing_len } else { 0 };
     let total_len = response
         .content_length()
@@ -670,7 +681,7 @@ async fn download_attempt(
     Ok(())
 }
 
-fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
+fn build_client(payload: &DownloadPayload) -> Result<(Client, HeaderMap), String> {
     let mut headers = HeaderMap::new();
     if let Some(raw_headers) = payload.headers.as_deref() {
         for line in raw_headers
@@ -694,7 +705,7 @@ fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
         );
     }
 
-    let mut builder = Client::builder().default_headers(headers);
+    let mut builder = Client::builder();
     if let Some(user_agent) = payload
         .user_agent
         .as_deref()
@@ -710,7 +721,7 @@ fn build_client(payload: &DownloadPayload) -> Result<Client, String> {
         }
     }
 
-    builder.build().map_err(|error| error.to_string())
+    builder.build().map_err(|error| error.to_string()).map(|c| (c, headers))
 }
 
 pub(crate) fn format_speed(bytes_per_second: f64) -> String {

@@ -134,6 +134,8 @@ fn load_records(app_handle: &tauri::AppHandle) -> Result<Vec<DownloadOwnershipRe
 }
 
 fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+    let settings = crate::settings::load_settings(app_handle).ok();
+    
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     let downloads = crate::db::load_downloads(&connection)?
@@ -141,8 +143,7 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
         .map(|value| serde_json::from_str::<crate::ipc::DownloadItem>(&value))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Invalid download queue ownership data: {error}"))?;
-    drop(connection);
-    let settings = crate::settings::load_settings(app_handle).ok();
+
 
     let mut paths = Vec::new();
     for download in downloads {

@@ -114,7 +114,8 @@ export const getSiteLogin = (url: string, settings: ReturnType<typeof useSetting
         const suffix = pattern.substring(2);
         if (host === suffix || host.endsWith('.' + suffix)) return login;
       } else if (pattern.includes('*')) {
-        const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+        const collapsed = pattern.replace(/\*+/g, '*');
+        const escaped = collapsed.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp('^' + escaped.replace(/\*/g, '.*') + '$');
         if (regex.test(host)) return login;
       } else if (host === pattern) {
@@ -242,6 +243,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const reordered = [...queueItems];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
     const positions = new Map(reordered.map((download, position) => [download.id, position]));
+    const previousDownloads = get().downloads;
     set(state => ({
       downloads: state.downloads.map(download => positions.has(download.id)
         ? { ...download, queuePosition: positions.get(download.id) }
@@ -251,9 +253,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     if (!get().backendRegisteredIds.has(id)) return;
     try {
       const order = await invoke('move_in_queue', { id, queueId, direction });
-      set({ pendingOrder: order });
+      set({ pendingOrder: order as string[] });
     } catch (e) {
       console.error("Failed to move item in queue:", e);
+      set({ downloads: previousDownloads });
     }
   },
   removeFromQueue: async (id) => {

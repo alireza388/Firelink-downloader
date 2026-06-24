@@ -97,7 +97,7 @@ pub fn is_windows_reserved_filename(filename: &str) -> bool {
         .unwrap_or(filename)
         .trim_end_matches(['.', ' '])
         .to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$")
         || numbered_windows_device(&stem, "COM")
         || numbered_windows_device(&stem, "LPT")
 }

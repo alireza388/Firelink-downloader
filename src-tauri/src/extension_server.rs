@@ -314,7 +314,7 @@ fn verify_signature(
         return Err(());
     }
 
-    let token = pairing_token.read().map_err(|_| ())?;
+    let token = pairing_token.read().unwrap_or_else(|e| e.into_inner());
     if token.is_empty() {
         return Err(());
     }
@@ -336,6 +336,9 @@ fn claim_request(signature: &str, timestamp: u64, replay_cache: &ReplayCache) ->
         Err(_) => return false,
     };
     cache.retain(|_, seen_at| now.saturating_sub(*seen_at) < SIGNATURE_MAX_AGE_MS);
+    if cache.len() > 10_000 {
+        cache.clear();
+    }
     let key = format!("{timestamp}:{}", signature.to_ascii_lowercase());
     cache.insert(key, now).is_none()
 }

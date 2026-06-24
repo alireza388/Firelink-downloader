@@ -2506,7 +2506,7 @@ async fn remove_download(
     state.queue_manager.remove_from_pending(&id).await;
 
     state.queue_manager.cancel_aria2_retries(&id).await;
-    let retry_add_guard = state.queue_manager.lock_aria2_retry_add().await;
+
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let removal_result = async {
@@ -2523,7 +2523,7 @@ async fn remove_download(
         state.queue_manager.release_permit(&id).await;
         log::info!("aria2 remove [{}]: gid {} stopped and forgotten", id, gid);
     } else {
-        drop(retry_add_guard);
+
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;
@@ -2599,7 +2599,7 @@ async fn detach_download_for_reconfigure(
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
     state.queue_manager.cancel_aria2_retries(&id).await;
-    let retry_add_guard = state.queue_manager.lock_aria2_retry_add().await;
+
     let gid = state.queue_manager.aria2_gid_for_download(&id);
 
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
@@ -2624,7 +2624,7 @@ async fn detach_download_for_reconfigure(
         state.queue_manager.release_registered_id(&id).await;
         log::info!("aria2 detach [{}]: gid {} stopped and forgotten", id, gid);
     } else {
-        drop(retry_add_guard);
+
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state.download_coordinator.pause_media_with_ack(id.clone(), tx).await?;

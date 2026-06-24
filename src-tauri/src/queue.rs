@@ -113,10 +113,6 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     /// Download ids whose aria2 retry loop must not create another job.
     aria2_retry_cancelled: Mutex<HashSet<String>>,
 
-    /// Serializes retry addUri with remove so a late retry cannot escape
-    /// cancellation and continue writing after deletion.
-    aria2_retry_add_lock: Mutex<()>,
-
     spawner: Arc<dyn SidecarSpawner>,
     app_handle: AppHandle<R>,
 }
@@ -152,7 +148,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
             aria2_payloads: Mutex::new(HashMap::new()),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
             aria2_retry_cancelled: Mutex::new(HashSet::new()),
-            aria2_retry_add_lock: Mutex::new(()),
             spawner,
             app_handle,
         }
@@ -509,9 +504,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.aria2_retry_cancelled.lock().await.remove(id);
     }
 
-    pub async fn lock_aria2_retry_add(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.aria2_retry_add_lock.lock().await
-    }
+
 
     pub fn aria2_gid_for_download(&self, id: &str) -> Option<String> {
         self.aria2_gids
@@ -642,7 +635,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 return;
             }
 
-            let _retry_add_guard = this.aria2_retry_add_lock.lock().await;
             if !this.active_permits.lock().await.contains_key(&id_for_task) {
                 return;
             }

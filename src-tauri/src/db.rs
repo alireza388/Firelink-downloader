@@ -136,6 +136,7 @@ fn migrate_schema(connection: &mut Connection, from_version: i64) -> Result<(), 
                 transaction
                     .execute_batch(
                         "
+                        DROP TABLE IF EXISTS downloads_v0;
                         ALTER TABLE downloads RENAME TO downloads_v0;
                         CREATE TABLE downloads (
                             id TEXT PRIMARY KEY,

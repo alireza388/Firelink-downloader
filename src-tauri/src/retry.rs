@@ -81,7 +81,7 @@ pub fn is_permanent_network_error(message: &str) -> bool {
         "http 404.",
         "http 410",
         "http 451",
-        "not found",
+        "404 not found",
         "permission denied",
         "no space left on device",
     ];

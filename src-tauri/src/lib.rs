@@ -2402,15 +2402,17 @@ async fn resume_download(
                 crate::ipc::DownloadStateEvent::new(&id, crate::ipc::DownloadStatus::Queued),
             );
             
-            let app_state = state.inner().clone();
+            let queue_manager = state.queue_manager.clone();
+            let aria2_port = state.aria2_port;
+            let aria2_secret = state.aria2_secret.clone();
             let id_clone = id.clone();
             let gid_clone = gid.clone();
             
             tauri::async_runtime::spawn(async move {
-                let acquired = app_state.queue_manager.ensure_aria2_permit(&id_clone).await;
+                let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
                 let result = match rpc_call(
-                    app_state.aria2_port,
-                    &app_state.aria2_secret,
+                    aria2_port,
+                    &aria2_secret,
                     "aria2.unpause",
                     serde_json::json!([gid_clone]),
                 )
@@ -2419,7 +2421,7 @@ async fn resume_download(
                     Ok(result) => result,
                     Err(error) => {
                         if acquired {
-                            app_state.queue_manager.release_permit(&id_clone).await;
+                            queue_manager.release_permit(&id_clone).await;
                         }
                         log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
                         return;
@@ -2427,7 +2429,7 @@ async fn resume_download(
                 };
                 if let Err(error) = ensure_aria2_gid_result("unpause", &gid_clone, &result) {
                     if acquired {
-                        app_state.queue_manager.release_permit(&id_clone).await;
+                        queue_manager.release_permit(&id_clone).await;
                     }
                     log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
                     return;

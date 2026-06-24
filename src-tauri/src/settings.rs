@@ -50,8 +50,17 @@ pub fn preserve_scheduler_runtime_keys(
     let Some(existing) = existing else {
         return Ok(incoming.to_string());
     };
-    let existing_document = decode_document(&Value::String(existing.to_string()))?;
-    let existing_state = settings_state(&existing_document)?;
+    let existing_document = match decode_document(&Value::String(existing.to_string())) {
+        Ok(doc) => doc,
+        Err(e) => {
+            log::warn!("Failed to decode existing settings, dropping runtime keys: {}", e);
+            return Ok(incoming.to_string());
+        }
+    };
+    let existing_state = match settings_state(&existing_document) {
+        Ok(state) => state,
+        Err(_) => return Ok(incoming.to_string()),
+    };
     let mut incoming_document = decode_document(&Value::String(incoming.to_string()))?;
     let incoming_state = settings_state_mut(&mut incoming_document)?;
     for key in ["schedulerLastStartKey", "schedulerLastStopKey"] {

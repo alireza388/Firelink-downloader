@@ -745,6 +745,9 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
             if (ipv6.segments()[0] & 0xfe00) == 0xfc00 { // ULA check
                 return Err("SSRF blocked: Private/local IP not allowed".to_string());
             }
+            if (ipv6.segments()[0] & 0xffc0) == 0xfe80 { // Link-local check
+                return Err("SSRF blocked: Private/local IP not allowed".to_string());
+            }
         }
     }
     Ok(Some((host.to_string(), addr)))
@@ -1317,7 +1320,7 @@ pub struct AppState {
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
     pub extension_server_port: extension_server::SharedServerPort,
     pub extension_server_shutdown: tokio::sync::watch::Sender<bool>,
-    pub aria2_port: u16,
+    pub aria2_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
     pub aria2_secret: String,
     pub media_semaphore: Arc<tokio::sync::Semaphore>,
     pub sleep_preventer: Arc<Mutex<Option<keepawake::KeepAwake>>>,
@@ -1551,7 +1554,7 @@ async fn test_aria2c(app_handle: tauri::AppHandle, state: tauri::State<'_, AppSt
     }
 
     let result = rpc_call(
-        state.aria2_port,
+        state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
         &state.aria2_secret,
         "aria2.getVersion",
         serde_json::json!([]),
@@ -1926,7 +1929,7 @@ async fn get_engine_status(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<EngineStatusResult, String> {
-    let port = state.aria2_port;
+    let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
     let secret = state.aria2_secret.clone();
 
     let (aria2, ytdlp, ffmpeg, deno) = tokio::join!(
@@ -1946,7 +1949,7 @@ async fn get_aria2_engine_status(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<EngineStatusItem, String> {
-    Ok(check_aria2(&app_handle, state.aria2_port, &state.aria2_secret).await)
+    Ok(check_aria2(&app_handle, state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret).await)
 }
 
 #[tauri::command]
@@ -2072,7 +2075,7 @@ pub(crate) async fn start_media_download_internal(
            .arg("--progress-delta").arg("0.2")
            .arg("--progress-template")
            .arg(format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"))
-           .arg("--no-check-formats")
+
            .arg("--socket-timeout").arg("20")
            .arg("--retries").arg("3")
            .arg("--extractor-retries").arg("3")
@@ -2242,6 +2245,7 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
                             log::error!("yt-dlp shell error [{}]: {}", id, err);
+                            cleanup_media_artifacts(&out_path, false).await;
                             break err;
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
@@ -2262,6 +2266,7 @@ pub(crate) async fn start_media_download_internal(
                                 return Ok(());
                             }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
+                            cleanup_media_artifacts(&out_path, false).await;
                             break if stderr_tail.is_empty() {
                                 format!("yt-dlp exited with code {:?}", payload.code)
                             } else {
@@ -2270,6 +2275,7 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(_) => {}
                         None => {
+                            cleanup_media_artifacts(&out_path, false).await;
                             break if stderr_tail.is_empty() {
                                 "yt-dlp process ended unexpectedly".to_string()
                             } else {
@@ -2325,7 +2331,7 @@ async fn pause_download(
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let status = aria2_download_status(
-            state.aria2_port,
+            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
             &state.aria2_secret,
             gid,
         )
@@ -2336,7 +2342,7 @@ async fn pause_download(
             }
             "active" | "waiting" => {
                 let result = rpc_call(
-                    state.aria2_port,
+                    state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                     &state.aria2_secret,
                     "aria2.forcePause",
                     serde_json::json!([gid]),
@@ -2412,7 +2418,7 @@ async fn resume_download(
         return Ok(false);
     }
 
-    let status = aria2_download_status(state.aria2_port, &state.aria2_secret, &gid).await?;
+    let status = aria2_download_status(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, &gid).await?;
     match status.as_str() {
         "paused" => {
             use tauri::Emitter;
@@ -2422,11 +2428,12 @@ async fn resume_download(
             );
             
             let queue_manager = state.queue_manager.clone();
-            let aria2_port = state.aria2_port;
+            let aria2_port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
             let aria2_secret = state.aria2_secret.clone();
             let id_clone = id.clone();
             let gid_clone = gid.clone();
             
+            let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
                 let result = match rpc_call(
@@ -2443,6 +2450,13 @@ async fn resume_download(
                             queue_manager.release_permit(&id_clone).await;
                         }
                         log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
+                        let _ = app_handle_clone.emit(
+                            "download-state",
+                            crate::ipc::DownloadStateEvent::new(
+                                &id_clone,
+                                crate::ipc::DownloadStatus::Failed,
+                            ),
+                        );
                         return;
                     }
                 };
@@ -2451,6 +2465,13 @@ async fn resume_download(
                         queue_manager.release_permit(&id_clone).await;
                     }
                     log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
+                    let _ = app_handle_clone.emit(
+                        "download-state",
+                        crate::ipc::DownloadStateEvent::new(
+                            &id_clone,
+                            crate::ipc::DownloadStatus::Failed,
+                        ),
+                    );
                     return;
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
@@ -2510,8 +2531,8 @@ async fn remove_download(
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let removal_result = async {
-            force_remove_aria2_gid(state.aria2_port, &state.aria2_secret, gid).await?;
-            wait_for_aria2_stopped(state.aria2_port, &state.aria2_secret, gid).await
+            force_remove_aria2_gid(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await?;
+            wait_for_aria2_stopped(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await
         }
         .await;
         if let Err(error) = removal_result {
@@ -2605,13 +2626,13 @@ async fn detach_download_for_reconfigure(
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let removal_result = async {
             rpc_call(
-                state.aria2_port,
+                state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                 &state.aria2_secret,
                 "aria2.forcePause",
                 serde_json::json!([gid]),
             )
             .await?;
-            wait_for_aria2_stopped(state.aria2_port, &state.aria2_secret, gid).await
+            wait_for_aria2_stopped(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, gid).await
         }
         .await;
         if let Err(error) = removal_result {
@@ -2956,7 +2977,7 @@ async fn set_global_speed_limit(state: tauri::State<'_, AppState>, limit: Option
         .and_then(normalize_speed_limit_for_aria2)
         .unwrap_or_else(|| "0".to_string());
     rpc_call(
-        state.aria2_port,
+        state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
         &state.aria2_secret,
         "aria2.changeGlobalOption",
         serde_json::json!([{"max-overall-download-limit": limit_str}])
@@ -3313,7 +3334,7 @@ async fn read_logs(app_handle: tauri::AppHandle, limit: usize) -> Result<Vec<Str
 #[tauri::command]
 async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
     for file in log_files(&app_handle).await? {
-        let _ = tokio::fs::write(&file, "").await;
+        tokio::fs::write(&file, "").await.map_err(|e| format!("Failed to clear log file {:?}: {}", file, e))?;
     }
     Ok(())
 }
@@ -3332,7 +3353,7 @@ async fn export_logs(
         chrono::Utc::now().to_rfc3339(),
     );
     let (aria2, ytdlp, ffmpeg, deno) = tokio::join!(
-        check_aria2(&app_handle, state.aria2_port, &state.aria2_secret),
+        check_aria2(&app_handle, state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret),
         check_ytdlp(&app_handle),
         check_ffmpeg(&app_handle),
         check_deno(&app_handle),
@@ -3883,10 +3904,9 @@ pub fn run() {
     let server_extension_port = extension_server_port.clone();
     let (extension_server_shutdown_tx, extension_server_shutdown_rx) = tokio::sync::watch::channel(false);
 
-    let aria2_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|addr| addr.port())
-        .unwrap_or(6800);
+    let initial_aria2_port = 6800; // Will be determined dynamically in background
+    let aria2_port = Arc::new(std::sync::atomic::AtomicU16::new(initial_aria2_port));
+    let aria2_port_clone = Arc::clone(&aria2_port);
     let aria2_secret = uuid::Uuid::new_v4().to_string();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -3956,7 +3976,7 @@ pub fn run() {
                 extension_frontend_ready,
                 extension_server_port,
                 extension_server_shutdown: extension_server_shutdown_tx.clone(),
-                aria2_port,
+                aria2_port: aria2_port.clone(),
                 aria2_secret: aria2_secret.clone(),
                 media_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
                 sleep_preventer: Arc::new(Mutex::new(None)),
@@ -4016,123 +4036,141 @@ pub fn run() {
                 .map(|settings| settings.global_speed_limit)
                 .unwrap_or_default();
 
-            match resolve_bundled_binary_path(app.handle(), "aria2c") {
-                Ok(binary_path) => {
-                    let mut cmd = std::process::Command::new(&binary_path);
-                    
-                    let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
-                    use std::io::Write;
-                    let config_content = format!("rpc-secret={}\n", aria2_secret);
-                    config_file.write_all(config_content.as_bytes()).expect("failed to write aria2 config file");
-                    let config_path = config_file.into_temp_path();
+            let aria2_secret_clone = aria2_secret.clone();
+            let app_handle_bg = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
 
-                    cmd.arg("--enable-rpc=true")
-                        .arg(format!("--conf-path={}", config_path.display()))
-                        .arg(format!("--rpc-listen-port={}", aria2_port))
-                        .arg("--rpc-listen-all=false")
-                        .arg("--continue=true")
-                        .arg("--retry-wait=2")
-                        .arg("--allow-overwrite=false")
-                        .arg("--summary-interval=1")
-                        .arg("--console-log-level=warn")
-                        .arg("--download-result=hide")
-                        .arg("--max-concurrent-downloads=9999")
-                        .arg("--check-certificate=true");
-
-            if let Some(global_speed_limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {
-                cmd.arg(format!("--max-overall-download-limit={}", global_speed_limit));
-            }
-
-                    cmd.stdout(std::process::Stdio::null());
-                    cmd.stderr(std::process::Stdio::piped());
-
-                    match cmd.spawn() {
-                        Ok(mut child) => {
-                            log::info!("aria2c spawned successfully on port {}", aria2_port);
-
-                            let daemon_app = app.handle().clone();
-                            if let Some(stderr) = child.stderr.take() {
-                                std::thread::spawn(move || {
-                                    use std::io::BufRead;
-                                    let reader = std::io::BufReader::new(stderr);
-                                    for line in reader.lines().map_while(Result::ok) {
-                                        let trimmed = line.trim().to_string();
-                                        if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
-                                            stderr_lock.push_str(&trimmed);
-                                            stderr_lock.push('\n');
-                                            let excess = stderr_lock.len().saturating_sub(8192);
-                                            if excess > 0 {
-                                                let _ = stderr_lock.drain(..excess);
-                                            }
-                                        }
-                                        let lower = trimmed.to_lowercase();
-                                        if lower.contains("error") || lower.contains("critical") {
-                                            log::error!("aria2c stderr: {}", trimmed);
-                                        }
-                                    }
-                                });
+                let mut ws_port = 6800;
+                match resolve_bundled_binary_path(&app_handle_bg, "aria2c") {
+                    Ok(binary_path) => {
+                        let mut success = false;
+                        for attempt_port in 6800..6900 {
+                            let mut cmd = std::process::Command::new(&binary_path);
+                            
+                            let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
+                            use std::io::Write;
+                            let config_content = format!("rpc-secret={}\n", aria2_secret_clone);
+                            config_file.write_all(config_content.as_bytes()).expect("failed to write aria2 config file");
+                            let config_path = config_file.into_temp_path();
+        
+                            cmd.arg("--enable-rpc=true")
+                                .arg(format!("--conf-path={}", config_path.display()))
+                                .arg(format!("--rpc-listen-port={}", attempt_port))
+                                .arg("--rpc-listen-all=false")
+                                .arg("--continue=true")
+                                .arg("--retry-wait=2")
+                                .arg("--allow-overwrite=false")
+                                .arg("--summary-interval=1")
+                                .arg("--console-log-level=warn")
+                                .arg("--download-result=hide")
+                                .arg("--max-concurrent-downloads=9999")
+                                .arg("--check-certificate=true");
+        
+                            if let Some(limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {
+                                cmd.arg(format!("--max-overall-download-limit={}", limit));
                             }
+        
+                            cmd.stdout(std::process::Stdio::null());
+                            cmd.stderr(std::process::Stdio::piped());
+        
+                            match cmd.spawn() {
+                                Ok(mut child) => {
+                                    // Give it a moment to fail if port is in use
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    if let Ok(Some(_)) = child.try_wait() {
+                                        // Process exited, likely port collision, try next
+                                        continue;
+                                    }
 
-                            let guard = app.state::<Aria2DaemonGuard>();
-                            *guard.child.lock().unwrap() = Some(child);
-                            *guard.config_path.lock().unwrap() = Some(config_path);
+                                    log::info!("aria2c spawned successfully on port {}", attempt_port);
 
-                            let port = aria2_port;
-                            let secret = aria2_secret.clone();
-                            let start = std::time::Instant::now();
-                            let ready = tauri::async_runtime::block_on(async {
-                                let mut last_err = String::new();
-                                loop {
-                                    if start.elapsed() > std::time::Duration::from_secs(5) {
-                                        return Err(if last_err.is_empty() {
-                                            "aria2 daemon did not become ready within 5 seconds".to_string()
-                                        } else {
-                                            format!("aria2 did not become ready: {last_err}")
+                                    aria2_port_clone.store(attempt_port, std::sync::atomic::Ordering::Relaxed);
+                                    ws_port = attempt_port;
+                                    success = true;
+        
+                                    let daemon_app = app_handle_bg.clone();
+                                    if let Some(stderr) = child.stderr.take() {
+                                        std::thread::spawn(move || {
+                                            use std::io::BufRead;
+                                            let reader = std::io::BufReader::new(stderr);
+                                            for line in reader.lines().map_while(Result::ok) {
+                                                let trimmed = line.trim().to_string();
+                                                if let Ok(mut stderr_lock) = daemon_app.state::<Aria2DaemonGuard>().last_stderr.lock() {
+                                                    stderr_lock.push_str(&trimmed);
+                                                    stderr_lock.push('\n');
+                                                    let excess = stderr_lock.len().saturating_sub(8192);
+                                                    if excess > 0 {
+                                                        let _ = stderr_lock.drain(..excess);
+                                                    }
+                                                }
+                                                let lower = trimmed.to_lowercase();
+                                                if lower.contains("error") || lower.contains("critical") {
+                                                    log::error!("aria2c stderr: {}", trimmed);
+                                                }
+                                            }
                                         });
                                     }
-                                    match rpc_call(port, &secret, "aria2.getVersion", serde_json::json!([])).await {
-                                        Ok(ver) => return Ok(ver),
-                                        Err(e) => {
-                                            last_err = e;
-                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        
+                                    let guard = app_handle_bg.state::<Aria2DaemonGuard>();
+                                    *guard.child.lock().unwrap() = Some(child);
+                                    *guard.config_path.lock().unwrap() = Some(config_path);
+        
+                                    let mut last_err = String::new();
+                                    let start = std::time::Instant::now();
+                                    let mut ready = false;
+                                    while start.elapsed() < std::time::Duration::from_secs(5) {
+                                        match rpc_call(attempt_port, &aria2_secret_clone, "aria2.getVersion", serde_json::json!([])).await {
+                                            Ok(ver) => {
+                                                let v = ver.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                                log::info!("aria2 daemon ready (version {}) on port {}", v, attempt_port);
+                                                ready = true;
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                last_err = e;
+                                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                            }
                                         }
                                     }
-                                }
-                            });
-
-                            match ready {
-                                Ok(ver) => {
-                                    let v = ver.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                    log::info!("aria2 daemon ready (version {}) on port {}", v, port);
+                                    if !ready {
+                                        let err = if last_err.is_empty() { "aria2 daemon did not become ready within 5 seconds".to_string() } else { format!("aria2 did not become ready: {last_err}") };
+                                        log::error!("{}", err);
+                                        *guard.startup_error.lock().unwrap() = Some(err);
+                                    }
+                                    break;
                                 }
                                 Err(e) => {
-                                    log::error!("aria2 daemon readiness check failed: {}", e);
-                                    let guard = app.state::<Aria2DaemonGuard>();
-                                    *guard.startup_error.lock().unwrap() = Some(e);
+                                    log::error!("Failed to spawn aria2c: {}", e);
+                                    let guard = app_handle_bg.state::<Aria2DaemonGuard>();
+                                    *guard.startup_error.lock().unwrap() = Some(format!("Failed to spawn aria2c: {e}"));
+                                    break;
                                 }
                             }
                         }
-                        Err(e) => {
-                            log::error!("Failed to spawn aria2c: {}", e);
-                            let guard = app.state::<Aria2DaemonGuard>();
-                            *guard.startup_error.lock().unwrap() = Some(format!("Failed to spawn aria2c: {e}"));
+                        if !success {
+                            let guard = app_handle_bg.state::<Aria2DaemonGuard>();
+                            *guard.startup_error.lock().unwrap() = Some("Failed to find open port for aria2c".to_string());
                         }
                     }
+                    Err(e) => {
+                        log::error!("Failed to resolve aria2c binary: {}", e);
+                        let guard = app_handle_bg.state::<Aria2DaemonGuard>();
+                        *guard.startup_error.lock().unwrap() = Some(format!("Failed to resolve aria2c: {e}"));
+                    }
                 }
-                Err(e) => {
-                    log::error!("Failed to resolve aria2c binary: {}", e);
-                    let guard = app.state::<Aria2DaemonGuard>();
-                    *guard.startup_error.lock().unwrap() = Some(format!("Failed to resolve aria2c: {e}"));
-                }
-            }
 
-            let app_handle_ws = app.handle().clone();
-            let ws_port = aria2_port;
-            tauri::async_runtime::spawn(async move {
+                let mut ws_retries = 0;
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    if ws_retries > 10 {
+                        log::error!("Max WebSocket reconnection attempts reached. aria2 integration is disabled.");
+                        let guard = app_handle_bg.state::<Aria2DaemonGuard>();
+                        *guard.startup_error.lock().unwrap() = Some("Max WebSocket reconnection attempts reached.".to_string());
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", ws_port);
                     if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(&ws_url).await {
+                        ws_retries = 0; // reset on success
                         use futures_util::StreamExt;
                         let (_, mut read) = ws_stream.split();
                         while let Some(msg) = read.next().await {
@@ -4142,7 +4180,7 @@ pub fn run() {
                                         if let Some(params) = json.get("params").and_then(|p| p.as_array()) {
                                             if let Some(event) = params.first().and_then(|p| p.as_object()) {
                                                 if let Some(gid) = event.get("gid").and_then(|g| g.as_str()) {
-                                                    let state = app_handle_ws.state::<AppState>();
+                                                    let state = app_handle_bg.state::<AppState>();
                                                     let outcome = match method {
                                                         "aria2.onDownloadComplete" => Some(crate::queue::PendingOutcome::Complete),
                                                         "aria2.onDownloadError" => {
@@ -4164,14 +4202,14 @@ pub fn run() {
                             }
                         }
                     }
-                    // Connection lost, clear permits and reconnect
-                    app_handle_ws.state::<AppState>().queue_manager.clear_aria2_permits().await;
+                    ws_retries += 1;
+                    app_handle_bg.state::<AppState>().queue_manager.clear_aria2_permits().await;
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 }
             });
 
             let app_handle_poll = app.handle().clone();
-            let poll_port = aria2_port;
+            let poll_port = aria2_port.clone();
             let poll_secret = aria2_secret.clone();
             let poll_mgr = Arc::clone(&queue_manager_poll);
             tauri::async_runtime::spawn(async move {
@@ -4179,7 +4217,7 @@ pub fn run() {
                 loop {
                     interval.tick().await;
                     let params = serde_json::json!([["gid", "status", "totalLength", "completedLength", "downloadSpeed", "errorMessage"]]);
-                    if let Ok(active_list) = rpc_call(poll_port, &poll_secret, "aria2.tellActive", params).await {
+                    if let Ok(active_list) = rpc_call(poll_port.load(std::sync::atomic::Ordering::Relaxed), &poll_secret, "aria2.tellActive", params).await {
                         if let Some(active_arr) = active_list.as_array() {
                             for status_info in active_arr {
                                 let gid = status_info.get("gid").and_then(|s| s.as_str()).unwrap_or("");
@@ -4221,14 +4259,19 @@ pub fn run() {
 
             let ext_app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = extension_server::start_server(
-                    ext_app_handle,
-                    server_pairing_token.clone(),
-                    server_frontend_ready.clone(),
-                    server_extension_port.clone(),
-                    extension_server_shutdown_rx,
-                ).await {
-                    eprintln!("Browser extension server unavailable: {error}");
+                loop {
+                    if let Err(error) = extension_server::start_server(
+                        ext_app_handle.clone(),
+                        server_pairing_token.clone(),
+                        server_frontend_ready.clone(),
+                        server_extension_port.clone(),
+                        extension_server_shutdown_rx.clone(),
+                    ).await {
+                        log::error!("Browser extension server unavailable: {error}");
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    } else {
+                        break;
+                    }
                 }
             });
             Ok(())

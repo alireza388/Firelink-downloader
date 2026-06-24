@@ -15,6 +15,10 @@ pub async fn reveal_in_file_manager(
         )
     })?;
 
+    if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("Download path was replaced by a symlink before reveal".to_string());
+    }
+
     app_handle
         .opener()
         .reveal_item_in_dir(path.to_string_lossy().as_ref())
@@ -31,6 +35,10 @@ pub async fn open_downloaded_file(
     let path = authorize_download_path(&app_handle, &path)?;
     if !path.exists() {
         return Err(format!("Downloaded file is missing: {}", path.display()));
+    }
+
+    if std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("Download path was replaced by a symlink before open".to_string());
     }
 
     app_handle

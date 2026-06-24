@@ -513,6 +513,7 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!coreReady) return;
     const unlistenDownload = initDownloadListener();
 
     const unlistenTerminalState = listen('download-state', (event) => {
@@ -571,7 +572,7 @@ function App() {
       unlistenDeepLink.then(f => f());
       unlistenDownload.then(f => { if (f) f(); });
     };
-  }, []);
+  }, [coreReady]);
 
   return (
     <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">

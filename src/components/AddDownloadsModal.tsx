@@ -107,7 +107,7 @@ export const AddDownloadsModal = () => {
       setChecksumAlgo('SHA-256');
       setChecksumValue('');
       setHeaders([
-        pendingAddReferer ? `Referer: ${pendingAddReferer}` : '',
+        pendingAddReferer ? `Referer: ${pendingAddReferer.replace(/[\r\n]/g, '')}` : '',
         pendingAddHeaders
       ].filter(Boolean).join('\n'));
       setCookies(pendingAddCookies);

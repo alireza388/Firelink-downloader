@@ -96,6 +96,7 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     target_capacity: AtomicUsize,
     slots_to_retire: AtomicUsize,
     notify: Notify,
+    notify_permit_released: Notify,
 
     /// aria2 gid -> download id map (shared with the WS poller).
     pub aria2_gids: Arc<std::sync::RwLock<HashMap<String, String>>>,
@@ -143,6 +144,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             target_capacity: AtomicUsize::new(capacity),
             slots_to_retire: AtomicUsize::new(0),
             notify: Notify::new(),
+            notify_permit_released: Notify::new(),
             aria2_gids: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_completion: Arc::new(Mutex::new(HashMap::new())),
             aria2_payloads: Mutex::new(HashMap::new()),
@@ -191,12 +193,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
     }
 
     /// Acquire a permit from the semaphore (blocks until one is available).
-    pub async fn acquire_permit(&self) -> OwnedSemaphorePermit {
+    pub async fn acquire_permit(&self) -> Option<OwnedSemaphorePermit> {
         self.semaphore
             .clone()
             .acquire_owned()
             .await
-            .expect("semaphore closed")
+            .ok()
     }
 
     /// Park an already-acquired permit under `id`.
@@ -219,7 +221,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return false;
         }
 
-        let permit = self.acquire_permit().await;
+        let permit = match self.acquire_permit().await {
+            Some(p) => p,
+            None => return false,
+        };
         let mut permits = self.active_permits.lock().await;
         if permits.contains_key(id) {
             drop(permits);
@@ -239,6 +244,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let removed = self.active_permits.lock().await.remove(id).is_some();
         self.active_kinds.lock().await.remove(id);
         if removed {
+            self.notify_permit_released.notify_waiters();
             self.notify.notify_one();
         }
     }
@@ -323,12 +329,16 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 continue;
             }
             // (2) Acquire a slot.
-            let permit = self
+            let permit_opt = self
                 .semaphore
                 .clone()
                 .acquire_owned()
                 .await
-                .expect("semaphore closed");
+                .ok();
+            let permit = match permit_opt {
+                Some(p) => p,
+                None => break, // Semaphore closed, exit dispatcher
+            };
             // (3) CAS retirement — never underflows to usize::MAX.
             let mut retired = false;
             let mut debt = self.slots_to_retire.load(Ordering::Relaxed);
@@ -561,7 +571,14 @@ impl<R: tauri::Runtime> QueueManager<R> {
             if !self.active_permits.lock().await.contains_key(id) {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            let notified = self.notify_permit_released.notified();
+            if !self.active_permits.lock().await.contains_key(id) {
+                return;
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+            }
         }
     }
 
@@ -888,7 +905,7 @@ impl SidecarSpawner for ProductionSpawner {
         let uris = crate::collect_download_uris(&payload.url, payload.mirrors.as_deref());
         let params = serde_json::json!([uris, options]);
 
-        match crate::rpc_call(state.aria2_port, &state.aria2_secret, "aria2.addUri", params).await {
+        match crate::rpc_call(state.aria2_port.load(std::sync::atomic::Ordering::Relaxed), &state.aria2_secret, "aria2.addUri", params).await {
             Ok(result) => {
                 let gid = result.as_str().unwrap_or("").to_string();
                 if gid.is_empty() {
@@ -931,7 +948,7 @@ impl SidecarSpawner for ProductionSpawner {
     async fn remove_uri(&self, gid: &str) -> Result<(), String> {
         let state = self.app_handle.state::<crate::AppState>();
         let result = crate::rpc_call(
-            state.aria2_port,
+            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
             &state.aria2_secret,
             "aria2.forceRemove",
             serde_json::json!([gid]),

@@ -61,7 +61,7 @@ Production bundles include target-specific media engines, so packaged releases d
 
 macOS builds are distributed without Apple code signing or notarization. Users must approve the downloaded app through Finder or **System Settings → Privacy & Security**. Firelink does not claim Gatekeeper trust.
 
-### 🧩 Browser Extension
+## 🧩 Browser Extension
 
 [![Install on Firefox](https://img.shields.io/badge/Install%20on-Firefox-FF7139?style=flat-square&logo=firefox&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/)
 

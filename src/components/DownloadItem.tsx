@@ -13,7 +13,6 @@ interface DownloadItemProps {
   setContextMenu: (menu: { x: number; y: number; id: string }) => void;
   handlePause: (id: string) => void;
   handleResume: (item: DownloadItemType) => void;
-  handleDoubleClick: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
   isSelected: boolean;
   onClick: (e: React.MouseEvent, item: DownloadItemType) => void;
@@ -26,7 +25,6 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   setContextMenu,
   handlePause,
   handleResume,
-  handleDoubleClick,
   getCategoryIcon,
   isSelected,
   onClick,
@@ -90,7 +88,6 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, id: download.id });
       }}
-      onDoubleClick={() => handleDoubleClick(download)}
     >
       <div className="download-file-cell">
         <span className="shrink-0 text-text-muted">

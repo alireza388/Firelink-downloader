@@ -470,55 +470,31 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
 
     const url = targetItem.url?.trim();
-    if (!url) {
-      throw new Error('Cannot redownload: original URL is missing.');
+    if (!url) throw new Error('Cannot redownload: original URL is missing.');
+
+    // Remove from backend to clear its state and delete the existing file so we can overwrite
+    try {
+      await invoke('remove_download', { id, deleteAssets: true });
+      get().unregisterBackendIds([id]);
+    } catch (e) {
+      console.warn("Could not remove old download from backend", e);
     }
 
-    const filename = targetItem.fileName?.trim();
-    if (!filename) {
-      throw new Error('Cannot redownload: original filename is missing.');
-    }
-
-    const mediaFormatSelector = targetItem.mediaFormatSelector?.trim();
-
-    const settings = useSettingsStore.getState();
-    const destPath = targetItem.destination ||
-      await resolveCategoryDestination(settings, targetItem.category);
-
-    if (!destPath.trim()) {
-      throw new Error('Cannot redownload: destination folder is missing.');
-    }
-
-    const redownloadItem: DownloadItem = {
-      id: crypto.randomUUID(),
-      url,
-      fileName: filename,
+    get().updateDownload(id, {
       status: 'queued',
-      category: targetItem.category,
-      dateAdded: new Date().toISOString(),
-      connections: targetItem.connections,
-      speedLimit: targetItem.speedLimit,
-      username: targetItem.username,
-      password: targetItem.password,
-      headers: targetItem.headers,
-      checksum: targetItem.checksum,
-      cookies: targetItem.cookies,
-      mirrors: targetItem.mirrors,
-      destination: destPath,
-      isMedia: targetItem.isMedia,
-      mediaFormatSelector,
-      queueId: targetItem.queueId || MAIN_QUEUE_ID,
-      hasBeenDispatched: false
-    };
+      fraction: 0,
+      speed: '-',
+      eta: '-',
+      hasBeenDispatched: false,
+      dateAdded: Date.now().toString()
+    });
 
-    set((state) => ({
-      downloads: [...state.downloads, redownloadItem]
-    }));
-
-    if (!await dispatchItem(redownloadItem.id)) {
+    if (!await dispatchItem(id)) {
       console.error("Failed to enqueue redownload");
+      get().updateDownload(id, { status: 'failed' });
     } else {
-      info(`Download ${id} redownload requested as ${redownloadItem.id} (queued)`);
+      get().updateDownload(id, { hasBeenDispatched: true });
+      info(`Download ${id} redownloaded (queued)`);
     }
   },
   resumeDownload: async (id) => {

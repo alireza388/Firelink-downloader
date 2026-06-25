@@ -1497,6 +1497,8 @@
   border-radius: 6px;
   color: hsl(var(--text-primary));
   font-size: 12px;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 html[data-list-density="compact"] .download-row,

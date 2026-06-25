@@ -189,6 +189,10 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     ? [...filteredDownloads].sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
     : filteredDownloads;
   const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
+    if (e.detail === 2) {
+      handleDownloadDoubleClick(item);
+      return;
+    }
     if (e.metaKey || e.ctrlKey) {
       const newSelected = new Set(selectedIds);
       if (newSelected.has(item.id)) {
@@ -372,7 +376,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   setContextMenu={handleContextMenu}
                   handlePause={handlePause}
                   handleResume={handleResume}
-                  handleDoubleClick={handleDownloadDoubleClick}
                   getCategoryIcon={getCategoryIcon}
                   isSelected={selectedIds.has(d.id)}
                   onClick={handleItemClick}

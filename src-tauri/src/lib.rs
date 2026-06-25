@@ -3055,7 +3055,7 @@ async fn force_remove_aria2_gid(port: u16, secret: &str, gid: &str) -> Result<()
 async fn wait_for_aria2_stopped(port: u16, secret: &str, gid: &str) -> Result<(), String> {
     for _ in 0..30 {
         match aria2_download_status(port, secret, gid).await {
-            Ok(status) if matches!(status.as_str(), "complete" | "error" | "removed") => {
+            Ok(status) if matches!(status.as_str(), "paused" | "complete" | "error" | "removed") => {
                 return Ok(());
             }
             Ok(_) => {}

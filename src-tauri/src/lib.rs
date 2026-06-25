@@ -2869,15 +2869,19 @@ async fn remove_download(
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
 
-    if delete_assets {
-        if let Some(path) = primary_path.as_deref() {
-            remove_download_assets(path, &app_handle).await?;
+    let cleanup_result = (|| async {
+        if delete_assets {
+            if let Some(path) = primary_path.as_deref() {
+                remove_download_assets(path, &app_handle).await?;
+            }
         }
-    }
+        crate::download_ownership::remove(&app_handle, &id)?;
+        Ok::<(), String>(())
+    })()
+    .await;
 
-    crate::download_ownership::remove(&app_handle, &id)?;
     state.queue_manager.release_registered_id(&id).await;
-    Ok(())
+    cleanup_result
 }
 
 async fn remove_download_assets(
@@ -2889,8 +2893,12 @@ async fn remove_download_assets(
     }
 
     if primary.exists() {
-        trash::delete(primary)
-            .map_err(|error| format!("failed to move downloaded file to Trash: {error}"))?;
+        if let Err(e) = trash::delete(primary) {
+            log::warn!("failed to move downloaded file to Trash, attempting hard delete: {}", e);
+            if let Err(hard_err) = std::fs::remove_file(primary) {
+                return Err(format!("failed to move downloaded file to Trash ({e}) and hard delete failed ({hard_err})"));
+            }
+        }
     }
 
     for suffix in [".aria2", ".part", ".ytdl"] {
@@ -2923,13 +2931,20 @@ async fn detach_download_for_reconfigure(
 
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
         let removal_result = async {
-            rpc_call(
+            let pause_res = rpc_call(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                 &state.aria2_secret,
                 "aria2.forcePause",
                 serde_json::json!([gid]),
             )
-            .await?;
+            .await;
+            
+            if let Err(e) = pause_res {
+                if !e.contains("cannot be paused now") {
+                    return Err(e);
+                }
+            }
+
             wait_for_aria2_stopped(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                 &state.aria2_secret,

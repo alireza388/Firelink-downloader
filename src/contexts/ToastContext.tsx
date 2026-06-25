@@ -162,7 +162,7 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
         onBlur={() => setIsHovered(false)}
       >
         <div className="mt-0.5 shrink-0">{Icon}</div>
-        <div className="font-semibold flex-1 tracking-tight">{toast.message}</div>
+        <div className="font-semibold flex-1 tracking-tight break-all whitespace-pre-wrap">{toast.message}</div>
         <button
           onClick={() => removeToast(toast.id)}
           className="shrink-0 ml-2 mt-0.5 opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/10 p-1 rounded-full transition-all active:scale-90"

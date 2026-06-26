@@ -3070,25 +3070,31 @@ async fn wait_for_aria2_stopped(port: u16, secret: &str, gid: &str) -> Result<()
 }
 
 #[tauri::command]
-fn update_dock_badge(_app_handle: tauri::AppHandle, count: i32) {
+fn update_dock_badge(app_handle: tauri::AppHandle, count: i32) {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::appkit::NSApp;
-        use cocoa::base::{id, nil};
-        use cocoa::foundation::NSString;
-        use objc::{msg_send, sel, sel_impl};
+        use objc::runtime::Object;
+        use objc::{class, msg_send, sel, sel_impl};
+        use std::ffi::CString;
 
-        unsafe {
-            let app = NSApp();
-            let dock_tile: id = msg_send![app, dockTile];
-            let label = if count > 0 {
-                count.to_string()
-            } else {
-                "".to_string()
-            };
-            let ns_label = NSString::alloc(nil).init_str(&label);
-            let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
-        }
+        let _ = app_handle.run_on_main_thread(move || {
+            unsafe {
+                let app_class = class!(NSApplication);
+                let app: *mut Object = msg_send![app_class, sharedApplication];
+                let dock_tile: *mut Object = msg_send![app, dockTile];
+                let label = if count > 0 {
+                    count.to_string()
+                } else {
+                    "".to_string()
+                };
+                let c_label = CString::new(label).unwrap();
+                let ns_string_class = class!(NSString);
+                let ns_label: *mut Object = msg_send![ns_string_class, alloc];
+                let ns_label: *mut Object = msg_send![ns_label, initWithUTF8String: c_label.as_ptr()];
+                let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
+                let _: () = msg_send![ns_label, release];
+            }
+        });
     }
 }
 
@@ -3137,7 +3143,8 @@ pub enum SleepPreventer {
 impl Drop for SleepPreventer {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
-        if let SleepPreventer::Mac { system_sleep_id, network_client_id } = self {
+        {
+            let SleepPreventer::Mac { system_sleep_id, network_client_id } = self;
             unsafe {
                 macos_sleep::IOPMAssertionRelease(*system_sleep_id);
                 macos_sleep::IOPMAssertionRelease(*network_client_id);
@@ -3415,19 +3422,29 @@ async fn set_global_speed_limit(
 fn check_automation_permission() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::base::{id, nil};
-        use cocoa::foundation::NSString;
+        use objc::runtime::Object;
         use objc::{class, msg_send, sel, sel_impl};
+        use std::ffi::CString;
+        use std::ptr::null_mut;
 
         unsafe {
             objc::rc::autoreleasepool(|| {
-                let script_str =
-                    NSString::alloc(nil).init_str("tell application \"System Events\" to get name");
-                let ns_apple_script: id = msg_send![class!(NSAppleScript), alloc];
-                let ns_apple_script: id = msg_send![ns_apple_script, initWithSource: script_str];
-                let mut error_dict: id = nil;
-                let result: id = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
-                if result == nil {
+                let script = "tell application \"System Events\" to get name";
+                let c_script = CString::new(script).unwrap();
+                let ns_string_class = class!(NSString);
+                let script_str: *mut Object = msg_send![ns_string_class, alloc];
+                let script_str: *mut Object = msg_send![script_str, initWithUTF8String: c_script.as_ptr()];
+                
+                let ns_apple_script: *mut Object = msg_send![class!(NSAppleScript), alloc];
+                let ns_apple_script: *mut Object = msg_send![ns_apple_script, initWithSource: script_str];
+                
+                let mut error_dict: *mut Object = null_mut();
+                let result: *mut Object = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
+                
+                let _: () = msg_send![script_str, release];
+                let _: () = msg_send![ns_apple_script, release];
+                
+                if result.is_null() {
                     return Err("Automation permission was not granted".to_string());
                 }
                 Ok(())

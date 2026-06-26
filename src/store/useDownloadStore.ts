@@ -340,11 +340,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           }, { type: 'start-now' });
           
           if (!added) {
-            await get().removeDownload(id);
+            set(state => ({
+              downloads: state.downloads.filter(d => d.id !== id),
+              pendingOrder: state.pendingOrder.filter(x => x !== id)
+            }));
             failedUrls.push(url);
           }
         } catch (error) {
-          await get().removeDownload(id);
+          set(state => ({
+            downloads: state.downloads.filter(d => d.id !== id),
+            pendingOrder: state.pendingOrder.filter(x => x !== id)
+          }));
           failedUrls.push(url);
         }
       }
@@ -467,11 +473,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const item = get().downloads.find(d => d.id === id);
 
     if (item) {
-      try {
-        await invoke('remove_download', { id, deleteAssets: deleteFile });
-      } catch (e) {
-        console.warn(`Failed to remove download ${id} from backend`, e);
-      }
+      await invoke('remove_download', { id, deleteAssets: deleteFile });
     }
 
     set((state) => ({

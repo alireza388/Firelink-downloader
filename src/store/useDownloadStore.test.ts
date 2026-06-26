@@ -392,13 +392,7 @@ describe('useDownloadStore', () => {
   expect(state.pendingAddCookies).toBe('session=secret');
  });
 
- it('starts silent extension captures through backend queue', async () => {
-  vi.mocked(ipc.invokeCommand).mockImplementation(async (command: string) => {
-   if (command === 'get_pending_order') return ['silent-id'];
-   return undefined;
-  });
-  vi.spyOn(crypto, 'randomUUID').mockReturnValueOnce('silent-id' as `${string}-${string}-${string}-${string}-${string}`);
-
+ it('routes silent extension captures to the Add Modal instead of queuing immediately', async () => {
   await useDownloadStore.getState().handleExtensionDownload({
    urls: ['https://example.com/downloads/report.pdf'],
    referer: 'https://example.com/page',
@@ -409,24 +403,11 @@ describe('useDownloadStore', () => {
   });
 
   const state = useDownloadStore.getState();
-  expect(state.isAddModalOpen).toBe(false);
-  expect(state.downloads[0]).toEqual(expect.objectContaining({
-   id: 'silent-id',
-   url: 'https://example.com/downloads/report.pdf',
-   fileName: 'report.pdf',
-   category: 'Documents',
-   queueId: '00000000-0000-0000-0000-000000000001',
-   hasBeenDispatched: true
-  }));
-  expect(ipc.invokeCommand).toHaveBeenCalledWith(
-   'enqueue_download',
-   expect.objectContaining({
-    item: expect.objectContaining({
-     id: 'silent-id',
-     headers: 'User-Agent: Test',
-     cookies: 'session=secret'
-    })
-   })
-  );
+  expect(state.isAddModalOpen).toBe(true);
+  expect(state.pendingAddUrls).toBe('https://example.com/downloads/report.pdf');
+  expect(state.pendingAddReferer).toBe('https://example.com/page');
+  expect(state.pendingAddFilename).toBe('report.pdf');
+  expect(state.pendingAddHeaders).toBe('User-Agent: Test');
+  expect(state.pendingAddCookies).toBe('session=secret');
  });
 });

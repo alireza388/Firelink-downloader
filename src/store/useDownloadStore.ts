@@ -7,7 +7,7 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
-import { canonicalizeDownloadFileName, categoryForFileName, isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
+import { categoryForFileName, isActiveDownloadStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import {
   resolveCategoryDestination
 } from '../utils/downloadLocations';
@@ -126,16 +126,6 @@ export const getSiteLogin = (url: string, settings: ReturnType<typeof useSetting
     }
   } catch (e) {}
   return null;
-};
-
-const suggestedFileNameFromUrl = (rawUrl: string): string => {
-  try {
-    const url = new URL(rawUrl);
-    const lastSegment = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
-    return lastSegment || 'download';
-  } catch {
-    return 'download';
-  }
 };
 
 const syncSystemIntegrations = () => {
@@ -320,51 +310,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   handleExtensionDownload: async (request) => {
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
-
-    if (request.silent) {
-      let failedUrls: string[] = [];
-      for (const url of urls) {
-        const id = crypto.randomUUID();
-        const filename = canonicalizeDownloadFileName(
-          urls.length === 1 && request.filename ? request.filename : suggestedFileNameFromUrl(url)
-        );
-        try {
-          const added = await get().addDownload({
-            id,
-            url,
-            fileName: filename,
-            category: categoryForFileName(filename),
-            dateAdded: new Date().toISOString(),
-            headers: request.headers?.trim() || undefined,
-            cookies: urls.length === 1 ? request.cookies?.trim() || undefined : undefined,
-          }, { type: 'start-now' });
-          
-          if (!added) {
-            set(state => ({
-              downloads: state.downloads.filter(d => d.id !== id),
-              pendingOrder: state.pendingOrder.filter(x => x !== id)
-            }));
-            failedUrls.push(url);
-          }
-        } catch (error) {
-          set(state => ({
-            downloads: state.downloads.filter(d => d.id !== id),
-            pendingOrder: state.pendingOrder.filter(x => x !== id)
-          }));
-          failedUrls.push(url);
-        }
-      }
-      if (failedUrls.length > 0) {
-        get().openAddModalWithUrls(
-          failedUrls.join('\n'),
-          request.referer,
-          failedUrls.length === 1 ? request.filename : null,
-          request.headers,
-          request.cookies
-        );
-      }
-      return;
-    }
 
     get().openAddModalWithUrls(
       urls.join('\n'),

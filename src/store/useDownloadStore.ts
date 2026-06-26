@@ -322,19 +322,40 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     if (urls.length === 0) return;
 
     if (request.silent) {
+      let failedUrls: string[] = [];
       for (const url of urls) {
+        const id = crypto.randomUUID();
         const filename = canonicalizeDownloadFileName(
           urls.length === 1 && request.filename ? request.filename : suggestedFileNameFromUrl(url)
         );
-        await get().addDownload({
-          id: crypto.randomUUID(),
-          url,
-          fileName: filename,
-          category: categoryForFileName(filename),
-          dateAdded: new Date().toISOString(),
-          headers: request.headers?.trim() || undefined,
-          cookies: urls.length === 1 ? request.cookies?.trim() || undefined : undefined,
-        }, { type: 'start-now' });
+        try {
+          const added = await get().addDownload({
+            id,
+            url,
+            fileName: filename,
+            category: categoryForFileName(filename),
+            dateAdded: new Date().toISOString(),
+            headers: request.headers?.trim() || undefined,
+            cookies: urls.length === 1 ? request.cookies?.trim() || undefined : undefined,
+          }, { type: 'start-now' });
+          
+          if (!added) {
+            await get().removeDownload(id);
+            failedUrls.push(url);
+          }
+        } catch (error) {
+          await get().removeDownload(id);
+          failedUrls.push(url);
+        }
+      }
+      if (failedUrls.length > 0) {
+        get().openAddModalWithUrls(
+          failedUrls.join('\n'),
+          request.referer,
+          failedUrls.length === 1 ? request.filename : null,
+          request.headers,
+          request.cookies
+        );
       }
       return;
     }
@@ -446,7 +467,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const item = get().downloads.find(d => d.id === id);
 
     if (item) {
-      await invoke('remove_download', { id, deleteAssets: deleteFile });
+      try {
+        await invoke('remove_download', { id, deleteAssets: deleteFile });
+      } catch (e) {
+        console.warn(`Failed to remove download ${id} from backend`, e);
+      }
     }
 
     set((state) => ({
@@ -486,7 +511,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       speed: '-',
       eta: '-',
       hasBeenDispatched: false,
-      dateAdded: Date.now().toString()
+      dateAdded: new Date().toISOString()
     });
 
     if (!await dispatchItem(id)) {
@@ -503,36 +528,35 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     try {
       if (targetItem.status === 'ready' || targetItem.status === 'staged') {
+        get().updateDownload(id, { status: 'queued', hasBeenDispatched: true });
         if (await dispatchItem(id)) {
-          get().updateDownload(id, { hasBeenDispatched: true });
           return true;
         }
+        get().updateDownload(id, { status: targetItem.status });
         return false;
       }
 
-      const resumedExisting = await invoke('resume_download', { id });
-      if (resumedExisting) {
+      const prevStatus = targetItem.status;
+      get().updateDownload(id, { status: 'queued', speed: '-', eta: '-' });
+
+      const resumedExisting = await invoke('resume_download', { id }).catch(() => false);
+      
+      let dispatchSucceeded = resumedExisting;
+      if (!dispatchSucceeded) {
+        get().unregisterBackendIds([id]);
+        dispatchSucceeded = await dispatchItem(id);
+      }
+
+      if (dispatchSucceeded) {
         return true;
-      }
-
-      get().unregisterBackendIds([id]);
-
-      set((state) => ({
-        downloads: state.downloads.map(d => {
-          if (d.id === id) {
-            return { ...d, status: 'queued', speed: '-', eta: '-' };
-          }
-          return d;
-        })
-      }));
-
-      if (!await dispatchItem(id)) {
+      } else {
         console.error("Failed to re-enqueue for resume");
+        get().updateDownload(id, { status: prevStatus });
         return false;
       }
-      return true;
     } catch (e) {
       console.error("Failed to resume download:", e);
+      get().updateDownload(id, { status: targetItem.status });
       return false;
     }
   },

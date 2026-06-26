@@ -1468,7 +1468,7 @@ pub struct AppState {
     pub aria2_port: std::sync::Arc<std::sync::atomic::AtomicU16>,
     pub aria2_secret: String,
     pub media_semaphore: Arc<tokio::sync::Semaphore>,
-    pub sleep_preventer: Arc<Mutex<Option<keepawake::KeepAwake>>>,
+    pub sleep_preventer: Arc<Mutex<Option<SleepPreventer>>>,
     pub scheduler_settings: Arc<RwLock<Option<crate::ipc::PersistedSettings>>>,
     pub queue_manager: Arc<queue::QueueManager>,
 }
@@ -3101,6 +3101,99 @@ fn get_platform_info() -> crate::ipc::PlatformInfo {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod macos_sleep {
+    use std::ffi::c_void;
+    #[link(name = "IOKit", kind = "framework")]
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        pub fn IOPMAssertionCreateWithDescription(
+            AssertionType: *const c_void,
+            Name: *const c_void,
+            Details: *const c_void,
+            HumanReadableReason: *const c_void,
+            LocalizationBundlePath: *const c_void,
+            Timeout: f64,
+            TimeoutAction: *const c_void,
+            AssertionID: *mut u32,
+        ) -> i32;
+        pub fn IOPMAssertionRelease(AssertionID: u32) -> i32;
+        pub fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            cStr: *const i8,
+            encoding: u32,
+        ) -> *const c_void;
+        pub fn CFRelease(arg: *const c_void);
+    }
+}
+
+pub enum SleepPreventer {
+    #[cfg(target_os = "macos")]
+    Mac { system_sleep_id: u32, network_client_id: u32 },
+    #[cfg(not(target_os = "macos"))]
+    Other(keepawake::KeepAwake),
+}
+
+impl Drop for SleepPreventer {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let SleepPreventer::Mac { system_sleep_id, network_client_id } = self {
+            unsafe {
+                macos_sleep::IOPMAssertionRelease(*system_sleep_id);
+                macos_sleep::IOPMAssertionRelease(*network_client_id);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn create_sleep_preventer() -> Result<SleepPreventer, String> {
+    use std::ffi::CString;
+    use std::ptr::null;
+    unsafe {
+        let create_cf_string = |s: &str| -> *const std::ffi::c_void {
+            let cstr = CString::new(s).unwrap();
+            macos_sleep::CFStringCreateWithCString(null(), cstr.as_ptr(), 0x08000100)
+        };
+        
+        let type_sys = create_cf_string("PreventSystemSleep");
+        let type_net = create_cf_string("NetworkClientActive");
+        let name = create_cf_string("Firelink active download");
+        
+        let mut sys_id: u32 = 0;
+        let mut net_id: u32 = 0;
+        
+        let res1 = macos_sleep::IOPMAssertionCreateWithDescription(
+            type_sys, name, null(), null(), null(), 0.0, null(), &mut sys_id
+        );
+        let res2 = macos_sleep::IOPMAssertionCreateWithDescription(
+            type_net, name, null(), null(), null(), 0.0, null(), &mut net_id
+        );
+        
+        macos_sleep::CFRelease(type_sys);
+        macos_sleep::CFRelease(type_net);
+        macos_sleep::CFRelease(name);
+        
+        if res1 == 0 && res2 == 0 {
+            Ok(SleepPreventer::Mac { system_sleep_id: sys_id, network_client_id: net_id })
+        } else {
+            if res1 == 0 { macos_sleep::IOPMAssertionRelease(sys_id); }
+            if res2 == 0 { macos_sleep::IOPMAssertionRelease(net_id); }
+            Err("Failed to create macOS sleep assertions".to_string())
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn create_sleep_preventer() -> Result<SleepPreventer, String> {
+    keepawake::Builder::default()
+        .idle(true)
+        .reason("Firelink active download")
+        .create()
+        .map(SleepPreventer::Other)
+        .map_err(|error| format!("failed to prevent system sleep: {error}"))
+}
+
 #[tauri::command]
 fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) -> Result<(), String> {
     let mut current_preventer = state
@@ -3109,12 +3202,7 @@ fn set_prevent_sleep(state: tauri::State<'_, AppState>, prevent: bool) -> Result
         .unwrap_or_else(|e| e.into_inner());
     if prevent {
         if current_preventer.is_none() {
-            let keepawake = keepawake::Builder::default()
-                .idle(true)
-                .reason("Firelink active download")
-                .create()
-                .map_err(|error| format!("failed to prevent system sleep: {error}"))?;
-            *current_preventer = Some(keepawake);
+            *current_preventer = Some(create_sleep_preventer()?);
         }
     } else {
         *current_preventer = None;

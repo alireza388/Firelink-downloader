@@ -12,7 +12,7 @@ interface DownloadItemProps {
   index: number;
   tableGridTemplate: string;
   setContextMenu: (menu: { x: number; y: number; id: string }) => void;
-  handlePause: (id: string) => void;
+  handlePause: (id: string, skipConfirm?: boolean) => void;
   handleResume: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
   isSelected: boolean;

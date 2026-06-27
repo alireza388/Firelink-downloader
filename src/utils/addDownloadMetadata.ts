@@ -27,6 +27,7 @@ export interface AddDownloadDraftRow {
   status: MetadataStatus;
   generation: number;
   isMedia: boolean;
+  resumable?: boolean;
   formats?: AddMediaFormat[];
   selectedFormat?: number;
 }

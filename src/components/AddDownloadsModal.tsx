@@ -264,7 +264,8 @@ export const AddDownloadsModal = () => {
                 ),
                 size: meta.size_bytes ? meta.size : undefined,
                 sizeBytes: meta.size_bytes || undefined,
-                status: 'ready'
+                status: 'ready',
+                resumable: meta.resumable
               })
             ));
           }
@@ -617,6 +618,7 @@ export const AddDownloadsModal = () => {
             ? finalLocation
             : destinationOverrides[itemIndex],
           isMedia: item.isMedia,
+          resumable: item.resumable,
           mediaFormatSelector: formatSelector,
           size: item.size || (item.sizeBytes ? formatBytes(item.sizeBytes) : undefined)
         }, action);

@@ -79,6 +79,8 @@ pub struct DownloadItem {
     pub category: DownloadCategory,
     pub date_added: String,
     #[ts(optional)]
+    pub resumable: Option<bool>,
+    #[ts(optional)]
     pub connections: Option<i32>,
     #[ts(optional)]
     pub speed_limit: Option<String>,

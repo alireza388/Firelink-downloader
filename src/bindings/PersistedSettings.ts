@@ -8,4 +8,13 @@ import type { SettingsTab } from "./SettingsTab";
 import type { SiteLogin } from "./SiteLogin";
 import type { Theme } from "./Theme";
 
-export type PersistedSettings = { theme: Theme, baseDownloadFolder: string, categorySubfolders: { [key in string]: string }, categoryDirectoryOverrides: { [key in string]: string }, approvedDownloadRoots: Array<string>, maxConcurrentDownloads: number, globalSpeedLimit: string, isSidebarVisible: boolean, activeSettingsTab: SettingsTab, scheduler: SchedulerSettings, schedulerRunning: boolean, schedulerActiveDownloadIds: Array<string>, schedulerLastStartKey: string, schedulerLastStopKey: string, lastCustomSpeedLimitKiB: number, perServerConnections: number, maxAutomaticRetries: number, showNotifications: boolean, playCompletionSound: boolean, appFontSize: AppFontSize, listRowDensity: ListRowDensity, showDockBadge: boolean, showMenuBarIcon: boolean, proxyMode: ProxyMode, proxyHost: string, proxyPort: number, customUserAgent: string, askWhereToSaveEachFile: boolean, preventsSleepWhileDownloading: boolean, mediaCookieSource: MediaCookieSource, siteLogins: Array<SiteLogin>, extensionPairingToken: string, autoCheckUpdates: boolean, keychainAccessGranted: boolean, };
+export type PersistedSettings = { theme: Theme, baseDownloadFolder: string, categorySubfolders: { [key in string]: string }, categoryDirectoryOverrides: { [key in string]: string }, approvedDownloadRoots: Array<string>, maxConcurrentDownloads: number, globalSpeedLimit: string, isSidebarVisible: boolean, activeSettingsTab: SettingsTab, scheduler: SchedulerSettings, schedulerRunning: boolean, schedulerActiveDownloadIds: Array<string>, schedulerLastStartKey: string, schedulerLastStopKey: string, lastCustomSpeedLimitKiB: number, perServerConnections: number, maxAutomaticRetries: number, showNotifications: boolean, playCompletionSound: boolean, appFontSize: AppFontSize, listRowDensity: ListRowDensity, showDockBadge: boolean, showMenuBarIcon: boolean, proxyMode: ProxyMode, proxyHost: string, proxyPort: number, customUserAgent: string, askWhereToSaveEachFile: boolean, preventsSleepWhileDownloading: boolean, mediaCookieSource: MediaCookieSource, siteLogins: Array<SiteLogin>, 
+/**
+ * The HMAC shared secret for the browser extension.  It is persisted in the
+ * settings database so that startup never needs to touch the OS keychain.
+ * The keychain is still used as defence-in-depth — grant_keychain_access
+ * writes the token there — but the DB copy is the primary read path,
+ * eliminating the OS credential prompt that macOS shows when the binary
+ * signature changes after an update.
+ */
+extensionPairingToken: string, autoCheckUpdates: boolean, keychainAccessGranted: boolean, };

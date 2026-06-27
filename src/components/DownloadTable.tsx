@@ -255,7 +255,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
   };
 
-  const handlePause = async (id: string) => {
+  const handlePause = async (id: string, skipConfirm = false) => {
+    const download = useDownloadStore.getState().downloads.find(d => d.id === id);
+    if (!skipConfirm && download && download.resumable === false) {
+      const confirmPause = window.confirm("This download does not support resuming. If you pause it, you will have to start over again later. Are you sure you want to pause?");
+      if (!confirmPause) {
+        return;
+      }
+    }
+
     try {
       await invoke('pause_download', { id });
     } catch (e) {
@@ -324,7 +332,20 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             className="main-control-button" 
             disabled={sortedDownloads.length === 0}
             onClick={() => {
-              sortedDownloads.filter(d => canPauseDownload(d.status)).forEach(d => handlePause(d.id));
+              const toPause = sortedDownloads.filter(d => canPauseDownload(d.status));
+              const nonResumableCount = toPause.filter(d => d.resumable === false).length;
+              if (nonResumableCount > 0) {
+                const confirmPause = window.confirm(
+                  nonResumableCount === 1
+                    ? "1 download does not support resuming. If you pause it, you will have to start over again later. Are you sure you want to pause?"
+                    : `${nonResumableCount} downloads do not support resuming. If you pause them, you will have to start over again later. Are you sure you want to pause?`
+                );
+                if (!confirmPause) {
+                  return;
+                }
+              }
+              // Skip the individual check by passing a flag to handlePause, or just invoking directly.
+              toPause.forEach(d => handlePause(d.id, true));
             }}
             title="Pause All"
           >

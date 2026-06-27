@@ -21,6 +21,7 @@ pub struct MetadataResponse {
     size: String,
     #[ts(type = "number")]
     size_bytes: u64,
+    resumable: bool,
 }
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
@@ -954,11 +955,21 @@ async fn fetch_metadata(
         }
     }
 
+    let mut resumable = false;
+    if let Some(accept_ranges) = res.headers().get(reqwest::header::ACCEPT_RANGES) {
+        if let Ok(accept_ranges_str) = accept_ranges.to_str() {
+            if accept_ranges_str.to_lowercase().contains("bytes") {
+                resumable = true;
+            }
+        }
+    }
+
     Ok(MetadataResponse {
         url: current_url,
         filename,
         size: size_str,
         size_bytes,
+        resumable,
     })
 }
 

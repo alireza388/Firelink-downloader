@@ -4561,7 +4561,8 @@ pub fn run() {
                                 .arg("--console-log-level=warn")
                                 .arg("--download-result=hide")
                                 .arg("--max-concurrent-downloads=9999")
-                                .arg("--check-certificate=true");
+                                .arg("--check-certificate=true")
+                                .arg(format!("--stop-with-process={}", std::process::id()));
 
                             if let Some(limit) = normalize_speed_limit_for_aria2(&global_speed_limit) {
                                 cmd.arg(format!("--max-overall-download-limit={}", limit));

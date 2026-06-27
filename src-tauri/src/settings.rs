@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
-pub fn load_settings(app_handle: &AppHandle) -> Result<PersistedSettings, String> {
+pub fn load_settings<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Result<PersistedSettings, String> {
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     let stored = crate::db::load_settings(&connection)?

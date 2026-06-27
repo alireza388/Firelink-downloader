@@ -58,6 +58,13 @@ export async function initDownloadListener() {
       const current = mainStore.downloads.find(d => d.id === payload.id);
       if (current) {
         const status = payload.status as DownloadStatus;
+        
+        // Prevent race condition: don't transition backwards from terminal state
+        if ((current.status === 'completed' || current.status === 'failed') &&
+            (status !== 'completed' && status !== 'failed')) {
+          return;
+        }
+
         const progress = useDownloadProgressStore.getState().progressMap[payload.id];
         const updates: Partial<DownloadItem> = {
           status,

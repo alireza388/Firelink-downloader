@@ -483,6 +483,15 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 self.release_registered_id(id).await;
             }
             PendingOutcome::Error(error) => {
+                if error.to_ascii_lowercase().contains("checksum") {
+                    log::warn!("Checksum error detected for {}, cleaning up assets", id);
+                    if let Ok(primary_path) = crate::download_ownership::primary_path_for_id(&self.app_handle, id) {
+                        if let Some(path) = primary_path.as_deref() {
+                            let _ = crate::remove_download_assets(path, &self.app_handle).await;
+                        }
+                    }
+                }
+
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
                 self.emit_failed(id, error);
@@ -868,7 +877,12 @@ impl SidecarSpawner for ProductionSpawner {
             options.insert("http-passwd".to_string(), serde_json::json!(pass));
         }
         if let Some(chk) = &payload.checksum {
-            options.insert("checksum".to_string(), serde_json::json!(chk));
+            let formatted_chk = if let Some((algo, digest)) = chk.split_once('=') {
+                format!("{}={}", algo.to_ascii_lowercase(), digest)
+            } else {
+                chk.clone()
+            };
+            options.insert("checksum".to_string(), serde_json::json!(formatted_chk));
         }
         if let Some(ua) = &payload.user_agent {
             options.insert("user-agent".to_string(), serde_json::json!(ua));

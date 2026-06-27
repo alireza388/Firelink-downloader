@@ -103,8 +103,8 @@ pub fn remove(app_handle: &tauri::AppHandle, id: &str) -> Result<(), String> {
     crate::db::remove_ownership(&connection, id)
 }
 
-pub fn primary_path_for_id(
-    app_handle: &tauri::AppHandle,
+pub fn primary_path_for_id<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     id: &str,
 ) -> Result<Option<PathBuf>, String> {
     Ok(load_records(app_handle)?
@@ -130,7 +130,7 @@ pub fn known_primary_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>
     Ok(paths)
 }
 
-fn load_records(app_handle: &tauri::AppHandle) -> Result<Vec<DownloadOwnershipRecord>, String> {
+fn load_records<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<Vec<DownloadOwnershipRecord>, String> {
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     crate::db::load_ownership(&connection).map(|records| {

@@ -1286,7 +1286,7 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
     }
 }
 
-pub(crate) fn is_safe_path(path: &std::path::Path, app_handle: &tauri::AppHandle) -> bool {
+pub(crate) fn is_safe_path<R: tauri::Runtime>(path: &std::path::Path, app_handle: &tauri::AppHandle<R>) -> bool {
     if !path.is_absolute()
         || path.components().any(|component| {
             matches!(
@@ -1322,7 +1322,7 @@ fn canonicalize_with_missing_components(path: &std::path::Path) -> Option<std::p
     Some(canonical)
 }
 
-fn approved_download_roots(app_handle: &tauri::AppHandle) -> Vec<std::path::PathBuf> {
+fn approved_download_roots<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Vec<std::path::PathBuf> {
     use tauri::Manager;
 
     let mut roots = Vec::new();
@@ -1511,7 +1511,7 @@ pub struct EngineStatusResult {
     pub engines: Vec<EngineStatusItem>,
 }
 
-pub(crate) fn resolve_path(path: &str, app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+pub(crate) fn resolve_path<R: tauri::Runtime>(path: &str, app_handle: &tauri::AppHandle<R>) -> std::path::PathBuf {
     use tauri::Manager;
     let mut resolved = std::path::PathBuf::from(path);
     if let Some(stripped) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
@@ -2759,6 +2759,13 @@ async fn resume_download(
                     return;
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
+                let _ = app_handle_clone.emit(
+                    "download-state",
+                    crate::ipc::DownloadStateEvent::new(
+                        &id_clone,
+                        crate::ipc::DownloadStatus::Downloading,
+                    ),
+                );
             });
             return Ok(true);
         }
@@ -2884,19 +2891,36 @@ async fn remove_download(
     cleanup_result
 }
 
-async fn remove_download_assets(
+pub(crate) async fn remove_download_assets<R: tauri::Runtime>(
     primary: &std::path::Path,
-    app_handle: &tauri::AppHandle,
+    app_handle: &tauri::AppHandle<R>,
 ) -> Result<(), String> {
     if !is_safe_path(primary, app_handle) {
         return Err("Download asset path is outside an allowed download location".to_string());
     }
 
     if primary.exists() {
-        if let Err(e) = trash::delete(primary) {
-            log::warn!("failed to move downloaded file to Trash, attempting hard delete: {}", e);
-            if let Err(hard_err) = std::fs::remove_file(primary) {
-                return Err(format!("failed to move downloaded file to Trash ({e}) and hard delete failed ({hard_err})"));
+        let mut retries = 5;
+        loop {
+            let res = if primary.is_dir() {
+                tokio::fs::remove_dir_all(primary).await.map_err(|e| e.to_string())
+            } else {
+                if let Err(e) = trash::delete(primary) {
+                    log::warn!("failed to move downloaded file to Trash, attempting hard delete: {}", e);
+                    std::fs::remove_file(primary).map_err(|e| e.to_string())
+                } else {
+                    Ok(())
+                }
+            };
+            match res {
+                Ok(_) => break,
+                Err(e) => {
+                    if retries == 0 {
+                        return Err(e);
+                    }
+                    retries -= 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
             }
         }
     }
@@ -2906,9 +2930,19 @@ async fn remove_download_assets(
         candidate_os.push(suffix);
         let candidate = std::path::PathBuf::from(candidate_os);
         if candidate.exists() && is_safe_path(&candidate, app_handle) {
-            tokio::fs::remove_file(&candidate)
-                .await
-                .map_err(|error| format!("failed to remove '{}': {error}", candidate.display()))?;
+            let mut retries = 5;
+            loop {
+                match tokio::fs::remove_file(&candidate).await {
+                    Ok(_) => break,
+                    Err(_) if retries == 0 => {
+                        return Err(format!("failed to remove '{}' after retries", candidate.display()));
+                    }
+                    Err(_) => {
+                        retries -= 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+            }
         }
     }
 

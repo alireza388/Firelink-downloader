@@ -88,8 +88,7 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
       return;
     }
 
-    let timeoutDuration = toast.duration ?? 5000;
-    if (timeoutDuration < 5000) timeoutDuration = 5000;
+    let timeoutDuration = toast.duration ?? 3000;
 
     if (isHovered) {
       return;
@@ -136,7 +135,7 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
 
   return (
     <div
-      className={`w-full transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] flex flex-col justify-end ${isVisible ? 'mb-3' : 'mb-0'}`}
+      className={`w-full overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] flex flex-col justify-end ${isVisible ? 'mb-3' : 'mb-0'}`}
       style={{
         height: isVisible && contentHeight !== undefined ? contentHeight : 0,
       }}
@@ -153,7 +152,7 @@ const ToastItem: React.FC<{ toast: ToastState; removeToast: (id: string) => void
         className={`app-toast-item shrink-0 ${isVisible ? 'pointer-events-auto' : 'pointer-events-none'} flex items-start gap-3 rounded-[16px] border px-4 py-3 shadow-[0_8px_30px_rgb(0,0,0,0.12),0_0_20px_var(--tw-shadow-color)] backdrop-blur-xl text-[14px] leading-relaxed transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${style}`}
         style={{
           opacity: isVisible ? 1 : 0,
-          transform: isVisible ? 'translateY(0) scale(1)' : 'translateY(24px) scale(0.95)',
+          transform: isVisible ? 'translateY(0) scale(1)' : 'scale(0.95)',
           transformOrigin: 'bottom center',
         }}
         onMouseEnter={() => setIsHovered(true)}

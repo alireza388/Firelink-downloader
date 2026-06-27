@@ -5,6 +5,7 @@ import { useDownloadProgressStore } from '../store/downloadStore';
 import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
 import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/downloadActions';
+import { isActiveDownloadStatus } from '../utils/downloads';
 
 interface DownloadItemProps {
   downloadId: string;
@@ -37,7 +38,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
     return state.downloads
       .filter(candidate =>
         candidate.queueId === queueId &&
-        candidate.status !== 'completed'
+        candidate.status !== 'completed' &&
+        !(isActiveDownloadStatus(candidate.status) && candidate.status !== 'queued')
       )
       .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
       .map(candidate => candidate.id);

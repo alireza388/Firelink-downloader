@@ -227,7 +227,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     if (!item) return;
     const queueId = item.queueId || MAIN_QUEUE_ID;
     const queueItems = get().downloads
-      .filter(download => (download.queueId || MAIN_QUEUE_ID) === queueId && download.status !== 'completed')
+      .filter(download => 
+        (download.queueId || MAIN_QUEUE_ID) === queueId && 
+        download.status !== 'completed' &&
+        !(isActiveDownloadStatus(download.status) && download.status !== 'queued')
+      )
       .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
     const index = queueItems.findIndex(download => download.id === id);
     const target = direction === 'up' ? index - 1 : index + 1;
@@ -324,9 +328,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const settings = useSettingsStore.getState();
     const destPath = await effectiveDestinationForItem(item, settings);
     const queueId = action.type === 'add-to-queue' ? action.queueId : MAIN_QUEUE_ID;
-    const queuePosition = get().downloads.filter(download =>
-      (download.queueId || MAIN_QUEUE_ID) === queueId && download.status !== 'completed'
-    ).length;
+    const queueItems = get().downloads.filter(download =>
+      (download.queueId || MAIN_QUEUE_ID) === queueId
+    );
+    const maxPos = queueItems.reduce((max, d) => Math.max(max, d.queuePosition ?? 0), -1);
+    const queuePosition = maxPos + 1;
     const ownedItem: DownloadItem = {
       ...item,
       destination: destPath,
@@ -484,7 +490,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       }
 
       const prevStatus = targetItem.status;
-      get().updateDownload(id, { status: 'queued', speed: '-', eta: '-' });
+      const queueItems = get().downloads.filter(d => 
+        (d.queueId || MAIN_QUEUE_ID) === (targetItem.queueId || MAIN_QUEUE_ID)
+      );
+      const maxPos = queueItems.reduce((max, d) => Math.max(max, d.queuePosition ?? 0), -1);
+      
+      get().updateDownload(id, { 
+        status: 'queued', 
+        speed: '-', 
+        eta: '-',
+        queuePosition: maxPos + 1
+      });
 
       const resumedExisting = await invoke('resume_download', { id }).catch(() => false);
       
@@ -608,11 +624,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       get().unregisterBackendIds([item.id]);
     }
 
-    const nextPosition = get().downloads.filter(item =>
+    const queueItems = get().downloads.filter(item =>
       !selectedIds.has(item.id) &&
-      (item.queueId || MAIN_QUEUE_ID) === queueId &&
-      item.status !== 'completed'
-    ).length;
+      (item.queueId || MAIN_QUEUE_ID) === queueId
+    );
+    const maxPos = queueItems.reduce((max, d) => Math.max(max, d.queuePosition ?? 0), -1);
+    const nextPosition = maxPos + 1;
     set(state => ({
       downloads: state.downloads.map(item =>
         selectedIds.has(item.id) && item.status !== 'completed'
@@ -693,7 +710,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       }));
 
       // Auto resume downloads that were active or queued
-      const active = get().downloads.filter(d => d.status === 'queued');
+      const active = get().downloads
+        .filter(d => d.status === 'queued')
+        .sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
       if (active.length > 0) {
         try {
           const settings = useSettingsStore.getState();

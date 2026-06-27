@@ -16,6 +16,7 @@ import {
   canStartDownload,
   startActionLabel
 } from '../utils/downloadActions';
+import { isActiveDownloadStatus } from '../utils/downloads';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -186,7 +187,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   // Sort by queue position when viewing a specific queue so the visual
   // order matches the queue order and move-up/down buttons reflect reality.
   const sortedDownloads = filter.startsWith('queue:')
-    ? [...filteredDownloads].sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
+    ? [...filteredDownloads].sort((left, right) => {
+        const leftActive = isActiveDownloadStatus(left.status) && left.status !== 'queued';
+        const rightActive = isActiveDownloadStatus(right.status) && right.status !== 'queued';
+        
+        if (leftActive && !rightActive) return -1;
+        if (!leftActive && rightActive) return 1;
+        
+        return (left.queuePosition ?? 0) - (right.queuePosition ?? 0);
+      })
     : filteredDownloads;
   const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
     if (e.detail === 2) {

@@ -187,7 +187,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
       <div className="download-cell-right">
         <span
-          className="truncate group-hover:hidden tabular-nums ml-auto"
+          className="truncate group-hover:hidden tabular-nums"
           title={download.dateAdded ? new Date(download.dateAdded).toLocaleDateString() : '-'}
         >
           {download.dateAdded ? new Date(download.dateAdded).toLocaleDateString() : '-'}

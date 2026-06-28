@@ -1562,6 +1562,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-cell-truncate {
   display: flex;
   align-items: center;
+  justify-content: center;
   min-width: 0;
   overflow: hidden;
 }
@@ -1581,9 +1582,9 @@ html[data-list-density="relaxed"] .download-ghost-row {
   }
 
 .download-cell-right {
-  text-align: right;
+  text-align: center;
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: center;
   min-width: 0;
   overflow: hidden;
@@ -1613,6 +1614,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-status-cell {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   min-width: 0;
   overflow: hidden;
@@ -1621,7 +1623,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-status-cell > span {
   min-width: 0;
   max-width: 100%;
-  flex: 0 0 72px;
+  flex: 0 0 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

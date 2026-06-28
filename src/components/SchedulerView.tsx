@@ -237,7 +237,11 @@ export default function SchedulerView() {
       <div className="flex items-center gap-3 border-b border-border-color px-6 pb-4">
         <div className="flex items-center gap-3 text-[17px] font-semibold tracking-tight text-text-primary">
           <button
-            onClick={() => updateDraft('enabled', !draft.enabled)}
+            onClick={() => {
+              const newValue = !draft.enabled;
+              updateDraft('enabled', newValue);
+              setScheduler({ ...savedSettings, enabled: newValue });
+            }}
             className={`relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${draft.enabled ? 'bg-accent' : 'bg-item-hover'}`}
             aria-checked={draft.enabled}
             role="switch"

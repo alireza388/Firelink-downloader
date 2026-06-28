@@ -35,7 +35,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>({ column: 'Date Added', direction: 'desc' });
   const [columnWidths, setColumnWidths] = useState(() => {
     try {
       const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY) || 'null');
@@ -220,6 +220,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       })
     : sortConfig
       ? [...filteredDownloads].sort((a, b) => {
+          const aUnfinished = a.status !== 'completed';
+          const bUnfinished = b.status !== 'completed';
+
+          if (aUnfinished && !bUnfinished) return -1;
+          if (!aUnfinished && bUnfinished) return 1;
+
           let comparison = 0;
           switch (sortConfig.column) {
             case 'File Name':
@@ -443,11 +449,12 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             <div className="download-table-scroll">
             <div className="download-table-header" style={{ gridTemplateColumns: tableGridTemplate }}>
               {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
-                <div key={label} className={index === 5 ? 'download-cell-right' : undefined}>
-                  <div 
-                    className={`flex items-center gap-1 ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'}`}
-                    onClick={() => handleSort(label)}
-                  >
+                <div 
+                  key={label} 
+                  className={`${index === 5 ? 'download-cell-right' : ''} ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'} flex items-center justify-between`}
+                  onClick={() => handleSort(label)}
+                >
+                  <div className="flex items-center gap-1 w-full h-full select-none">
                     <span>{label}</span>
                     {sortConfig?.column === label && (
                       sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />

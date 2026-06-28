@@ -3,7 +3,7 @@ import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
-import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command, ChevronRight } from 'lucide-react';
+import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
 import {
@@ -35,6 +35,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>(null);
   const [columnWidths, setColumnWidths] = useState(() => {
     try {
       const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY) || 'null');
@@ -184,6 +185,27 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
   });
 
+  const parseSpeed = (speedStr?: string) => {
+    if (!speedStr || speedStr === '-') return 0;
+    const val = parseFloat(speedStr);
+    if (speedStr.includes('KB/s')) return val * 1024;
+    if (speedStr.includes('MB/s')) return val * 1024 * 1024;
+    if (speedStr.includes('GB/s')) return val * 1024 * 1024 * 1024;
+    return val;
+  };
+
+  const parseEta = (etaStr?: string) => {
+    if (!etaStr || etaStr === '-') return Infinity;
+    let seconds = 0;
+    const hours = etaStr.match(/(\d+)h/);
+    const minutes = etaStr.match(/(\d+)m/);
+    const secs = etaStr.match(/(\d+)s/);
+    if (hours) seconds += parseInt(hours[1]) * 3600;
+    if (minutes) seconds += parseInt(minutes[1]) * 60;
+    if (secs) seconds += parseInt(secs[1]);
+    return seconds;
+  };
+
   // Sort by queue position when viewing a specific queue so the visual
   // order matches the queue order and move-up/down buttons reflect reality.
   const sortedDownloads = filter.startsWith('queue:')
@@ -196,7 +218,32 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
         
         return (left.queuePosition ?? 0) - (right.queuePosition ?? 0);
       })
-    : filteredDownloads;
+    : sortConfig
+      ? [...filteredDownloads].sort((a, b) => {
+          let comparison = 0;
+          switch (sortConfig.column) {
+            case 'File Name':
+              comparison = (a.fileName || a.url || '').localeCompare(b.fileName || b.url || '');
+              break;
+            case 'Size':
+              comparison = parseInt(a.size || '0', 10) - parseInt(b.size || '0', 10);
+              break;
+            case 'Status':
+              comparison = a.status.localeCompare(b.status);
+              break;
+            case 'Speed':
+              comparison = parseSpeed(a.speed) - parseSpeed(b.speed);
+              break;
+            case 'ETA':
+              comparison = parseEta(a.eta) - parseEta(b.eta);
+              break;
+            case 'Date Added':
+              comparison = new Date(a.dateAdded || 0).getTime() - new Date(b.dateAdded || 0).getTime();
+              break;
+          }
+          return sortConfig.direction === 'asc' ? comparison : -comparison;
+        })
+      : filteredDownloads;
   const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
     if (e.detail === 2) {
       handleDownloadDoubleClick(item);
@@ -237,6 +284,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       setLastSelectedId(menu.id);
     }
     setContextMenu(menu);
+  };
+
+  const handleSort = (column: string) => {
+    if (filter.startsWith('queue:')) return; // Disable custom sorting in queues
+    setSortConfig(current => {
+      if (current?.column === column) {
+        if (current.direction === 'desc') return null; // Reset sort
+        return { column, direction: 'desc' };
+      }
+      return { column, direction: 'asc' };
+    });
   };
 
 
@@ -386,7 +444,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             <div className="download-table-header" style={{ gridTemplateColumns: tableGridTemplate }}>
               {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
                 <div key={label} className={index === 5 ? 'download-cell-right' : undefined}>
-                  <span>{label}</span>
+                  <div 
+                    className={`flex items-center gap-1 ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'}`}
+                    onClick={() => handleSort(label)}
+                  >
+                    <span>{label}</span>
+                    {sortConfig?.column === label && (
+                      sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                    )}
+                  </div>
                   <div
                     className="column-resize-handle"
                     onPointerDown={(event) => startColumnResize(index, event)}
@@ -436,12 +502,22 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               <button
                 onClick={() => {
                   setContextMenu(null);
-                  Array.from(selectedIds).forEach(id => {
-                    const item = downloads.find(d => d.id === id);
-                    if (item && canStartDownload(item.status)) {
-                      handleResume(item);
+                  const itemsToResume = Array.from(selectedIds)
+                    .map(id => downloads.find(d => d.id === id))
+                    .filter((item): item is DownloadItem => !!item && canStartDownload(item.status));
+                  
+                  if (itemsToResume.length > 0) {
+                    const activeQueueIds = Array.from(new Set(itemsToResume.map(i => i.queueId).filter(Boolean)));
+                    // We can use assignToQueue for bulk resume to the same queue
+                    if (activeQueueIds.length === 1 && activeQueueIds[0]) {
+                      void assignToQueue(itemsToResume.map(i => i.id), activeQueueIds[0]).catch(error => {
+                        showInteractionError('Could not bulk resume downloads', error);
+                      });
+                    } else {
+                      // Fallback for missing queue or multiple queues
+                      itemsToResume.forEach(handleResume);
                     }
-                  });
+                  }
                 }}
                 className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
               >

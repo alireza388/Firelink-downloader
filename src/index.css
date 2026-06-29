@@ -1528,9 +1528,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
   overflow: hidden;
 }
 
-  .download-row:nth-child(even) {
-    background: hsl(var(--stripe-bg));
-  }
+
   
   .download-row.is-selected {
     background: hsl(var(--accent-color) / 0.15) !important;

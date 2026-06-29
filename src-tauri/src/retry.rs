@@ -102,7 +102,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
 
     let m = message.to_ascii_lowercase();
 
-    const TRANSIENT: [&str; 23] = [
+    const TRANSIENT: [&str; 34] = [
         // reqwest / hyper / OS socket-layer
         "timed out",
         "timeout",
@@ -126,6 +126,18 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "http 429",
         "http error 429",
         "429 too many requests",
+        // aria2c HTTP error formats
+        "status=408",
+        "status=429",
+        "status=500",
+        "status=502",
+        "status=503",
+        "status=504",
+        "status=520",
+        "status=521",
+        "status=522",
+        "status=523",
+        "status=524",
         // aria2c log phrasing
         "connection was closed",
         "timeout.",
@@ -251,6 +263,7 @@ mod tests {
         assert!(is_transient_network_error("HTTP 429 Too Many Requests"));
         assert!(is_transient_network_error("HTTP Error 429: Too Many Requests"));
         assert!(is_transient_network_error("429 too many requests"));
+        assert!(is_transient_network_error("The response status is not successful. status=429"));
     }
 
     #[test]
@@ -263,6 +276,8 @@ mod tests {
         ));
         assert!(is_transient_network_error("Timeout."));
         assert!(is_transient_network_error("network is unreachable"));
+        assert!(is_transient_network_error("The response status is not successful. status=503"));
+        assert!(is_transient_network_error("The response status is not successful. status=502"));
     }
 
     // --- transient classification: negative cases -------------------------

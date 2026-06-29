@@ -55,10 +55,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   useEffect(() => {
     if (!download || download.status !== 'downloading') return;
 
-    const unsubscribe = useDownloadProgressStore.subscribe((state) => {
-      const progress = state.progressMap[downloadId];
+    const applyProgress = (progress: any) => {
       if (!progress) return;
-
       if (progressBarRef.current) {
         progressBarRef.current.style.width = `${progress.fraction * 100}%`;
       }
@@ -74,6 +72,13 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         etaTextRef.current.innerText = progress.eta;
         etaTextRef.current.title = progress.eta;
       }
+    };
+
+    // Apply immediate state on mount
+    applyProgress(useDownloadProgressStore.getState().progressMap[downloadId]);
+
+    const unsubscribe = useDownloadProgressStore.subscribe((state) => {
+      applyProgress(state.progressMap[downloadId]);
     });
 
     return () => unsubscribe();

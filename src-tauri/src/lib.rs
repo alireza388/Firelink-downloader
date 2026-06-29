@@ -1505,6 +1505,7 @@ pub mod ipc;
 mod parity;
 mod platform;
 pub mod queue;
+pub mod process;
 pub mod retry;
 mod settings;
 pub use error::AppError;
@@ -2511,6 +2512,7 @@ pub(crate) async fn start_media_download_internal(
         let failure_reason = loop {
             tokio::select! {
                 _ = cancel_rx.changed() => {
+                    crate::process::kill_process_tree(child.pid());
                     let _ = child.kill();
                     if processing_started {
                         cleanup_media_processing_artifacts(&out_path).await;

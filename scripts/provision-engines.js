@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { collectRegularFiles, sha256 } from './engine-payload-integrity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -35,10 +35,6 @@ const destination = path.join(repoRoot, 'src-tauri', 'provisioned-engines', targ
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), `firelink-engines-${target}-`));
 const isWindows = target.includes('windows');
 const executableSuffix = isWindows ? '.exe' : '';
-
-function sha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-}
 
 async function download(name, source) {
   const sourcePath = new URL(source.url).pathname;
@@ -99,16 +95,9 @@ function copyExecutable(source, engine) {
 }
 
 function writePayloadManifest() {
-  const files = [];
-  const walk = directory => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) walk(file);
-      else if (entry.isFile() && entry.name !== 'payload-manifest.json') files.push(file);
-    }
-  };
-  walk(destination);
-  files.sort((left, right) => left.localeCompare(right));
+  const files = collectRegularFiles(destination, {
+    ignoredNames: ['payload-manifest.json'],
+  });
   const manifest = {
     schemaVersion: 1,
     target,

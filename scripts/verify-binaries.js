@@ -90,6 +90,31 @@ function ok(msg) {
   console.log(`[OK] ${msg}`);
 }
 
+function rejectSymlinks(root, label) {
+  if (!fs.existsSync(root)) {
+    return;
+  }
+
+  let symlinkCount = 0;
+  const walk = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      const relative = path.relative(root, file).split(path.sep).join('/');
+      if (entry.isSymbolicLink()) {
+        fail(`Unsupported symlink in ${label}: ${relative}`);
+        symlinkCount += 1;
+      } else if (entry.isDirectory()) {
+        walk(file);
+      }
+    }
+  };
+
+  walk(root);
+  if (symlinkCount === 0) {
+    ok(`${label} contains no symlinks`);
+  }
+}
+
 function binName(engine) {
   return `${engine}${suffix}`;
 }
@@ -208,23 +233,7 @@ console.log('\n─── 6. yt-dlp packaging ───');
       } catch (e) {
         fail(`Cannot read _internal/: ${e.message}`);
       }
-      if (entries) {
-        let broken = 0;
-        for (const entry of entries) {
-          const ep = path.join(internalDir, entry);
-          if (fs.lstatSync(ep).isSymbolicLink()) {
-            try {
-              fs.accessSync(ep);
-            } catch {
-              fail(`Broken symlink in _internal/: ${entry}`);
-              broken++;
-            }
-          }
-        }
-        if (broken === 0) {
-          ok('_internal/ symlinks valid');
-        }
-      }
+      rejectSymlinks(internalDir, '_internal/');
 
       const requiredRuntimeFiles = [
         path.join(internalDir, 'yt_dlp_ejs', 'yt', 'solver', 'core.min.js'),
@@ -251,6 +260,11 @@ console.log('\n─── 6. yt-dlp packaging ───');
       fail('yt-dlp must use the self-contained onedir distribution; onefile adds ~17 seconds to every launch');
     }
   }
+}
+
+const aria2LibsDir = path.join(binariesDir, 'aria2-libs');
+if (fs.existsSync(aria2LibsDir) && fs.statSync(aria2LibsDir).isDirectory()) {
+  rejectSymlinks(aria2LibsDir, 'aria2-libs/');
 }
 
 // ───── Check 7, 8 & 9: Engine version self-tests ─────

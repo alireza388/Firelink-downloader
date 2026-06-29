@@ -27,7 +27,11 @@ const MAX_URL_COUNT: usize = 200;
 const SIGNATURE_MAX_AGE_MS: u64 = 60_000;
 const SERVER_HEADER: &str = "x-firelink-server";
 const PROTOCOL_VERSION_HEADER: &str = "x-firelink-protocol-version";
-const PROTOCOL_VERSION: &str = "2";
+const CLIENT_NONCE_HEADER: &str = "x-firelink-client-nonce";
+const SERVER_PROOF_HEADER: &str = "x-firelink-server-proof";
+const SERVER_PORT_HEADER: &str = "x-firelink-server-port";
+const SERVER_PROOF_PREFIX: &[u8] = b"firelink-server-proof\n";
+const PROTOCOL_VERSION: &str = "3";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -41,6 +45,7 @@ pub struct ServerState {
     pub pairing_token: SharedExtensionToken,
     pub frontend_ready: SharedFrontendReady,
     pub replay_cache: ReplayCache,
+    pub bound_port: u16,
 }
 
 #[derive(Deserialize)]
@@ -76,11 +81,13 @@ pub async fn start_server(
     server_port: SharedServerPort,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let (port, listener) = bind_extension_listener().await?;
     let state = ServerState {
         app_handle,
         pairing_token,
         frontend_ready,
         replay_cache: Arc::new(Mutex::new(HashMap::new())),
+        bound_port: port,
     };
 
     let cors = CorsLayer::new()
@@ -98,7 +105,6 @@ pub async fn start_server(
         .layer(middleware::from_fn(add_server_identity))
         .with_state(state);
 
-    let (port, listener) = bind_extension_listener().await?;
     if let Ok(mut current_port) = server_port.write() {
         *current_port = Some(port);
     }
@@ -156,13 +162,13 @@ async fn ping_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
     body: Bytes,
-) -> StatusCode {
+) -> Result<Response, StatusCode> {
     let signature = match headers
         .get("x-firelink-signature")
         .and_then(|v| v.to_str().ok())
     {
         Some(v) => v,
-        None => return StatusCode::FORBIDDEN,
+        None => return Err(StatusCode::FORBIDDEN),
     };
 
     let timestamp_str = match headers
@@ -170,14 +176,41 @@ async fn ping_handler(
         .and_then(|v| v.to_str().ok())
     {
         Some(v) => v,
-        None => return StatusCode::FORBIDDEN,
+        None => return Err(StatusCode::FORBIDDEN),
+    };
+
+    let nonce = match headers
+        .get(CLIENT_NONCE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .filter(|value| is_valid_client_nonce(value))
+    {
+        Some(v) => v,
+        None => return Err(StatusCode::FORBIDDEN),
     };
 
     if verify_signature(signature, timestamp_str, &body, &state.pairing_token).is_err() {
-        return StatusCode::FORBIDDEN;
+        return Err(StatusCode::FORBIDDEN);
     }
 
-    StatusCode::OK
+    let proof = sign_server_proof(
+        timestamp_str,
+        nonce,
+        state.bound_port,
+        &state.pairing_token,
+    )
+    .map_err(|_| StatusCode::FORBIDDEN)?;
+
+    let mut response = Response::new(Body::empty());
+    response.headers_mut().insert(
+        SERVER_PROOF_HEADER,
+        HeaderValue::from_str(&proof).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    );
+    response.headers_mut().insert(
+        SERVER_PORT_HEADER,
+        HeaderValue::from_str(&state.bound_port.to_string())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    );
+    Ok(response)
 }
 
 async fn download_handler(
@@ -327,6 +360,39 @@ fn verify_signature(
     Ok(timestamp)
 }
 
+fn is_valid_client_nonce(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn sign_server_proof(
+    timestamp_text: &str,
+    nonce: &str,
+    bound_port: u16,
+    pairing_token: &SharedExtensionToken,
+) -> Result<String, ()> {
+    let token = pairing_token.read().unwrap_or_else(|e| e.into_inner());
+    if token.is_empty() {
+        return Err(());
+    }
+
+    let mut mac = HmacSha256::new_from_slice(token.as_bytes()).map_err(|_| ())?;
+    mac.update(SERVER_PROOF_PREFIX);
+    mac.update(timestamp_text.as_bytes());
+    mac.update(b"\n");
+    mac.update(nonce.as_bytes());
+    mac.update(b"\n");
+    mac.update(bound_port.to_string().as_bytes());
+    let signature = mac.finalize().into_bytes();
+    Ok(encode_hex(signature.as_slice()))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
 fn claim_request(signature: &str, timestamp: u64, replay_cache: &ReplayCache) -> bool {
     let now = match current_time_millis() {
         Some(now) => now,
@@ -383,8 +449,14 @@ fn is_allowed_origin(origin: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_server_identity, PROTOCOL_VERSION_HEADER, SERVER_HEADER};
+    use super::{
+        add_server_identity, is_valid_client_nonce, sign_server_proof, PROTOCOL_VERSION_HEADER,
+        SERVER_HEADER,
+    };
     use axum::{http::StatusCode, middleware, routing::get, Router};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use std::sync::{Arc, RwLock};
 
     #[tokio::test]
     async fn identifies_every_extension_server_response() {
@@ -406,9 +478,48 @@ mod tests {
         assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
         assert_eq!(
             response.headers().get(PROTOCOL_VERSION_HEADER).unwrap(),
-            "2"
+            "3"
         );
 
         server.abort();
+    }
+
+    #[test]
+    fn validates_client_nonce_shape() {
+        assert!(is_valid_client_nonce("0123456789abcdef0123456789abcdef"));
+        assert!(is_valid_client_nonce("ABCDEF0123456789abcdef0123456789"));
+        assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcde"));
+        assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn signs_server_proof_with_timestamp_nonce_and_bound_port() {
+        let token = Arc::new(RwLock::new("pairing-token".to_string()));
+        let timestamp = "1710000000000";
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let port = 6414;
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"pairing-token").unwrap();
+        mac.update(b"firelink-server-proof\n");
+        mac.update(timestamp.as_bytes());
+        mac.update(b"\n");
+        mac.update(nonce.as_bytes());
+        mac.update(b"\n");
+        mac.update(port.to_string().as_bytes());
+        let expected = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+
+        assert_eq!(
+            sign_server_proof(timestamp, nonce, port, &token).unwrap(),
+            expected
+        );
+        assert_ne!(
+            sign_server_proof(timestamp, nonce, port + 1, &token).unwrap(),
+            expected
+        );
     }
 }

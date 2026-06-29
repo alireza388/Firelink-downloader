@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
+import { collectRegularFiles, sha256, treeDigest } from './engine-payload-integrity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -51,29 +51,6 @@ if (!source) {
   process.exit(1);
 }
 
-function sha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-}
-
-function treeDigest(root) {
-  const files = [];
-  const walk = directory => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) walk(file);
-      else if (entry.isFile()) files.push(file);
-    }
-  };
-  walk(root);
-  files.sort((left, right) => left.localeCompare(right));
-  const digest = crypto.createHash('sha256');
-  for (const file of files) {
-    const relative = path.relative(root, file).split(path.sep).join('/');
-    digest.update(`${relative}\0${sha256(file)}\n`);
-  }
-  return { files: files.length, sha256: digest.digest('hex') };
-}
-
 if (targetLock) {
   for (const engine of engines) {
     const name = `${engine}-${target}${suffix}`;
@@ -115,17 +92,9 @@ if (targetLock) {
       process.exit(1);
     }
   }
-  const actualFiles = [];
-  const walk = directory => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) walk(file);
-      else if (entry.isFile() && entry.name !== 'payload-manifest.json') {
-        actualFiles.push(path.relative(source, file).split(path.sep).join('/'));
-      }
-    }
-  };
-  walk(source);
+  const actualFiles = collectRegularFiles(source, {
+    ignoredNames: ['payload-manifest.json'],
+  }).map(file => path.relative(source, file).split(path.sep).join('/'));
   const expectedFiles = Object.keys(manifest.files || {}).sort();
   actualFiles.sort();
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {

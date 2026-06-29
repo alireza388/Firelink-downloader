@@ -1570,6 +1570,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-cell-truncate > span,
 .download-cell-right > span {
   display: block;
+  text-align: center;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -1624,6 +1625,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
   min-width: 0;
   max-width: 100%;
   flex: 0 0 auto;
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -247,7 +247,9 @@ export const AddDownloadsModal = () => {
               url: row.sourceUrl,
               userAgent: settingsStore.customUserAgent || null,
               username: useAuth ? username.trim() || null : login?.username || null,
-              password: useAuth ? password || null : keychainPassword
+              password: useAuth ? password || null : keychainPassword,
+              headers: headers?.trim() || null,
+              cookies: cookies?.trim() || null
             });
             setParsedItems(current => updateRowIfCurrent(
               current,
@@ -291,7 +293,7 @@ export const AddDownloadsModal = () => {
         }
       })();
     }
-  }, [parsedItems, pendingAddFilename, password, useAuth, username]);
+  }, [parsedItems, pendingAddFilename, password, useAuth, username, headers, cookies]);
 
   useEffect(() => {
     if (parsedItems.length === 0) {

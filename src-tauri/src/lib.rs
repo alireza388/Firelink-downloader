@@ -876,8 +876,11 @@ async fn fetch_metadata(
     user_agent: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    headers: Option<String>,
+    cookies: Option<String>,
 ) -> Result<MetadataResponse, String> {
     let mut current_url = url.clone();
+    let original_host = reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
     let mut redirects = 0;
     let res;
 
@@ -904,21 +907,58 @@ async fn fetch_metadata(
             builder = builder.resolve(&host, addr);
         }
 
+        let current_host = reqwest::Url::parse(&current_url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
+        let mut should_send_auth = redirects == 0;
+        if !should_send_auth {
+            if let (Some(orig), Some(curr)) = (&original_host, &current_host) {
+                if curr == orig || curr.ends_with(&format!(".{}", orig)) {
+                    should_send_auth = true;
+                }
+            }
+        }
+
+        let mut header_map = reqwest::header::HeaderMap::new();
+        if should_send_auth {
+            if let Some(ref h_str) = headers {
+                for line in h_str.lines() {
+                    if let Some((k, v)) = line.split_once(':') {
+                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.trim().as_bytes()) {
+                            if let Ok(value) = reqwest::header::HeaderValue::from_str(v.trim()) {
+                                header_map.insert(name, value);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(ref c_str) = cookies {
+                if !c_str.trim().is_empty() {
+                    if let Ok(value) = reqwest::header::HeaderValue::from_str(c_str.trim()) {
+                        header_map.insert(reqwest::header::COOKIE, value);
+                    }
+                }
+            }
+        }
+        builder = builder.default_headers(header_map);
+
         let client = builder.build().map_err(|e| e.to_string())?;
 
         let mut head_req = client.head(&current_url);
-        if let Some(ref user) = username {
-            if !user.is_empty() {
-                head_req = head_req.basic_auth(user, password.as_deref());
+        if should_send_auth {
+            if let Some(ref user) = username {
+                if !user.is_empty() {
+                    head_req = head_req.basic_auth(user, password.as_deref());
+                }
             }
         }
         let mut current_res = head_req.send().await.map_err(|e| e.to_string())?;
 
         if !current_res.status().is_success() && !current_res.status().is_redirection() {
             let mut get_req = client.get(&current_url);
-            if let Some(ref user) = username {
-                if !user.is_empty() {
-                    get_req = get_req.basic_auth(user, password.as_deref());
+            if should_send_auth {
+                if let Some(ref user) = username {
+                    if !user.is_empty() {
+                        get_req = get_req.basic_auth(user, password.as_deref());
+                    }
                 }
             }
             current_res = get_req.send().await.map_err(|e| e.to_string())?;

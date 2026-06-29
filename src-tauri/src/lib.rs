@@ -640,6 +640,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
     static YTDLP_PCT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     static YTDLP_SPD_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     static YTDLP_ETA_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static YTDLP_SIZE_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
 
     let aria2_re = ARIA2_RE.get_or_init(|| {
         Regex::new(
@@ -673,6 +674,17 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
     let fraction = captures.get(1)?.as_str().parse::<f64>().ok()? / 100.0;
     let speed_re = YTDLP_SPD_RE.get_or_init(|| Regex::new(r"\bat\s+([^\s]+)").unwrap());
     let eta_re = YTDLP_ETA_RE.get_or_init(|| Regex::new(r"\bETA\s+([^\s]+)").unwrap());
+    let size_re = YTDLP_SIZE_RE.get_or_init(|| Regex::new(r"of\s+~?\s*([0-9.]+[a-zA-Z]+)").unwrap());
+    let mut parsed_size_str = None;
+    let mut downloaded_bytes = None;
+    if let Some(captures) = size_re.captures(line) {
+        if let Some(size_str) = captures.get(1) {
+            parsed_size_str = Some(size_str.as_str().to_string());
+            if let Some(total_bytes) = parse_human_size(size_str.as_str()) {
+                downloaded_bytes = Some(total_bytes * fraction);
+            }
+        }
+    }
 
     Some(MediaProgress {
         fraction: fraction.clamp(0.0, 1.0),
@@ -686,41 +698,64 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             .and_then(|capture| capture.get(1))
             .map(|value| value.as_str().to_string())
             .unwrap_or_else(|| "-".to_string()),
-        size: None,
-        downloaded_bytes: None,
+        size: parsed_size_str,
+        downloaded_bytes,
     })
+}
+
+fn parse_human_size(s: &str) -> Option<f64> {
+    let s = s.trim().to_lowercase();
+    let num_str = s.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect::<String>();
+    let num = num_str.parse::<f64>().ok()?;
+    if s.ends_with("kib") || s.ends_with("kb") || s.ends_with("k") {
+        Some(num * 1024.0)
+    } else if s.ends_with("mib") || s.ends_with("mb") || s.ends_with("m") {
+        Some(num * 1024.0 * 1024.0)
+    } else if s.ends_with("gib") || s.ends_with("gb") || s.ends_with("g") {
+        Some(num * 1024.0 * 1024.0 * 1024.0)
+    } else {
+        Some(num)
+    }
 }
 
 fn media_progress_speed(
     progress: &MediaProgress,
     now: Instant,
     last_sample: &mut Option<(Instant, f64)>,
-) -> String {
+) -> (String, String) {
     let Some(downloaded_bytes) = progress.downloaded_bytes else {
-        return progress.speed.clone();
+        return (progress.speed.clone(), progress.eta.clone());
     };
 
     let Some((last_at, last_bytes)) = *last_sample else {
         *last_sample = Some((now, downloaded_bytes));
-        return progress.speed.clone();
+        return (progress.speed.clone(), progress.eta.clone());
     };
 
     *last_sample = Some((now, downloaded_bytes));
 
     if downloaded_bytes < last_bytes {
-        return progress.speed.clone();
+        return (progress.speed.clone(), progress.eta.clone());
     }
 
     let elapsed = now.duration_since(last_at).as_secs_f64();
     if elapsed <= 0.05 {
-        return progress.speed.clone();
+        return (progress.speed.clone(), progress.eta.clone());
     }
 
     let bytes_per_second = (downloaded_bytes - last_bytes) / elapsed;
     if bytes_per_second > 0.0 {
-        crate::download::format_speed(bytes_per_second)
+        let speed_str = crate::download::format_speed(bytes_per_second);
+        let eta_str = if progress.fraction > 0.0 && progress.fraction < 1.0 {
+            let total = downloaded_bytes / progress.fraction;
+            let remaining = total - downloaded_bytes;
+            crate::download::format_duration(remaining / bytes_per_second)
+        } else {
+            progress.eta.clone()
+        };
+        (speed_str, eta_str)
     } else {
-        progress.speed.clone()
+        (progress.speed.clone(), progress.eta.clone())
     }
 }
 
@@ -1180,6 +1215,12 @@ async fn fetch_media_metadata_uncached(
     if output.status.success() {
         let value: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        if let Ok(mut cache) = get_metadata_cache().lock() {
+            if let Ok(json_str) = String::from_utf8(output.stdout.clone()) {
+                cache.insert(url.to_string(), json_str);
+            }
+        }
 
         let title = value
             .get("title")
@@ -2429,7 +2470,22 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
-        cmd = cmd.arg("--").arg(&url);
+        let mut temp_info_path = None;
+        if let Ok(mut cache) = get_metadata_cache().lock() {
+            if let Some(json_str) = cache.remove(&url) {
+                let temp_dir = std::env::temp_dir();
+                let path = temp_dir.join(format!("firelink_ytdlp_{}.info.json", id));
+                if std::fs::write(&path, json_str).is_ok() {
+                    temp_info_path = Some(path);
+                }
+            }
+        }
+
+        if let Some(path) = temp_info_path.as_ref() {
+            cmd = cmd.arg("--load-info-json").arg(path);
+        } else {
+            cmd = cmd.arg("--").arg(&url);
+        }
 
         let (mut rx, child) = cmd
             .spawn()
@@ -2461,7 +2517,7 @@ pub(crate) async fn start_media_download_internal(
                             if current_track != previous_track {
                                 last_speed_sample = None;
                             }
-                            let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
+                            let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
 
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
@@ -2469,7 +2525,7 @@ pub(crate) async fn start_media_download_internal(
                                         id: id.to_string(),
                                         fraction: overall_fraction,
                                     speed,
-                                    eta: progress.eta,
+                                    eta,
                                     size: progress.size,
                                     size_is_final: false,
                                 });
@@ -2490,14 +2546,14 @@ pub(crate) async fn start_media_download_internal(
                                 if current_track != previous_track {
                                     last_speed_sample = None;
                                 }
-                                let speed = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
+                                let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                             id: id.to_string(),
                                             fraction: overall_fraction,
                                     speed,
-                                    eta: progress.eta,
+                                    eta,
                                     size: progress.size,
                                     size_is_final: false,
                                 });
@@ -2574,6 +2630,10 @@ pub(crate) async fn start_media_download_internal(
                 }
             }
         };
+
+        if let Some(path) = temp_info_path {
+            let _ = std::fs::remove_file(path);
+        }
 
         let transient = is_transient_network_error(&failure_reason);
         let strikes_left = strike < MAX_RETRIES;
@@ -4345,10 +4405,10 @@ mod tests {
         let start = Instant::now();
         let mut sample = None;
 
-        assert_eq!(media_progress_speed(&first, start, &mut sample), "fallback");
+        assert_eq!(media_progress_speed(&first, start, &mut sample), ("fallback".to_string(), "-".to_string()));
         assert_eq!(
             media_progress_speed(&second, start + Duration::from_secs(1), &mut sample),
-            "2.0 MB/s"
+            ("2.0 MB/s".to_string(), "00:00".to_string())
         );
     }
 

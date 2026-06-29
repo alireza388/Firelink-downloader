@@ -96,10 +96,19 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       const activeEl = document.activeElement as HTMLElement | null;
       const isInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
       
-      if (!isInput && (e.key === 'Delete' || e.key === 'Backspace')) {
-        if (!activeEl || !activeEl.closest('.sidebar-inner')) {
-          if (selectedIds.size > 0) {
-            handleDelete(Array.from(selectedIds));
+      if (!isInput) {
+        if ((e.key === 'a' || e.key === 'A') && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          const allIds = sortedDownloads.map(d => d.id);
+          setSelectedIds(new Set(allIds));
+          return;
+        }
+        
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (!activeEl || !activeEl.closest('.sidebar-inner')) {
+            if (selectedIds.size > 0) {
+              handleDelete(Array.from(selectedIds));
+            }
           }
         }
       }
@@ -255,7 +264,21 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       handleDownloadDoubleClick(item);
       return;
     }
-    if (e.metaKey || e.ctrlKey) {
+    if (e.shiftKey && lastSelectedId) {
+      const currentIndex = sortedDownloads.findIndex(d => d.id === item.id);
+      const lastIndex = sortedDownloads.findIndex(d => d.id === lastSelectedId);
+      
+      if (currentIndex !== -1 && lastIndex !== -1) {
+        const start = Math.min(currentIndex, lastIndex);
+        const end = Math.max(currentIndex, lastIndex);
+        
+        const newSelected = (e.metaKey || e.ctrlKey) ? new Set(selectedIds) : new Set<string>();
+        for (let i = start; i <= end; i++) {
+          newSelected.add(sortedDownloads[i].id);
+        }
+        setSelectedIds(newSelected);
+      }
+    } else if (e.metaKey || e.ctrlKey) {
       const newSelected = new Set(selectedIds);
       if (newSelected.has(item.id)) {
         newSelected.delete(item.id);
@@ -264,20 +287,6 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       }
       setSelectedIds(newSelected);
       setLastSelectedId(item.id);
-    } else if (e.shiftKey && lastSelectedId) {
-      const currentIndex = sortedDownloads.findIndex(d => d.id === item.id);
-      const lastIndex = sortedDownloads.findIndex(d => d.id === lastSelectedId);
-      
-      if (currentIndex !== -1 && lastIndex !== -1) {
-        const start = Math.min(currentIndex, lastIndex);
-        const end = Math.max(currentIndex, lastIndex);
-        
-        const newSelected = new Set(selectedIds);
-        for (let i = start; i <= end; i++) {
-          newSelected.add(sortedDownloads[i].id);
-        }
-        setSelectedIds(newSelected);
-      }
     } else {
       setSelectedIds(new Set([item.id]));
       setLastSelectedId(item.id);
@@ -426,70 +435,68 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       </div>
 
       <div className="downloads-table flex-1 flex flex-col">
-        {sortedDownloads.length === 0 ? (
-          <div className="downloads-empty-state">
-            <ArrowDownCircle aria-hidden="true" />
-            <div className="downloads-empty-title">No Downloads</div>
-            <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
-              Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
-              <span className="flex items-center mx-1.5">
-                <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                  {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
-                </span>
-                <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
-                <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                  <span className="text-[11px] font-bold text-text-primary">V</span>
-                </span>
-              </span>
-              to add downloads
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="download-table-scroll">
-            <div className="download-table-header" style={{ gridTemplateColumns: tableGridTemplate }}>
-              {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
-                <div 
-                  key={label} 
-                  className={`${index === 5 ? 'download-cell-right' : ''} ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'} flex items-center justify-between`}
-                  onClick={() => handleSort(label)}
-                >
-                  <div className={`flex items-center gap-1 w-full h-full select-none ${index > 0 ? 'justify-center' : ''}`}>
-                    <span>{label}</span>
-                    {sortConfig?.column === label && (
-                      sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
-                    )}
-                  </div>
-                  <div
-                    className="column-resize-handle"
-                    onPointerDown={(event) => startColumnResize(index, event)}
-                  />
+        <div className="download-table-scroll">
+          <div className="download-table-header" style={{ gridTemplateColumns: tableGridTemplate }}>
+            {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
+              <div 
+                key={label} 
+                className={`${index === 5 ? 'download-cell-right' : ''} ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'} flex items-center justify-between`}
+                onClick={() => handleSort(label)}
+              >
+                <div className={`flex items-center gap-1 w-full h-full select-none ${index > 0 ? 'justify-center' : ''}`}>
+                  <span>{label}</span>
+                  {sortConfig?.column === label && (
+                    sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                  )}
                 </div>
-              ))}
-            </div>
-
-            <div className="download-table-body">
-            <div className="download-table-list">
-              {sortedDownloads.map((d, index) => (
-                <DownloadItemComponent
-                  key={d.id}
-                  downloadId={d.id}
-                  index={index}
-                  tableGridTemplate={tableGridTemplate}
-                  setContextMenu={handleContextMenu}
-                  handlePause={handlePause}
-                  handleResume={handleResume}
-                  getCategoryIcon={getCategoryIcon}
-                  isSelected={selectedIds.has(d.id)}
-                  onClick={handleItemClick}
+                <div
+                  className="column-resize-handle"
+                  onPointerDown={(event) => startColumnResize(index, event)}
                 />
-              ))}
-              <div className="flex-1 min-h-0 bg-transparent pointer-events-none" />
-            </div>
-            </div>
-            </div>
-          </>
-        )}
+              </div>
+            ))}
+          </div>
+
+          <div className="download-table-body">
+            {sortedDownloads.length === 0 ? (
+              <div className="downloads-empty-state">
+                <ArrowDownCircle aria-hidden="true" />
+                <div className="downloads-empty-title">No Downloads</div>
+                <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
+                  Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
+                  <span className="flex items-center mx-1.5">
+                    <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                      {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
+                    </span>
+                    <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
+                    <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                      <span className="text-[11px] font-bold text-text-primary">V</span>
+                    </span>
+                  </span>
+                  to add downloads
+                </div>
+              </div>
+            ) : (
+              <div className="download-table-list">
+                {sortedDownloads.map((d, index) => (
+                  <DownloadItemComponent
+                    key={d.id}
+                    downloadId={d.id}
+                    index={index}
+                    tableGridTemplate={tableGridTemplate}
+                    setContextMenu={handleContextMenu}
+                    handlePause={handlePause}
+                    handleResume={handleResume}
+                    getCategoryIcon={getCategoryIcon}
+                    isSelected={selectedIds.has(d.id)}
+                    onClick={handleItemClick}
+                  />
+                ))}
+                <div className="flex-1 min-h-0 bg-transparent pointer-events-none" />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Floating Context Menu */}
@@ -503,16 +510,21 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {selectedIds.size > 1 ? (
+          {selectedIds.size > 1 ? (() => {
+            const selectedDownloads = Array.from(selectedIds)
+              .map(id => downloads.find(d => d.id === id))
+              .filter((item): item is DownloadItem => !!item);
+            
+            const itemsToResume = selectedDownloads.filter(d => canStartDownload(d.status));
+            const itemsToPause = selectedDownloads.filter(d => canPauseDownload(d.status));
+
+            return (
             <>
               {/* Multi-Select Context Menu */}
+              {itemsToResume.length > 0 && (
               <button
                 onClick={() => {
                   setContextMenu(null);
-                  const itemsToResume = Array.from(selectedIds)
-                    .map(id => downloads.find(d => d.id === id))
-                    .filter((item): item is DownloadItem => !!item && canStartDownload(item.status));
-                  
                   if (itemsToResume.length > 0) {
                     const activeQueueIds = Array.from(new Set(itemsToResume.map(i => i.queueId).filter(Boolean)));
                     // We can use assignToQueue for bulk resume to the same queue
@@ -530,8 +542,34 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               >
                 Start/Resume
               </button>
+              )}
 
-              <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+              {itemsToPause.length > 0 && (
+                <button
+                  onClick={() => {
+                    setContextMenu(null);
+                    const nonResumableCount = itemsToPause.filter(d => d.resumable === false).length;
+                    if (nonResumableCount > 0) {
+                      const confirmPause = window.confirm(
+                        nonResumableCount === 1
+                          ? "1 download does not support resuming. If you pause it, you will have to start over again later. Are you sure you want to pause?"
+                          : `${nonResumableCount} downloads do not support resuming. If you pause them, you will have to start over again later. Are you sure you want to pause?`
+                      );
+                      if (!confirmPause) {
+                        return;
+                      }
+                    }
+                    itemsToPause.forEach(d => handlePause(d.id, true));
+                  }}
+                  className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
+                >
+                  Pause
+                </button>
+              )}
+
+              {(itemsToResume.length > 0 || itemsToPause.length > 0) && (
+                <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
+              )}
 
               <div className="group relative">
                 <button className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors flex justify-between items-center">
@@ -582,7 +620,8 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 Remove
               </button>
             </>
-          ) : (
+            );
+          })() : (
             <>
               {/* Single-Select Context Menu */}
               {contextItem.status === 'completed' && (

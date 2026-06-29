@@ -2481,6 +2481,16 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
+        struct CleanupPath(Option<std::path::PathBuf>);
+        impl Drop for CleanupPath {
+            fn drop(&mut self) {
+                if let Some(path) = self.0.take() {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+        let _cleanup = CleanupPath(temp_info_path.clone());
+
         if let Some(path) = temp_info_path.as_ref() {
             cmd = cmd.arg("--load-info-json").arg(path);
         } else {
@@ -2630,10 +2640,6 @@ pub(crate) async fn start_media_download_internal(
                 }
             }
         };
-
-        if let Some(path) = temp_info_path {
-            let _ = std::fs::remove_file(path);
-        }
 
         let transient = is_transient_network_error(&failure_reason);
         let strikes_left = strike < MAX_RETRIES;

@@ -460,43 +460,45 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
           </div>
 
           <div className="download-table-body">
-            {sortedDownloads.length === 0 ? (
-              <div className="downloads-empty-state">
-                <ArrowDownCircle aria-hidden="true" />
-                <div className="downloads-empty-title">No Downloads</div>
-                <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
-                  Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
-                  <span className="flex items-center mx-1.5">
-                    <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                      {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
+            <div className="download-table-list" ref={animationParent}>
+              {sortedDownloads.length === 0 ? (
+                <div className="downloads-empty-state">
+                  <ArrowDownCircle aria-hidden="true" />
+                  <div className="downloads-empty-title">No Downloads</div>
+                  <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
+                    Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
+                    <span className="flex items-center mx-1.5">
+                      <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                        {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
+                      </span>
+                      <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
+                      <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                        <span className="text-[11px] font-bold text-text-primary">V</span>
+                      </span>
                     </span>
-                    <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
-                    <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                      <span className="text-[11px] font-bold text-text-primary">V</span>
-                    </span>
-                  </span>
-                  to add downloads
+                    to add downloads
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="download-table-list" ref={animationParent}>
-                {sortedDownloads.map((d, index) => (
-                  <DownloadItemComponent
-                    key={d.id}
-                    downloadId={d.id}
-                    index={index}
-                    tableGridTemplate={tableGridTemplate}
-                    setContextMenu={handleContextMenu}
-                    handlePause={handlePause}
-                    handleResume={handleResume}
-                    getCategoryIcon={getCategoryIcon}
-                    selectedIds={selectedIds}
-                    onClick={handleItemClick}
-                  />
-                ))}
-                <div className="flex-1 min-h-0 bg-transparent pointer-events-none" />
-              </div>
-            )}
+              ) : (
+                <>
+                  {sortedDownloads.map((d, index) => (
+                    <DownloadItemComponent
+                      key={d.id}
+                      downloadId={d.id}
+                      index={index}
+                      tableGridTemplate={tableGridTemplate}
+                      setContextMenu={handleContextMenu}
+                      handlePause={handlePause}
+                      handleResume={handleResume}
+                      getCategoryIcon={getCategoryIcon}
+                      selectedIds={selectedIds}
+                      onClick={handleItemClick}
+                    />
+                  ))}
+                  <div className="flex-1 min-h-0 bg-transparent pointer-events-none" />
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

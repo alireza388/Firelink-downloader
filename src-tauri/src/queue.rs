@@ -492,6 +492,8 @@ impl<R: tauri::Runtime> QueueManager<R> {
                     }
                 }
 
+                log::error!("aria2 download {} failed: {}", id, error);
+                
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
                 self.emit_failed(id, error);
@@ -630,7 +632,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 .await;
             return;
         }
-        let payload = payload.unwrap();
+        let mut payload = payload.unwrap();
+        
+        if error.to_ascii_lowercase().contains("invalid range header") {
+            log::warn!("Server does not support chunked ranges. Degrading {} to single connection.", id);
+            payload.connections = Some(1);
+            self.aria2_payloads.lock().await.insert(id.clone(), payload.clone());
+        }
 
         let this = Arc::clone(self);
         let stale_gid = gid.to_string();

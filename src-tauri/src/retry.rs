@@ -102,7 +102,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
 
     let m = message.to_ascii_lowercase();
 
-    const TRANSIENT: [&str; 34] = [
+    const TRANSIENT: [&str; 35] = [
         // reqwest / hyper / OS socket-layer
         "timed out",
         "timeout",
@@ -141,6 +141,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
         // aria2c log phrasing
         "connection was closed",
         "timeout.",
+        "invalid range header",
     ];
     TRANSIENT.iter().any(|t| m.contains(t))
 }
@@ -278,6 +279,7 @@ mod tests {
         assert!(is_transient_network_error("network is unreachable"));
         assert!(is_transient_network_error("The response status is not successful. status=503"));
         assert!(is_transient_network_error("The response status is not successful. status=502"));
+        assert!(is_transient_network_error("Invalid range header. Request: 106954752-361758719/383882118, Response: 106954752-383882117/383882118"));
     }
 
     // --- transient classification: negative cases -------------------------

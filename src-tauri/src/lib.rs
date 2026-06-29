@@ -13,6 +13,11 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use ts_rs::TS;
 use uuid::Uuid;
 
+fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
+    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct MetadataResponse {
@@ -3177,6 +3182,7 @@ async fn wait_for_aria2_stopped(port: u16, secret: &str, gid: &str) -> Result<()
 }
 
 #[tauri::command]
+#[allow(unused_variables)]
 fn update_dock_badge(app_handle: tauri::AppHandle, count: i32) {
     #[cfg(target_os = "macos")]
     {
@@ -3576,6 +3582,7 @@ fn request_automation_permission() -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(unused_variables)]
 fn open_automation_settings(app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

@@ -15,7 +15,7 @@ interface DownloadItemProps {
   handlePause: (id: string, skipConfirm?: boolean) => void;
   handleResume: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
-  isSelected: boolean;
+  selectedIds: Set<string>;
   onClick: (e: React.MouseEvent, item: DownloadItemType) => void;
 }
 
@@ -27,7 +27,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
   handlePause,
   handleResume,
   getCategoryIcon,
-  isSelected,
+  selectedIds,
   onClick,
 }) => {
   const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
@@ -83,7 +83,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
   return (
     <div
-      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''} ${isSelected ? 'is-selected' : ''}`}
+      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''} ${selectedIds.has(downloadId) ? 'is-selected' : ''}`}
       style={{ gridTemplateColumns: tableGridTemplate }}
       onClick={(e) => onClick(e, download)}
       onContextMenu={(e) => {
@@ -200,7 +200,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           {(download.status === 'queued' || download.status === 'staged') && queueIndex !== -1 && (
             <>
               <button 
-                onClick={() => moveInQueue(download.id, 'up')}
+                onClick={() => moveInQueue(selectedIds.has(download.id) ? Array.from(selectedIds) : download.id, 'up')}
                 disabled={queueIndex === 0}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Up"
@@ -208,7 +208,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 <ArrowUp size={14} />
               </button>
               <button 
-                onClick={() => moveInQueue(download.id, 'down')}
+                onClick={() => moveInQueue(selectedIds.has(download.id) ? Array.from(selectedIds) : download.id, 'down')}
                 disabled={queueIndex === queueItems.length - 1}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Down"

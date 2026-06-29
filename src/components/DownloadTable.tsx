@@ -3,6 +3,7 @@ import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
+import { useAutoAnimate } from '@formkit/auto-animate/react';
 import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
@@ -33,6 +34,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const isMac = navigator.userAgent.includes('Mac');
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [animationParent] = useAutoAnimate<HTMLDivElement>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>({ column: 'Date Added', direction: 'desc' });
@@ -477,7 +479,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 </div>
               </div>
             ) : (
-              <div className="download-table-list">
+              <div className="download-table-list" ref={animationParent}>
                 {sortedDownloads.map((d, index) => (
                   <DownloadItemComponent
                     key={d.id}
@@ -488,7 +490,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                     handlePause={handlePause}
                     handleResume={handleResume}
                     getCategoryIcon={getCategoryIcon}
-                    isSelected={selectedIds.has(d.id)}
+                    selectedIds={selectedIds}
                     onClick={handleItemClick}
                   />
                 ))}

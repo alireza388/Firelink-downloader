@@ -178,7 +178,7 @@ interface DownloadState {
   registerBackendIds: (ids: string[]) => void;
   unregisterBackendIds: (ids: string[]) => void;
   applyProperties: (id: string, updates: Partial<DownloadItem>) => Promise<void>;
-  moveInQueue: (id: string, direction: 'up' | 'down') => Promise<void>;
+  moveInQueue: (ids: string | string[], direction: 'up' | 'down') => Promise<void>;
   removeFromQueue: (id: string) => Promise<void>;
   isAddModalOpen: boolean;
   pendingAddUrls: string;
@@ -222,10 +222,15 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   queues: [{ id: MAIN_QUEUE_ID, name: 'Main Queue', isMain: true }],
   pendingOrder: [],
   setPendingOrder: (order) => set({ pendingOrder: order }),
-  moveInQueue: async (id, direction) => {
-    const item = get().downloads.find(download => download.id === id);
-    if (!item) return;
-    const queueId = item.queueId || MAIN_QUEUE_ID;
+  moveInQueue: async (idOrIds, direction) => {
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+    if (ids.length === 0) return;
+    
+    // Assume all items belong to the same queue as the first item
+    const firstItem = get().downloads.find(d => d.id === ids[0]);
+    if (!firstItem) return;
+    const queueId = firstItem.queueId || MAIN_QUEUE_ID;
+    
     const queueItems = get().downloads
       .filter(download => 
         (download.queueId || MAIN_QUEUE_ID) === queueId && 
@@ -233,11 +238,28 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         !(isActiveDownloadStatus(download.status) && download.status !== 'queued')
       )
       .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
-    const index = queueItems.findIndex(download => download.id === id);
-    const target = direction === 'up' ? index - 1 : index + 1;
-    if (index < 0 || target < 0 || target >= queueItems.length) return;
-    const reordered = [...queueItems];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    
+    const selectedItems = queueItems.filter(item => ids.includes(item.id));
+    if (selectedItems.length === 0) return;
+    
+    const unselectedItems = queueItems.filter(item => !ids.includes(item.id));
+    const selectedIndices = selectedItems.map(item => queueItems.findIndex(d => d.id === item.id));
+    
+    let insertIndex = 0;
+    if (direction === 'up') {
+      const firstSelectedIndex = Math.min(...selectedIndices);
+      insertIndex = Math.max(0, firstSelectedIndex - 1);
+    } else {
+      const lastSelectedIndex = Math.max(...selectedIndices);
+      insertIndex = Math.min(unselectedItems.length, lastSelectedIndex - selectedItems.length + 2);
+    }
+    
+    const reordered = [
+      ...unselectedItems.slice(0, insertIndex),
+      ...selectedItems,
+      ...unselectedItems.slice(insertIndex)
+    ];
+    
     const positions = new Map(reordered.map((download, position) => [download.id, position]));
     const previousDownloads = get().downloads;
     set(state => ({
@@ -246,12 +268,25 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         : download)
     }));
 
-    if (!get().backendRegisteredIds.has(id)) return;
+    const registeredIdsToMove = selectedItems
+      .filter(item => get().backendRegisteredIds.has(item.id))
+      .map(item => item.id);
+      
+    if (registeredIdsToMove.length === 0) return;
+    
+    // For backend sync, we must call move_in_queue in the correct order to maintain the block
+    const idsToMove = direction === 'up' ? registeredIdsToMove : [...registeredIdsToMove].reverse();
+
     try {
-      const order = await invoke('move_in_queue', { id, queueId, direction });
-      set({ pendingOrder: order as string[] });
+      let order: string[] = [];
+      for (const id of idsToMove) {
+        order = (await invoke('move_in_queue', { id, queueId, direction })) as string[];
+      }
+      if (order.length > 0) {
+        set({ pendingOrder: order });
+      }
     } catch (e) {
-      console.error("Failed to move item in queue:", e);
+      console.error("Failed to move in queue backend:", e);
       set({ downloads: previousDownloads });
     }
   },

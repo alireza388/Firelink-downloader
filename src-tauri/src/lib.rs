@@ -4835,13 +4835,28 @@ pub fn run() {
                                                             let mut msg = event.get("error_message").and_then(|m| m.as_str()).unwrap_or("aria2 download error").to_string();
                                                             let aria2_port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
                                                             let aria2_secret = state.aria2_secret.clone();
-                                                            if let Ok(status) = rpc_call(aria2_port, &aria2_secret, "aria2.tellStatus", serde_json::json!([gid, ["errorCode", "errorMessage"]])).await {
-                                                                if let Some(err_msg) = status.get("errorMessage").and_then(|m| m.as_str()) {
-                                                                    if !err_msg.is_empty() {
-                                                                        msg = err_msg.to_string();
-                                                                    }
-                                                                }
+                                                    if let Ok(status) = rpc_call(aria2_port, &aria2_secret, "aria2.tellStatus", serde_json::json!([gid, ["errorCode", "errorMessage"]])).await {
+                                                        let err_msg = status
+                                                            .get("errorMessage")
+                                                            .and_then(|m| m.as_str())
+                                                            .filter(|m| !m.is_empty());
+                                                        let err_code = status
+                                                            .get("errorCode")
+                                                            .and_then(|m| m.as_str())
+                                                            .filter(|m| !m.is_empty());
+                                                        match (err_code, err_msg) {
+                                                            (Some(code), Some(message)) => {
+                                                                msg = format!("aria2 error code {code}: {message}");
                                                             }
+                                                            (Some(code), None) => {
+                                                                msg = format!("aria2 error code {code}: {msg}");
+                                                            }
+                                                            (None, Some(message)) => {
+                                                                msg = message.to_string();
+                                                            }
+                                                            (None, None) => {}
+                                                        }
+                                                    }
                                                             Some(crate::queue::PendingOutcome::Error(msg))
                                                         }
                                                         _ => None,

@@ -493,7 +493,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 }
 
                 log::error!("aria2 download {} failed: {}", id, error);
-                
+
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
                 self.emit_failed(id, error);
@@ -618,7 +618,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             *entry
         };
 
-        let transient = is_transient_network_error(&error);
+        let transient = is_retryable_aria2_error(&error);
         let strikes_left = strike < MAX_RETRIES;
         if !(transient && strikes_left) {
             self.apply_completion(&id, PendingOutcome::Error(error))
@@ -633,11 +633,24 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return;
         }
         let mut payload = payload.unwrap();
-        
-        if error.to_ascii_lowercase().contains("invalid range header") {
-            log::warn!("Server does not support chunked ranges. Degrading {} to single connection.", id);
+
+        if is_aria2_range_mode_error(&error) {
+            log::warn!(
+                "aria2 range mode [{}]: server rejected bounded chunk ranges; restarting with a single connection",
+                id
+            );
             payload.connections = Some(1);
-            self.aria2_payloads.lock().await.insert(id.clone(), payload.clone());
+            if let Err(cleanup_error) = remove_incompatible_aria2_range_state(self, &id).await {
+                log::warn!(
+                    "aria2 range mode [{}]: failed to remove incompatible partial state: {}",
+                    id,
+                    cleanup_error
+                );
+            }
+            self.aria2_payloads
+                .lock()
+                .await
+                .insert(id.clone(), payload.clone());
         }
 
         let this = Arc::clone(self);
@@ -837,6 +850,202 @@ impl<R: tauri::Runtime> QueueManager<R> {
     }
 }
 
+fn is_retryable_aria2_error(error: &str) -> bool {
+    is_transient_network_error(error) || is_aria2_range_mode_error(error)
+}
+
+fn is_aria2_range_mode_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("invalid range header")
+        || lower.contains("aria2 error code 8")
+        || lower.contains("errorcode=8")
+}
+
+async fn remove_incompatible_aria2_range_state<R: tauri::Runtime>(
+    manager: &QueueManager<R>,
+    id: &str,
+) -> Result<(), String> {
+    let Some(primary_path) =
+        crate::download_ownership::primary_path_for_id(&manager.app_handle, id)?
+    else {
+        return Ok(());
+    };
+
+    crate::remove_download_assets(&primary_path, &manager.app_handle).await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoundedRangeSupport {
+    Supported,
+    Unsupported,
+    Unknown,
+}
+
+async fn effective_aria2_connections(id: &str, payload: &SpawnPayload) -> i32 {
+    let requested = payload.connections.unwrap_or(1).max(1);
+    if requested <= 1 {
+        return requested;
+    }
+
+    for uri in crate::collect_download_uris(&payload.url, payload.mirrors.as_deref()) {
+        if !is_http_uri(&uri) {
+            continue;
+        }
+
+        match probe_bounded_range_support(&uri, payload).await {
+            Ok(BoundedRangeSupport::Unsupported) => {
+                log::warn!(
+                    "aria2 range probe [{}]: {} does not honor bounded byte ranges; using one connection",
+                    id,
+                    uri_host_for_log(&uri)
+                );
+                return 1;
+            }
+            Ok(BoundedRangeSupport::Supported) => {}
+            Ok(BoundedRangeSupport::Unknown) => {
+                log::debug!(
+                    "aria2 range probe [{}]: {} range support unknown; keeping {} connections",
+                    id,
+                    uri_host_for_log(&uri),
+                    requested
+                );
+            }
+            Err(error) => {
+                log::debug!(
+                    "aria2 range probe [{}]: {} probe failed: {}; keeping {} connections",
+                    id,
+                    uri_host_for_log(&uri),
+                    error,
+                    requested
+                );
+            }
+        }
+    }
+
+    requested
+}
+
+fn is_http_uri(uri: &str) -> bool {
+    reqwest::Url::parse(uri)
+        .ok()
+        .is_some_and(|url| matches!(url.scheme(), "http" | "https"))
+}
+
+fn uri_host_for_log(uri: &str) -> String {
+    reqwest::Url::parse(uri)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "<unknown host>".to_string())
+}
+
+async fn probe_bounded_range_support(
+    uri: &str,
+    payload: &SpawnPayload,
+) -> Result<BoundedRangeSupport, String> {
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(std::time::Duration::from_secs(10));
+
+    if let Some(proxy) = payload.proxy.as_deref().filter(|value| !value.is_empty()) {
+        if proxy != "none" {
+            builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
+        }
+    }
+
+    let client = builder.build().map_err(|error| error.to_string())?;
+    let request = client
+        .get(uri)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .header(reqwest::header::ACCEPT_ENCODING, "identity");
+    let request = apply_payload_headers(request, payload);
+    let response = request.send().await.map_err(|error| error.to_string())?;
+    let content_range = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok());
+
+    Ok(classify_bounded_range_response(
+        response.status(),
+        content_range,
+    ))
+}
+
+fn apply_payload_headers(
+    mut request: reqwest::RequestBuilder,
+    payload: &SpawnPayload,
+) -> reqwest::RequestBuilder {
+    if let Some(user_agent) = payload
+        .user_agent
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    }
+    if let Some(cookies) = payload.cookies.as_deref().filter(|value| !value.is_empty()) {
+        request = request.header(reqwest::header::COOKIE, cookies);
+    }
+    if let Some(headers) = payload.headers.as_deref() {
+        for line in headers
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            if name.trim().eq_ignore_ascii_case("range") {
+                continue;
+            }
+            let Ok(name) = reqwest::header::HeaderName::from_bytes(name.trim().as_bytes()) else {
+                continue;
+            };
+            let Ok(value) = reqwest::header::HeaderValue::from_str(value.trim()) else {
+                continue;
+            };
+            request = request.header(name, value);
+        }
+    }
+    if let Some(username) = payload
+        .username
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        request = request.basic_auth(username, payload.password.as_deref());
+    }
+    request
+}
+
+fn classify_bounded_range_response(
+    status: reqwest::StatusCode,
+    content_range: Option<&str>,
+) -> BoundedRangeSupport {
+    if status == reqwest::StatusCode::PARTIAL_CONTENT {
+        return match content_range.and_then(parse_content_range_bounds) {
+            Some((0, 0)) => BoundedRangeSupport::Supported,
+            Some((0, _)) => BoundedRangeSupport::Unsupported,
+            Some(_) => BoundedRangeSupport::Unknown,
+            None => BoundedRangeSupport::Unknown,
+        };
+    }
+
+    if status.is_success() {
+        BoundedRangeSupport::Unsupported
+    } else {
+        BoundedRangeSupport::Unknown
+    }
+}
+
+fn parse_content_range_bounds(value: &str) -> Option<(u64, u64)> {
+    let value = value.trim();
+    let (unit, range) = value.split_once(' ')?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return None;
+    }
+    let (bounds, _) = range.split_once('/')?;
+    let (start, end) = bounds.split_once('-')?;
+    Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
+}
+
 /// Production spawner that delegates to the real aria2 RPC, yt-dlp, and
 /// native coordinator runners.
 pub struct ProductionSpawner {
@@ -865,7 +1074,7 @@ impl SidecarSpawner for ProductionSpawner {
         let safe_filename =
             crate::download_ownership::canonical_download_filename(&payload.filename);
         options.insert("out".to_string(), serde_json::json!(safe_filename));
-        let conn = payload.connections.unwrap_or(1);
+        let conn = effective_aria2_connections(id, payload).await;
         options.insert("split".to_string(), serde_json::json!(conn.to_string()));
         options.insert(
             "max-connection-per-server".to_string(),
@@ -1116,5 +1325,59 @@ impl EnqueueItem {
                 is_media: media,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_range_probe_accepts_exact_requested_byte() {
+        assert_eq!(
+            classify_bounded_range_response(
+                reqwest::StatusCode::PARTIAL_CONTENT,
+                Some("bytes 0-0/383882118"),
+            ),
+            BoundedRangeSupport::Supported
+        );
+    }
+
+    #[test]
+    fn bounded_range_probe_accepts_case_insensitive_content_range_unit() {
+        assert_eq!(
+            classify_bounded_range_response(
+                reqwest::StatusCode::PARTIAL_CONTENT,
+                Some("Bytes 0-0/383882118"),
+            ),
+            BoundedRangeSupport::Supported
+        );
+    }
+
+    #[test]
+    fn bounded_range_probe_rejects_server_that_expands_to_end() {
+        assert_eq!(
+            classify_bounded_range_response(
+                reqwest::StatusCode::PARTIAL_CONTENT,
+                Some("bytes 0-383882117/383882118"),
+            ),
+            BoundedRangeSupport::Unsupported
+        );
+    }
+
+    #[test]
+    fn bounded_range_probe_rejects_ignored_range_request() {
+        assert_eq!(
+            classify_bounded_range_response(reqwest::StatusCode::OK, None),
+            BoundedRangeSupport::Unsupported
+        );
+    }
+
+    #[test]
+    fn aria2_range_code_is_retryable_without_global_no_uri_retry() {
+        assert!(is_retryable_aria2_error(
+            "aria2 error code 8: No URI available."
+        ));
+        assert!(!is_retryable_aria2_error("No URI available."));
     }
 }

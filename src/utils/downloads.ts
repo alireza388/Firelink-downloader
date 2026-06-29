@@ -124,7 +124,6 @@ const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
  */
 export const redactDownloadForPersistence = (item: DownloadItem): DownloadItem => {
   const copy: DownloadItem = { ...item };
-  delete copy.fraction;
   delete copy.speed;
   delete copy.eta;
   for (const field of DOWNLOAD_SECRET_FIELDS) {

@@ -42,6 +42,13 @@ pub const BACKOFF_SCHEDULE: [Duration; 3] = [
     Duration::from_secs(10),
 ];
 
+/// The 429-specific 3-strike escalating backoff schedule: 60s, 120s, 300s.
+pub const BACKOFF_SCHEDULE_429: [Duration; 3] = [
+    Duration::from_secs(60),
+    Duration::from_secs(120),
+    Duration::from_secs(300),
+];
+
 /// Maximum number of transient-error retries before the download is allowed to
 /// fall through to a hard `Failed`. Three strikes matches the schedule length.
 pub const MAX_RETRIES: usize = BACKOFF_SCHEDULE.len();
@@ -95,7 +102,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
 
     let m = message.to_ascii_lowercase();
 
-    const TRANSIENT: [&str; 20] = [
+    const TRANSIENT: [&str; 23] = [
         // reqwest / hyper / OS socket-layer
         "timed out",
         "timeout",
@@ -116,6 +123,9 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "request timeout",
         "http 503",
         "503 service unavailable",
+        "http 429",
+        "http error 429",
+        "429 too many requests",
         // aria2c log phrasing
         "connection was closed",
         "timeout.",
@@ -143,7 +153,14 @@ pub async fn backoff_and_emit(
 ) -> BackoffOutcome {
     let attempt = strike + 1;
     emit(format!("Network drop — retry #{attempt}: {reason}"));
-    let delay = backoff_for(strike);
+    let delay = if reason.to_ascii_lowercase().contains("429") {
+        BACKOFF_SCHEDULE_429
+            .get(strike)
+            .copied()
+            .unwrap_or_else(|| *BACKOFF_SCHEDULE_429.last().unwrap())
+    } else {
+        backoff_for(strike)
+    };
     tokio::select! {
         _ = tokio::time::sleep(delay) => BackoffOutcome::Continue,
         _ = interrupt => BackoffOutcome::Aborted,
@@ -227,6 +244,13 @@ mod tests {
         assert!(is_transient_network_error(
             "http://127.0.0.1/file returned HTTP 503 Service Unavailable"
         ));
+    }
+
+    #[test]
+    fn classifies_http_429_as_transient() {
+        assert!(is_transient_network_error("HTTP 429 Too Many Requests"));
+        assert!(is_transient_network_error("HTTP Error 429: Too Many Requests"));
+        assert!(is_transient_network_error("429 too many requests"));
     }
 
     #[test]

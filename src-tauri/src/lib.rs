@@ -952,8 +952,15 @@ async fn fetch_metadata(
         }
         let mut current_res = head_req.send().await.map_err(|e| e.to_string())?;
 
+        let mut needs_fallback = false;
         if !current_res.status().is_success() && !current_res.status().is_redirection() {
-            let mut get_req = client.get(&current_url);
+            needs_fallback = true;
+        } else if current_res.status().is_success() && current_res.headers().get(reqwest::header::CONTENT_LENGTH).is_none() {
+            needs_fallback = true;
+        }
+
+        if needs_fallback {
+            let mut get_req = client.get(&current_url).header(reqwest::header::RANGE, "bytes=0-0");
             if should_send_auth {
                 if let Some(ref user) = username {
                     if !user.is_empty() {
@@ -1015,30 +1022,51 @@ async fn fetch_metadata(
     if filename.is_empty() {
         filename = "download".to_string();
     }
-
+    
     let mut size_str = "Unknown".to_string();
     let mut size_bytes = 0;
-    if let Some(len) = res.headers().get(reqwest::header::CONTENT_LENGTH) {
-        if let Ok(len_str) = len.to_str() {
-            if let Ok(bytes) = len_str.parse::<u64>() {
-                size_bytes = bytes;
-                if bytes < 1024 {
-                    size_str = format!("{} B", bytes);
-                } else if bytes < 1024 * 1024 {
-                    size_str = format!("{:.1} KB", bytes as f64 / 1024.0);
-                } else if bytes < 1024 * 1024 * 1024 {
-                    size_str = format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0);
-                } else {
-                    size_str = format!("{:.2} GB", bytes as f64 / 1024.0 / 1024.0 / 1024.0);
+    
+    if res.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+        if let Some(content_range) = res.headers().get(reqwest::header::CONTENT_RANGE) {
+            if let Ok(cr_str) = content_range.to_str() {
+                if let Some(idx) = cr_str.find('/') {
+                    if let Ok(bytes) = cr_str[idx + 1..].parse::<u64>() {
+                        size_bytes = bytes;
+                    }
+                }
+            }
+        }
+    }
+    
+    if size_bytes == 0 {
+        if let Some(len) = res.headers().get(reqwest::header::CONTENT_LENGTH) {
+            if let Ok(len_str) = len.to_str() {
+                if let Ok(bytes) = len_str.parse::<u64>() {
+                    size_bytes = bytes;
                 }
             }
         }
     }
 
+    if size_bytes > 0 {
+        let bytes = size_bytes;
+        if bytes < 1024 {
+            size_str = format!("{} B", bytes);
+        } else if bytes < 1024 * 1024 {
+            size_str = format!("{:.1} KB", bytes as f64 / 1024.0);
+        } else if bytes < 1024 * 1024 * 1024 {
+            size_str = format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0);
+        } else {
+            size_str = format!("{:.2} GB", bytes as f64 / 1024.0 / 1024.0 / 1024.0);
+        }
+    }
+
     let mut resumable = false;
-    if let Some(accept_ranges) = res.headers().get(reqwest::header::ACCEPT_RANGES) {
+    if res.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+        resumable = true;
+    } else if let Some(accept_ranges) = res.headers().get(reqwest::header::ACCEPT_RANGES) {
         if let Ok(accept_ranges_str) = accept_ranges.to_str() {
-            if accept_ranges_str.to_lowercase().contains("bytes") {
+            if accept_ranges_str.contains("bytes") {
                 resumable = true;
             }
         }
@@ -4804,7 +4832,16 @@ pub fn run() {
                                                     let outcome = match method {
                                                         "aria2.onDownloadComplete" => Some(crate::queue::PendingOutcome::Complete),
                                                         "aria2.onDownloadError" => {
-                                                            let msg = event.get("error_message").and_then(|m| m.as_str()).unwrap_or("aria2 download error").to_string();
+                                                            let mut msg = event.get("error_message").and_then(|m| m.as_str()).unwrap_or("aria2 download error").to_string();
+                                                            let aria2_port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
+                                                            let aria2_secret = state.aria2_secret.clone();
+                                                            if let Ok(status) = rpc_call(aria2_port, &aria2_secret, "aria2.tellStatus", serde_json::json!([gid, ["errorCode", "errorMessage"]])).await {
+                                                                if let Some(err_msg) = status.get("errorMessage").and_then(|m| m.as_str()) {
+                                                                    if !err_msg.is_empty() {
+                                                                        msg = err_msg.to_string();
+                                                                    }
+                                                                }
+                                                            }
                                                             Some(crate::queue::PendingOutcome::Error(msg))
                                                         }
                                                         _ => None,

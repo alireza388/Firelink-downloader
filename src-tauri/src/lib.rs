@@ -4423,7 +4423,7 @@ mod tests {
         assert_eq!(media_progress_speed(&first, start, &mut sample), ("fallback".to_string(), "-".to_string()));
         assert_eq!(
             media_progress_speed(&second, start + Duration::from_secs(1), &mut sample),
-            ("2.0 MB/s".to_string(), "00:00".to_string())
+            ("2.0 MB/s".to_string(), "1s".to_string())
         );
     }
 
@@ -4453,8 +4453,8 @@ mod tests {
                 fraction: 0.425,
                 speed: "2.00MiB/s".to_string(),
                 eta: "00:03".to_string(),
-                size: None,
-                downloaded_bytes: None,
+                size: Some("10.00MiB".to_string()),
+                downloaded_bytes: Some(4456448.0),
             })
         );
     }

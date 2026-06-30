@@ -41,7 +41,7 @@ jobs:
             artifact: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - uses: actions/setup-node@v6
@@ -119,7 +119,7 @@ jobs:
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract >/dev/null)
           node scripts/verify-binaries.js --search-root "$RUNNER_TEMP/squashfs-root" --target ${{ matrix.target }}
           xvfb-run -a node scripts/smoke-packaged-app.js --executable "$RUNNER_TEMP/squashfs-root/AppRun"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Firelink-${{ matrix.label }}-${{ github.ref_name }}
           path: ${{ matrix.artifact }}
@@ -135,7 +135,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
@@ -143,7 +143,7 @@ jobs:
         run: |
           cd release-assets
           find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: release-assets/**
           generate_release_notes: true

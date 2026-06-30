@@ -34,8 +34,8 @@
           "sha256": "3fabc08e6367f9393cfee32c32138f057f0e6068e430190c26a22ddfea84242b"
         },
         "aria2-libs": {
-          "files": 6,
-          "sha256": "e18a60538f7176373296f55af86f2c7780c2d6e8e32fdbd75f630e17ce79cb6c"
+          "files": 7,
+          "sha256": "f6735fa4162513ca79adcc6bb65afdccdcd34c7c05e5d45c78da6d2e0c359e57"
         }
       }
     }

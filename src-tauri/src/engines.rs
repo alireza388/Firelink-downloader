@@ -115,6 +115,30 @@ pub fn ytdlp_internal_dir(binary_path: &Path) -> Option<PathBuf> {
     binary_path.parent().map(|parent| parent.join("_internal"))
 }
 
+pub fn apply_aria2_environment(command: &mut std::process::Command, binary_path: &Path) {
+    if let Some(modules_dir) = aria2_openssl_modules_dir(binary_path) {
+        command.env("OPENSSL_MODULES", modules_dir);
+    }
+}
+
+pub fn apply_aria2_tokio_environment(command: &mut tokio::process::Command, binary_path: &Path) {
+    if let Some(modules_dir) = aria2_openssl_modules_dir(binary_path) {
+        command.env("OPENSSL_MODULES", modules_dir);
+    }
+}
+
+fn aria2_openssl_modules_dir(binary_path: &Path) -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+
+    let modules_dir = binary_path
+        .parent()?
+        .join("aria2-libs");
+
+    modules_dir.is_dir().then_some(modules_dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{development_candidates, packaged_candidates};

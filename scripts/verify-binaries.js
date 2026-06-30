@@ -123,6 +123,22 @@ function binPath(engine) {
   return path.join(binariesDir, binName(engine));
 }
 
+function engineEnv(engine) {
+  if (engine !== 'aria2c') {
+    return process.env;
+  }
+
+  const modulesDir = path.join(binariesDir, 'aria2-libs');
+  if (!fs.existsSync(modulesDir)) {
+    return process.env;
+  }
+
+  return {
+    ...process.env,
+    OPENSSL_MODULES: modulesDir,
+  };
+}
+
 // ───── Check 1: Sidecar existence ─────
 console.log(`\n─── 1. Sidecar existence (${targetTriple}) ───`);
 for (const eng of requiredEngines) {
@@ -280,6 +296,7 @@ function runEngine(label, engine, args, timeout = 30000) {
   try {
     const stdout = execFileSync(p, args, {
       encoding: 'utf-8',
+      env: engineEnv(engine),
       timeout,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -337,6 +354,7 @@ if (canExecuteTarget) {
       '--console-log-level=error',
       '--rpc-listen-all=false',
     ], {
+      env: engineEnv('aria2c'),
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 15000,
     });

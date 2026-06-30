@@ -1868,6 +1868,9 @@ async fn run_sidecar_version(
 
     let mut command = tokio::process::Command::new(&binary_path);
     crate::platform::hide_tokio_child_console(&mut command);
+    if sidecar_name == "aria2c" {
+        crate::engines::apply_aria2_tokio_environment(&mut command, &binary_path);
+    }
     command.args(args).kill_on_drop(true);
     let output_future = command.output();
     tokio::pin!(output_future);
@@ -4733,6 +4736,7 @@ pub fn run() {
                         for attempt_port in 6800..6900 {
                             let mut cmd = std::process::Command::new(&binary_path);
                             crate::platform::hide_child_console(&mut cmd);
+                            crate::engines::apply_aria2_environment(&mut cmd, &binary_path);
 
                             let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
                             use std::io::Write;

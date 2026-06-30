@@ -1279,13 +1279,43 @@
   .mac-switch:checked::after {
     transform: translateX(16px);
   }
-  .downloads-view {
-    background: hsl(var(--main-bg));
-  }
+.downloads-view {
+  background: hsl(var(--main-bg));
+}
 
-  .main-titlebar {
-    height: 52px;
-    display: flex;
+.window-controls {
+  position: fixed;
+  top: 10px;
+  left: 12px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.window-control {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--text-muted));
+  border-radius: 999px;
+}
+
+.window-control:hover {
+  color: hsl(var(--text-primary));
+  background: hsl(var(--item-hover));
+}
+
+.window-control.close:hover {
+  color: white;
+  background: #c42b1c;
+}
+
+.main-titlebar {
+  height: 52px;
+  display: flex;
     align-items: center;
     padding: 0 18px;
     border-bottom: 1px solid hsl(var(--border-color));

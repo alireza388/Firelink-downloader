@@ -1346,19 +1346,8 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let binary_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")?;
-    let output = app_handle
-        .shell()
-        .command(&binary_path)
-        .arg("-version")
-        .output()
-        .await
-        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
-
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (version, error, _) = run_sidecar_version(&app_handle, "ffmpeg", &["-version"]).await;
+    if let Some(text) = version {
         let first_line = text.lines().next().unwrap_or("");
         let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
         let clean = re
@@ -1373,30 +1362,18 @@ async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
                     .split('-')
                     .next()
                     .unwrap_or("")
-                    .to_string()
+                .to_string()
             });
         Ok(clean)
     } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("ffmpeg error: {}", err))
+        Err(error.unwrap_or_else(|| "ffmpeg returned no version output".to_string()))
     }
 }
 
 #[tauri::command]
 async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let binary_path = resolve_bundled_binary_path(&app_handle, "deno")?;
-    let output = app_handle
-        .shell()
-        .command(&binary_path)
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|e| format!("Failed to execute deno: {}", e))?;
-
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (version, error, _) = run_sidecar_version(&app_handle, "deno", &["--version"]).await;
+    if let Some(text) = version {
         let re = regex::Regex::new(r"deno\s+(\d+\.\d+\.\d+)").unwrap();
         let clean = re
             .captures(&text)
@@ -1406,8 +1383,7 @@ async fn test_deno(app_handle: tauri::AppHandle) -> Result<String, String> {
             .to_string();
         Ok(clean)
     } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("deno error: {}", err))
+        Err(error.unwrap_or_else(|| "deno returned no version output".to_string()))
     }
 }
 
@@ -1492,7 +1468,7 @@ fn approve_download_root(app_handle: tauri::AppHandle, path: String) -> Result<S
     if !canonical.is_dir() {
         return Err("Download root must be an existing directory".to_string());
     }
-    let canonical_text = canonical.to_string_lossy().to_string();
+    let canonical_text = crate::platform::display_path(&canonical);
 
     crate::settings::update_settings_state(&app_handle, |state| {
         let roots = state
@@ -1891,6 +1867,7 @@ async fn run_sidecar_version(
     }
 
     let mut command = tokio::process::Command::new(&binary_path);
+    crate::platform::hide_tokio_child_console(&mut command);
     command.args(args).kill_on_drop(true);
     let output_future = command.output();
     tokio::pin!(output_future);
@@ -2062,7 +2039,7 @@ async fn check_aria2(app_handle: &tauri::AppHandle, port: u16, secret: &str) -> 
     let resolved_path = resolved
         .as_ref()
         .ok()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| crate::platform::display_path(p));
 
     let (startup_err, daemon_stderr) = {
         let guard = app_handle.state::<Aria2DaemonGuard>();
@@ -2131,19 +2108,15 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let resolved_path = resolved
         .as_ref()
         .ok()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| crate::platform::display_path(p));
 
-    let (has_internal_dir, has_python_framework) = if let Some(ref path) = resolved_path {
-        let parent = std::path::Path::new(path).parent().map(|p| p.to_path_buf());
+    let (has_internal_dir, has_python_runtime) = if let Ok(ref path) = resolved {
+        let parent = path.parent().map(|p| p.to_path_buf());
         if let Some(parent) = parent {
-            let internal = crate::engines::ytdlp_internal_dir(std::path::Path::new(path))
-                .unwrap_or_else(|| parent.join("_internal"));
+            let internal =
+                crate::engines::ytdlp_internal_dir(path).unwrap_or_else(|| parent.join("_internal"));
             let hi = internal.is_dir();
-            let hp = if hi {
-                internal.join("Python.framework").is_dir() || internal.join("Python").exists()
-            } else {
-                false
-            };
+            let hp = hi && ytdlp_embedded_runtime_exists(&internal);
             (hi, hp)
         } else {
             (false, false)
@@ -2159,8 +2132,8 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let mut error = run_error;
     let mut remediation_hint = None;
 
-    if error.is_none() && has_internal_dir && !has_python_framework {
-        error = Some("_internal/Python.framework was not found beside yt-dlp sidecar".to_string());
+    if error.is_none() && has_internal_dir && !has_python_runtime {
+        error = Some(yt_dlp_missing_runtime_message().to_string());
         remediation_hint = Some(
             "The yt-dlp distribution is missing its embedded Python runtime. Reinstall Firelink."
                 .to_string(),
@@ -2189,8 +2162,66 @@ async fn check_ytdlp(app_handle: &tauri::AppHandle) -> EngineStatusItem {
         last_stderr_tail: None,
         expects_internal_dir: has_internal_dir.then_some(true),
         has_internal_dir: has_internal_dir.then_some(true),
-        has_python_framework: has_internal_dir.then_some(has_python_framework),
+        has_python_framework: has_internal_dir.then_some(has_python_runtime),
     }
+}
+
+fn ytdlp_embedded_runtime_exists(internal: &std::path::Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return std::fs::read_dir(internal)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .any(|entry| {
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                name.starts_with("python")
+                    && entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+            });
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return std::fs::read_dir(internal)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .any(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name == "Python" || name.starts_with("libpython") && name.contains(".so")
+            });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return internal.join("Python.framework").is_dir() || internal.join("Python").exists();
+    }
+
+    #[allow(unreachable_code)]
+    false
+}
+
+fn yt_dlp_missing_runtime_message() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        return "_internal/python*.dll was not found beside yt-dlp sidecar";
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return "_internal/libpython*.so was not found beside yt-dlp sidecar";
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return "_internal/Python.framework was not found beside yt-dlp sidecar";
+    }
+
+    #[allow(unreachable_code)]
+    "_internal Python runtime was not found beside yt-dlp sidecar"
 }
 
 async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
@@ -2201,7 +2232,7 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let resolved_path = resolved
         .as_ref()
         .ok()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| crate::platform::display_path(p));
 
     let (version_raw, run_error, stderr_tail) =
         run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
@@ -2252,7 +2283,7 @@ async fn check_deno(app_handle: &tauri::AppHandle) -> EngineStatusItem {
     let resolved_path = resolved
         .as_ref()
         .ok()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| crate::platform::display_path(p));
 
     let (version_raw, run_error, stderr_tail) =
         run_sidecar_version(app_handle, sidecar_name, &["--version"]).await;
@@ -4567,6 +4598,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard::new())
         .setup(move |app| {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                window
+                    .set_decorations(false)
+                    .map_err(|error| format!("failed to disable Windows native frame: {error}"))?;
+            }
+
             let mut sys = sysinfo::System::new_all();
             sys.refresh_all();
             log::info!("=== System Information ===");
@@ -4694,6 +4732,7 @@ pub fn run() {
                         let mut success = false;
                         for attempt_port in 6800..6900 {
                             let mut cmd = std::process::Command::new(&binary_path);
+                            crate::platform::hide_child_console(&mut cmd);
 
                             let mut config_file = tempfile::Builder::new().prefix("aria2-").suffix(".conf").tempfile().expect("failed to create aria2 config file");
                             use std::io::Write;

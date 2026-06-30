@@ -16,6 +16,7 @@ import SchedulerView from "./components/SchedulerView";
 import SpeedLimiterView from "./components/SpeedLimiterView";
 import LogsView from "./components/LogsView";
 import { KeychainPermissionModal } from "./components/KeychainPermissionModal";
+import { WindowControls } from "./components/WindowControls";
 import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { usePlatformInfo } from './utils/platform';
@@ -576,6 +577,7 @@ function App() {
 
   return (
     <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
+      {platform.os === 'windows' && <WindowControls />}
       <div
         className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
           isSidebarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'

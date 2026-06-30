@@ -25,7 +25,7 @@ jobs:
       matrix:
         include:
           - label: macOS-arm64
-            os: macos-latest
+            os: macos-26
             target: aarch64-apple-darwin
             bundles: app,dmg
             artifact: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg

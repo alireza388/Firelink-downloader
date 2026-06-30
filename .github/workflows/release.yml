@@ -68,23 +68,26 @@ jobs:
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
-      - name: Hide _internal from linuxdeploy (Linux only)
+      - name: Hide all engines from linuxdeploy (Linux only)
         if: runner.os == 'Linux'
         run: |
-          # Patch tauri.conf.json's beforeBuildCommand to delete _internal from engine-dist 
+          # Patch tauri.conf.json's beforeBuildCommand to empty engine-dist 
           # AFTER stage-engines.js verifies it, but BEFORE tauri builds the bundle.
-          # This hides it from linuxdeploy. We will repack it into the AppImage later.
-          sed -i 's/npm run build/rm -rf src-tauri\/engine-dist\/${{ matrix.target }}\/_internal \&\& npm run build/' src-tauri/tauri.conf.json
+          # This hides all static binaries (ffmpeg, aria2c, etc) from linuxdeploy 
+          # which corrupts them via patchelf. We will repack them into the AppImage later.
+          sed -i 's/npm run build/rm -rf src-tauri\/engine-dist\/* \&\& npm run build/' src-tauri/tauri.conf.json
       - name: Build package
         run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-      - name: Repack AppImage with _internal (Linux only)
+      - name: Repack AppImage with engines (Linux only)
         if: runner.os == 'Linux'
         run: |
           APPDIR="src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Firelink.AppDir"
-          # Copy _internal directly from provisioned-engines into the AppDir
-          cp -r src-tauri/provisioned-engines/${{ matrix.target }}/_internal "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}/_internal"
+          # Ensure target directory exists in AppDir
+          mkdir -p "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}"
+          # Copy everything directly from provisioned-engines into the AppDir
+          cp -r src-tauri/provisioned-engines/${{ matrix.target }}/* "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}/"
           
           # Download appimagetool
           wget -qO appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage

@@ -4082,6 +4082,7 @@ fn build_main_tray(app_handle: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     let tray_icon_bytes = include_bytes!("../icons/128x128.png").as_slice();
     let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes).map_err(|e| e.to_string())?;
+    #[allow(unused_mut)]
     let mut tray = TrayIconBuilder::with_id("main")
         .icon(tray_icon)
         .menu(&menu)

@@ -13,6 +13,13 @@
     ]
   },
   "bundle": {
-    "targets": ["appimage"]
+    "targets": ["appimage"],
+    "linux": {
+      "appimage": {
+        "files": {
+          "linux/Firelink.appdata.xml": "usr/share/metainfo/Firelink.appdata.xml"
+        }
+      }
+    }
   }
 }

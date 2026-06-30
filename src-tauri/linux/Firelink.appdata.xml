@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.nimbold.firelink</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Firelink</name>
+  <summary>Desktop download manager powered by aria2, yt-dlp, FFmpeg, and Deno</summary>
+  <description>
+    <p>
+      Firelink is a desktop download manager for direct file downloads and media
+      downloads, with bundled engines and browser-extension handoff support.
+    </p>
+  </description>
+  <launchable type="desktop-id">Firelink.desktop</launchable>
+  <provides>
+    <binary>firelink</binary>
+  </provides>
+  <url type="homepage">https://github.com/nimbold/Firelink</url>
+  <content_rating type="oars-1.1" />
+</component>

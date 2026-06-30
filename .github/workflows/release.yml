@@ -62,16 +62,18 @@ jobs:
             patchelf \
             libdbus-1-dev \
             pkg-config \
-            xvfb
+            xvfb \
+            libtinfo5
+          wget http://archive.ubuntu.com/ubuntu/pool/main/r/readline6/libreadline6_6.3-8ubuntu2_amd64.deb
+          sudo dpkg -i libreadline6_6.3-8ubuntu2_amd64.deb
       - run: npm ci
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
       - name: Build package
-        run: npm run tauri build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-          LD_LIBRARY_PATH: ${{ github.workspace }}/src-tauri/provisioned-engines/${{ matrix.target }}/_internal
       - name: Verify macOS packaged engines and launch
         if: runner.os == 'macOS'
         run: |

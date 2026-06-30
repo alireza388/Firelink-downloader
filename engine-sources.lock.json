@@ -26,8 +26,8 @@
     "x86_64-unknown-linux-gnu": {
       "yt-dlp": {
         "version": "2026.06.09",
-        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_linux",
-        "sha256": "bf8aac79b72287a6d2043074415132558b43743a8f9461a22b0141e90f16ce66"
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_linux.zip",
+        "sha256": "217bbc9c3ed19ea75a7f151a3e48dbfeac7f459a7dce2deeeecc2d6e2871bd5b"
       },
       "deno": {
         "version": "2.9.0",

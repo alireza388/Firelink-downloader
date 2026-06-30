@@ -38,11 +38,10 @@ const executableSuffix = isWindows ? '.exe' : '';
 
 async function download(name, source) {
   const sourcePath = new URL(source.url).pathname;
-  let ext = '';
-  if (sourcePath.endsWith('.tar.xz')) ext = '.tar.xz';
-  else if (sourcePath.endsWith('.zip')) ext = '.zip';
-
-  const archive = path.join(temporary, `${name}${ext}`);
+  const archive = path.join(
+    temporary,
+    `${name}${sourcePath.endsWith('.tar.xz') ? '.tar.xz' : '.zip'}`
+  );
   const response = await fetch(source.url, { redirect: 'follow' });
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download ${name}: HTTP ${response.status}`);
@@ -66,12 +65,8 @@ async function download(name, source) {
   fs.mkdirSync(extracted);
   if (archive.endsWith('.zip') && process.platform !== 'win32') {
     execFileSync('unzip', ['-q', archive, '-d', extracted], { stdio: 'inherit' });
-  } else if (archive.endsWith('.zip') || archive.endsWith('.tar.xz')) {
-    execFileSync('tar', ['-xf', archive, '-C', extracted], { stdio: 'inherit' });
   } else {
-    const finalPath = path.join(extracted, `${name}${executableSuffix}`);
-    fs.copyFileSync(archive, finalPath);
-    fs.chmodSync(finalPath, 0o755);
+    execFileSync('tar', ['-xf', archive, '-C', extracted], { stdio: 'inherit' });
   }
   return extracted;
 }

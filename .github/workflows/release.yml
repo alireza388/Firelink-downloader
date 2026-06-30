@@ -27,7 +27,7 @@ jobs:
           - label: macOS-arm64
             os: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
             artifact: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - label: Windows-x64
             os: windows-latest
@@ -64,16 +64,38 @@ jobs:
             pkg-config \
             xvfb \
             libtinfo5
-          wget http://archive.ubuntu.com/ubuntu/pool/main/r/readline6/libreadline6_6.3-8ubuntu2_amd64.deb
-          sudo dpkg -i libreadline6_6.3-8ubuntu2_amd64.deb
       - run: npm ci
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
+      - name: Hide _internal from linuxdeploy (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          # Temporarily rename _internal so linuxdeploy ignores it during Tauri build.
+          # We will repack the AppImage later with this directory included.
+          mv src-tauri/provisioned-engines/${{ matrix.target }}/_internal src-tauri/provisioned-engines/${{ matrix.target }}/_internal_backup
       - name: Build package
         run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
+      - name: Repack AppImage with _internal (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          APPDIR="src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Firelink.AppDir"
+          # Restore _internal to the provisioned-engines folder
+          mv src-tauri/provisioned-engines/${{ matrix.target }}/_internal_backup src-tauri/provisioned-engines/${{ matrix.target }}/_internal
+          # Copy _internal into the AppDir (Tauri skipped it because it was renamed)
+          cp -r src-tauri/provisioned-engines/${{ matrix.target }}/_internal "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}/_internal"
+          
+          # Download appimagetool
+          wget -qO appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          
+          # Find the original AppImage name to overwrite
+          APPIMAGE=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage | head -n 1)
+          
+          # Repack the AppImage
+          env APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool "$APPDIR" "$APPIMAGE"
       - name: Verify macOS packaged engines and launch
         if: runner.os == 'macOS'
         run: |

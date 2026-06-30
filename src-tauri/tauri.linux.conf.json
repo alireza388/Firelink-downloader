@@ -17,7 +17,7 @@
     "linux": {
       "appimage": {
         "files": {
-          "usr/share/metainfo/Firelink.appdata.xml": "linux/Firelink.appdata.xml"
+          "usr/share/metainfo/com.nimbold.firelink.metainfo.xml": "linux/com.nimbold.firelink.metainfo.xml"
         }
       }
     }

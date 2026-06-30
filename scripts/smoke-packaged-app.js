@@ -96,10 +96,10 @@ while ($pending.Count -gt 0) {
   }
 }
 
-$visible = foreach ($pid in $descendants) {
-  $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+$visible = foreach ($childPid in $descendants) {
+  $process = Get-Process -Id $childPid -ErrorAction SilentlyContinue
   if ($process -and $process.MainWindowHandle -ne 0) {
-    "$($process.ProcessName)($pid)"
+    "$($process.ProcessName)($childPid)"
   }
 }
 

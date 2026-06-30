@@ -71,9 +71,10 @@ jobs:
       - name: Hide _internal from linuxdeploy (Linux only)
         if: runner.os == 'Linux'
         run: |
-          # Temporarily rename _internal so linuxdeploy ignores it during Tauri build.
-          # We will repack the AppImage later with this directory included.
-          mv src-tauri/provisioned-engines/${{ matrix.target }}/_internal src-tauri/provisioned-engines/${{ matrix.target }}/_internal_backup
+          # Patch tauri.conf.json's beforeBuildCommand to delete _internal from engine-dist 
+          # AFTER stage-engines.js verifies it, but BEFORE tauri builds the bundle.
+          # This hides it from linuxdeploy. We will repack it into the AppImage later.
+          sed -i 's/npm run build/rm -rf src-tauri\/engine-dist\/${{ matrix.target }}\/_internal \&\& npm run build/' src-tauri/tauri.conf.json
       - name: Build package
         run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
@@ -82,9 +83,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           APPDIR="src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Firelink.AppDir"
-          # Restore _internal to the provisioned-engines folder
-          mv src-tauri/provisioned-engines/${{ matrix.target }}/_internal_backup src-tauri/provisioned-engines/${{ matrix.target }}/_internal
-          # Copy _internal into the AppDir (Tauri skipped it because it was renamed)
+          # Copy _internal directly from provisioned-engines into the AppDir
           cp -r src-tauri/provisioned-engines/${{ matrix.target }}/_internal "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}/_internal"
           
           # Download appimagetool

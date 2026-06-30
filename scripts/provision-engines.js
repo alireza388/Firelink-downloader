@@ -135,13 +135,17 @@ try {
 
   const ytdlp = await download('yt-dlp', targetSources['yt-dlp']);
   copyExecutable(
-    findFile(ytdlp, isWindows ? ['yt-dlp.exe'] : ['yt-dlp_linux']),
+    findFile(ytdlp, isWindows ? ['yt-dlp.exe', 'yt-dlp'] : ['yt-dlp_linux', 'yt-dlp']),
     'yt-dlp'
   );
-  fs.cpSync(path.join(ytdlp, '_internal'), path.join(destination, '_internal'), {
-    recursive: true,
-    preserveTimestamps: true
-  });
+  try {
+    fs.cpSync(path.join(ytdlp, '_internal'), path.join(destination, '_internal'), {
+      recursive: true,
+      preserveTimestamps: true
+    });
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
 
   const deno = await download('deno', targetSources.deno);
   copyExecutable(findFile(deno, isWindows ? ['deno.exe'] : ['deno']), 'deno');

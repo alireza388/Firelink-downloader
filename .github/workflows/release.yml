@@ -59,6 +59,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
+            curl \
             patchelf \
             libdbus-1-dev \
             pkg-config \
@@ -68,49 +69,46 @@ jobs:
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
-      - name: Hide all engines from linuxdeploy (Linux only)
-        if: runner.os == 'Linux'
-        run: |
-          # Patch tauri.conf.json's beforeBuildCommand to empty engine-dist 
-          # AFTER stage-engines.js verifies it, but BEFORE tauri builds the bundle.
-          # This hides all static binaries (ffmpeg, aria2c, etc) from linuxdeploy 
-          # which corrupts them via patchelf. We will repack them into the AppImage later.
-          sed -i 's/npm run build/rm -rf src-tauri\/engine-dist\/* \&\& npm run build/' src-tauri/tauri.conf.json
       - name: Build package
         run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
+          FIRELINK_OMIT_ENGINE_DIST_FOR_TAURI_BUNDLE: ${{ runner.os == 'Linux' && '1' || '' }}
+      - name: Install pinned appimagetool (Linux only)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          APPIMAGETOOL_SHA256: a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0
+        run: |
+          curl -fsSL "$APPIMAGETOOL_URL" -o "$RUNNER_TEMP/appimagetool"
+          echo "$APPIMAGETOOL_SHA256  $RUNNER_TEMP/appimagetool" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool"
       - name: Repack AppImage with engines (Linux only)
         if: runner.os == 'Linux'
-        run: |
-          APPDIR="src-tauri/target/${{ matrix.target }}/release/bundle/appimage/Firelink.AppDir"
-          # Ensure target directory exists in AppDir
-          mkdir -p "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}"
-          # Copy everything directly from provisioned-engines into the AppDir
-          cp -r src-tauri/provisioned-engines/${{ matrix.target }}/* "$APPDIR/usr/lib/Firelink/engine-dist/${{ matrix.target }}/"
-          
-          # Download appimagetool
-          wget -qO appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-          
-          # Find the original AppImage name to overwrite
-          APPIMAGE=$(ls src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage | head -n 1)
-          
-          # Repack the AppImage
-          env APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool "$APPDIR" "$APPIMAGE"
+        run: node scripts/repack-linux-appimage-engines.js --target ${{ matrix.target }} --appimagetool "$RUNNER_TEMP/appimagetool"
       - name: Verify macOS packaged engines and launch
         if: runner.os == 'macOS'
         run: |
           APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Firelink.app"
           node scripts/verify-binaries.js --search-root "$APP" --target ${{ matrix.target }}
           node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
-      - name: Verify Windows installer payload
+      - name: Verify Windows installer payload and launch
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $installer = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe" | Select-Object -First 1
-          7z x $installer.FullName "-o$env:RUNNER_TEMP/firelink-installer" -y
-          node scripts/verify-binaries.js --search-root "$env:RUNNER_TEMP/firelink-installer" --target ${{ matrix.target }}
+          if (-not $installer) { throw "Windows NSIS installer artifact was not produced." }
+          $extractRoot = "$env:RUNNER_TEMP/firelink-installer"
+          Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
+          7z x $installer.FullName "-o$extractRoot" -y
+          node scripts/verify-binaries.js --search-root "$extractRoot" --target ${{ matrix.target }}
+          $installRoot = "$env:RUNNER_TEMP\FirelinkSmoke"
+          Remove-Item -Recurse -Force $installRoot -ErrorAction SilentlyContinue
+          & $installer.FullName /S "/D=$installRoot"
+          if ($LASTEXITCODE -ne 0) { throw "Silent NSIS install failed with exit code $LASTEXITCODE." }
+          $exe = Get-ChildItem $installRoot -Recurse -File | Where-Object { $_.Name -ieq "firelink.exe" } | Sort-Object FullName | Select-Object -First 1
+          if (-not $exe) { throw "firelink.exe was not found under $installRoot after silent install." }
+          node scripts/smoke-packaged-app.js --executable $exe.FullName --assert-no-visible-child-windows
       - name: Verify Linux AppImage payload and launch
         if: runner.os == 'Linux'
         run: |
@@ -124,6 +122,7 @@ jobs:
           name: Firelink-${{ matrix.label }}-${{ github.ref_name }}
           path: ${{ matrix.artifact }}
           if-no-files-found: error
+          retention-days: 3
 
   publish:
     name: Publish GitHub release

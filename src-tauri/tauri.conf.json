@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "node scripts/stage-engines.js && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "node scripts/stage-engines.js && node scripts/verify-binaries.js --staged && npm run build",
+    "beforeBuildCommand": "node scripts/before-tauri-build.js",
     "frontendDist": "../dist"
   },
   "app": {

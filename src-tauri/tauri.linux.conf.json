@@ -17,7 +17,7 @@
     "linux": {
       "appimage": {
         "files": {
-          "linux/Firelink.appdata.xml": "usr/share/metainfo/Firelink.appdata.xml"
+          "usr/share/metainfo/Firelink.appdata.xml": "linux/Firelink.appdata.xml"
         }
       }
     }

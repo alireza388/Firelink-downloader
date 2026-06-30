@@ -105,9 +105,14 @@ jobs:
           node scripts/verify-binaries.js --search-root "$extractRoot" --target ${{ matrix.target }}
           $installRoot = "$env:RUNNER_TEMP\FirelinkSmoke"
           Remove-Item -Recurse -Force $installRoot -ErrorAction SilentlyContinue
-          & $installer.FullName /S "/D=$installRoot"
-          if ($LASTEXITCODE -ne 0) { throw "Silent NSIS install failed with exit code $LASTEXITCODE." }
-          $exe = Get-ChildItem $installRoot -Recurse -File | Where-Object { $_.Name -ieq "firelink.exe" } | Sort-Object FullName | Select-Object -First 1
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installRoot") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent NSIS install failed with exit code $($install.ExitCode)." }
+          $exe = $null
+          foreach ($attempt in 1..60) {
+            $exe = Get-ChildItem $installRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq "firelink.exe" } | Sort-Object FullName | Select-Object -First 1
+            if ($exe) { break }
+            Start-Sleep -Seconds 1
+          }
           if (-not $exe) { throw "firelink.exe was not found under $installRoot after silent install." }
           node scripts/smoke-packaged-app.js --executable $exe.FullName --assert-no-visible-child-windows
       - name: Verify Linux AppImage payload and launch

@@ -17,6 +17,12 @@ const executable = path.resolve(executableArg);
 const child = spawn(executable, [], {
   cwd: process.env.RUNNER_TEMP || process.env.TMPDIR || process.cwd(),
   detached: process.platform !== 'win32',
+  env: { 
+    ...process.env, 
+    FIRELINK_SMOKE_TEST: '1',
+    WEBKIT_DISABLE_COMPOSITING_MODE: '1',
+    GDK_BACKEND: 'x11'
+  },
   stdio: ['ignore', 'pipe', 'pipe']
 });
 let stderr = '';
@@ -24,12 +30,17 @@ let spawnError = null;
 child.on('error', error => {
   spawnError = error;
 });
+child.on('exit', (code, signal) => {
+  if (readyPort === null) {
+    console.error(`Child exited prematurely with code ${code} signal ${signal}`);
+  }
+});
 child.stderr.on('data', data => {
   stderr += data.toString();
 });
 
 let readyPort = null;
-for (let attempt = 0; attempt < 40 && readyPort === null; attempt += 1) {
+for (let attempt = 0; attempt < 200 && readyPort === null; attempt += 1) {
   for (let port = 6412; port <= 6422; port += 1) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/ping`);

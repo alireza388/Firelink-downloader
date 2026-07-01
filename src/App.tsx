@@ -577,7 +577,7 @@ function App() {
 
   return (
     <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
-      {platform.os === 'windows' && <WindowControls />}
+      {(platform.os === 'windows' || platform.os === 'linux') && <WindowControls />}
       <div
         className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${
           isSidebarVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'

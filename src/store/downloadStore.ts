@@ -4,6 +4,7 @@ import type { DownloadProgressEvent } from '../bindings/DownloadProgressEvent';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import { listenEvent as listen } from '../ipc';
 import type { DownloadItem } from '../bindings/DownloadItem';
+import { categoryForFileName } from '../utils/downloads';
 
 interface DownloadProgressState {
   progressMap: Record<string, DownloadProgressEvent>;
@@ -70,6 +71,10 @@ export async function initDownloadListener() {
           status,
           ...(progress ? { fraction: progress.fraction } : {})
         };
+        if (payload.fileName && payload.fileName !== current.fileName) {
+          updates.fileName = payload.fileName;
+          updates.category = categoryForFileName(payload.fileName);
+        }
         if (status !== 'downloading') {
           updates.speed = '-';
           updates.eta = '-';

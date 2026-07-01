@@ -306,11 +306,14 @@ pub enum QueueDirection {
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct DownloadStateEvent {
     pub id: String,
     pub status: String,
     pub error: Option<String>,
+    #[ts(optional)]
+    pub file_name: Option<String>,
 }
 
 impl DownloadStateEvent {
@@ -319,6 +322,7 @@ impl DownloadStateEvent {
             id: id.into(),
             status: status.as_str().to_string(),
             error: None,
+            file_name: None,
         }
     }
 
@@ -327,6 +331,16 @@ impl DownloadStateEvent {
             id: id.into(),
             status: DownloadStatus::Failed.as_str().to_string(),
             error: Some(error.into()),
+            file_name: None,
+        }
+    }
+
+    pub fn completed_with_file(id: impl Into<String>, file_name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            status: DownloadStatus::Completed.as_str().to_string(),
+            error: None,
+            file_name: Some(file_name.into()),
         }
     }
 
@@ -337,6 +351,7 @@ impl DownloadStateEvent {
             id: id.into(),
             status: DownloadStatus::Retrying.as_str().to_string(),
             error: Some(reason.into()),
+            file_name: None,
         }
     }
 }

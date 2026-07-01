@@ -1221,20 +1221,21 @@ impl SidecarSpawner for ProductionSpawner {
             &mut cancel_rx,
         )
         .await;
-        if outcome.is_ok() {
-            if let Ok(path) = crate::download_ownership::expected_primary_path(
-                &self.app_handle,
-                &payload.destination,
-                &payload.filename,
-            ) {
-                let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &path);
+        if let Ok(path) = outcome.as_ref() {
+            let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, path);
+            if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+                use tauri::Emitter;
+                let _ = self.app_handle.emit(
+                    "download-state",
+                    crate::ipc::DownloadStateEvent::completed_with_file(id, file_name),
+                );
             }
         }
         let _ = state
             .download_coordinator
             .finish_media(id.to_string())
             .await;
-        outcome
+        outcome.map(|_| ())
     }
 
     async fn run_native(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {

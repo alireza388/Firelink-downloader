@@ -65,6 +65,18 @@ fn is_media_processing_line(line: &str) -> bool {
         || lower.contains("post-process")
 }
 
+fn media_output_template(
+    resolved_dest: &std::path::Path,
+    safe_filename: &str,
+    format_selector: Option<&str>,
+) -> std::path::PathBuf {
+    if format_selector.is_none() && std::path::Path::new(safe_filename).extension().is_none() {
+        resolved_dest.join("%(title).200B [%(id)s].%(ext)s")
+    } else {
+        resolved_dest.join(safe_filename)
+    }
+}
+
 fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     value
         .get(key)
@@ -2399,7 +2411,7 @@ pub(crate) async fn start_media_download_internal(
     user_agent: Option<String>,
     max_tries: Option<i32>,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
-) -> Result<(), String> {
+) -> Result<std::path::PathBuf, String> {
     let safe_filename = crate::download_ownership::canonical_download_filename(&filename);
 
     let resolved_dest = resolve_path(&destination, &app_handle);
@@ -2413,6 +2425,8 @@ pub(crate) async fn start_media_download_internal(
     }
 
     let out_path = resolved_dest.join(&safe_filename);
+    let output_template =
+        media_output_template(&resolved_dest, &safe_filename, format_selector.as_deref());
 
     let total_tracks: f64 = if let Some(ref format) = format_selector {
         if format.contains('+') {
@@ -2519,8 +2533,10 @@ pub(crate) async fn start_media_download_internal(
             .arg("--continue")
             .arg("--compat-options")
             .arg("no-youtube-unavailable-videos")
+            .arg("--print")
+            .arg("after_move:%(filepath)s")
             .arg("-o")
-            .arg(out_path.to_string_lossy().to_string())
+            .arg(output_template.to_string_lossy().to_string())
             .env("PATH", &trusted_path);
 
         if let Some(limit) = speed_limit.as_ref() {
@@ -2611,6 +2627,7 @@ pub(crate) async fn start_media_download_internal(
         log::info!("yt-dlp spawned for id: {} (strike {})", id, strike);
 
         let mut stderr_tail = String::new();
+        let mut final_output_path: Option<std::path::PathBuf> = None;
         let failure_reason = loop {
             tokio::select! {
                 _ = cancel_rx.changed() => {
@@ -2626,29 +2643,37 @@ pub(crate) async fn start_media_download_internal(
                         Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
                             let line = String::from_utf8_lossy(&line_bytes);
                             if let Some(progress) = parse_media_progress_line(&line) {
-                            let previous_track = current_track;
-                            let overall_fraction = aggregate_media_fraction(
-                                total_tracks,
-                                &mut current_track,
-                                &mut last_fraction,
-                                progress.fraction,
-                            );
-                            if current_track != previous_track {
-                                last_speed_sample = None;
-                            }
-                            let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
+                                let previous_track = current_track;
+                                let overall_fraction = aggregate_media_fraction(
+                                    total_tracks,
+                                    &mut current_track,
+                                    &mut last_fraction,
+                                    progress.fraction,
+                                );
+                                if current_track != previous_track {
+                                    last_speed_sample = None;
+                                }
+                                let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
 
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
                                     let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                         id: id.to_string(),
                                         fraction: overall_fraction,
-                                    speed,
-                                    eta,
-                                    size: progress.size,
-                                    size_is_final: false,
-                                });
+                                        speed,
+                                        eta,
+                                        size: progress.size,
+                                        size_is_final: false,
+                                    });
                                     last_progress_at = now;
+                                }
+                            } else {
+                                let candidate = line.trim();
+                                if !candidate.is_empty() {
+                                    let candidate_path = std::path::PathBuf::from(candidate);
+                                    if candidate_path.is_absolute() {
+                                        final_output_path = Some(candidate_path);
+                                    }
                                 }
                             }
                         }
@@ -2713,8 +2738,13 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
                             if payload.code == Some(0) {
-                                log::info!("yt-dlp completed successfully for id: {}", id);
-                                if let Ok(metadata) = tokio::fs::metadata(&out_path).await {
+                                log::info!("yt-dlp completed successfully id: {}", id);
+                                let completed_path = final_output_path
+                                    .as_ref()
+                                    .filter(|path| path.is_file())
+                                    .cloned()
+                                    .unwrap_or_else(|| out_path.clone());
+                                if let Ok(metadata) = tokio::fs::metadata(&completed_path).await {
                                     if metadata.is_file() {
                                         let _ = app_handle.emit("download-progress", DownloadProgressEvent {
                                             id: id.to_string(),
@@ -2726,7 +2756,7 @@ pub(crate) async fn start_media_download_internal(
                                         });
                                     }
                                 }
-                                return Ok(());
+                                return Ok(completed_path);
                             }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
                             cleanup_media_artifacts(&out_path, false).await;
@@ -4199,12 +4229,29 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 mod tests {
     use super::{
         aggregate_media_fraction, build_media_format_options, collect_download_uris,
-        is_excluded_yt_dlp_format, json_lower, media_progress_speed,
+        is_excluded_yt_dlp_format, json_lower, media_output_template, media_progress_speed,
         normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_media_progress_line,
         redact_log_line, FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn media_metadata_fallback_lets_ytdlp_choose_extension() {
+        let destination = std::path::Path::new("/tmp/firelink");
+        let template = media_output_template(destination, "1234567890", None);
+        assert_eq!(
+            template,
+            destination.join("%(title).200B [%(id)s].%(ext)s")
+        );
+    }
+
+    #[test]
+    fn selected_media_format_keeps_requested_output_path() {
+        let destination = std::path::Path::new("/tmp/firelink");
+        let template = media_output_template(destination, "clip.mp4", Some("best"));
+        assert_eq!(template, destination.join("clip.mp4"));
+    }
 
     #[test]
     fn normalizes_bare_global_speed_limits_as_kib_per_second() {

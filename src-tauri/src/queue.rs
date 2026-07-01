@@ -1,5 +1,5 @@
 use crate::ipc::{DownloadStateEvent, DownloadStatus, QueueDirection};
-use crate::retry::{backoff_and_emit, is_transient_network_error, BackoffOutcome, MAX_RETRIES};
+use crate::retry::{backoff_and_emit, is_transient_network_error, BackoffOutcome};
 use log;
 use serde::Deserialize;
 use serde_json;
@@ -194,6 +194,33 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.semaphore.clone().acquire_owned().await.ok()
     }
 
+    async fn acquire_permit_after_retirement(&self) -> Option<OwnedSemaphorePermit> {
+        loop {
+            let permit = self.acquire_permit().await?;
+            if self.retire_slot_if_needed() {
+                permit.forget();
+                continue;
+            }
+            return Some(permit);
+        }
+    }
+
+    fn retire_slot_if_needed(&self) -> bool {
+        let mut debt = self.slots_to_retire.load(Ordering::Relaxed);
+        while debt > 0 {
+            match self.slots_to_retire.compare_exchange_weak(
+                debt,
+                debt - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => debt = actual,
+            }
+        }
+        false
+    }
+
     /// Park an already-acquired permit under `id`.
     pub async fn park_permit(&self, id: &str, permit: OwnedSemaphorePermit) {
         self.active_permits
@@ -214,7 +241,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return false;
         }
 
-        let permit = match self.acquire_permit().await {
+        let permit = match self.acquire_permit_after_retirement().await {
             Some(p) => p,
             None => return false,
         };
@@ -325,34 +352,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 continue;
             }
             // (2) Acquire a slot.
-            let permit_opt = self.semaphore.clone().acquire_owned().await.ok();
-            let permit = match permit_opt {
+            let permit = match self.acquire_permit_after_retirement().await {
                 Some(p) => p,
                 None => break, // Semaphore closed, exit dispatcher
             };
-            // (3) CAS retirement — never underflows to usize::MAX.
-            let mut retired = false;
-            let mut debt = self.slots_to_retire.load(Ordering::Relaxed);
-            while debt > 0 {
-                match self.slots_to_retire.compare_exchange_weak(
-                    debt,
-                    debt - 1,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => {
-                        retired = true;
-                        break;
-                    }
-                    Err(actual) => {
-                        debt = actual;
-                    }
-                }
-            }
-            if retired {
-                drop(permit);
-                continue;
-            }
             // (4) Re-pop under lock — guards against racing removals between
             //     waking from Notify and acquiring the permit.
             let task = match self.pending.lock().await.pop_front() {
@@ -612,20 +615,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return;
         }
 
-        let strike = {
-            let mut strikes = self.aria2_retry_strikes.lock().await;
-            let entry = strikes.entry(id.clone()).or_insert(0);
-            *entry
-        };
-
-        let transient = is_retryable_aria2_error(&error);
-        let strikes_left = strike < MAX_RETRIES;
-        if !(transient && strikes_left) {
-            self.apply_completion(&id, PendingOutcome::Error(error))
-                .await;
-            return;
-        }
-
         let payload = self.aria2_payloads.lock().await.get(&id).cloned();
         if payload.is_none() {
             self.apply_completion(&id, PendingOutcome::Error(error))
@@ -633,6 +622,20 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return;
         }
         let mut payload = payload.unwrap();
+
+        let strike = {
+            let mut strikes = self.aria2_retry_strikes.lock().await;
+            let entry = strikes.entry(id.clone()).or_insert(0);
+            *entry
+        };
+
+        let transient = is_retryable_aria2_error(&error);
+        let strikes_left = strike < automatic_retry_limit(payload.max_tries);
+        if !(transient && strikes_left) {
+            self.apply_completion(&id, PendingOutcome::Error(error))
+                .await;
+            return;
+        }
 
         if is_aria2_range_mode_error(&error) {
             log::warn!(
@@ -848,6 +851,14 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.notify.notify_one();
         results
     }
+}
+
+fn automatic_retry_limit(max_tries: Option<i32>) -> usize {
+    max_tries.unwrap_or(0).max(0) as usize
+}
+
+fn aria2_attempt_limit(max_tries: Option<i32>) -> u32 {
+    (automatic_retry_limit(max_tries) + 1) as u32
 }
 
 fn is_retryable_aria2_error(error: &str) -> bool {
@@ -1080,7 +1091,7 @@ impl SidecarSpawner for ProductionSpawner {
             "max-connection-per-server".to_string(),
             serde_json::json!(conn.to_string()),
         );
-        let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
+        let mt = aria2_attempt_limit(payload.max_tries);
         options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
         options.insert("retry-wait".to_string(), serde_json::json!("2"));
         options.insert("continue".to_string(), serde_json::json!("true"));
@@ -1149,7 +1160,7 @@ impl SidecarSpawner for ProductionSpawner {
                 // aria2 unavailable — fall back to native coordinator.
                 log::warn!("aria2 addUri failed, falling back to native: {}", e);
                 let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
-                let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
+                let mt = automatic_retry_limit(payload.max_tries) as u32;
                 let safe_filename =
                     crate::download_ownership::canonical_download_filename(&payload.filename);
                 state
@@ -1241,7 +1252,7 @@ impl SidecarSpawner for ProductionSpawner {
     async fn run_native(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {
         let state = self.app_handle.state::<crate::AppState>();
         let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
-        let mt = payload.max_tries.unwrap_or(1).max(1) as u32;
+        let mt = automatic_retry_limit(payload.max_tries) as u32;
         let resolved_dest = crate::resolve_path(&payload.destination, &self.app_handle);
         let safe_filename =
             crate::download_ownership::canonical_download_filename(&payload.filename);

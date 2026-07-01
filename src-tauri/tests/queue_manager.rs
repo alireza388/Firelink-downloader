@@ -231,20 +231,60 @@ async fn shrink_converges_to_target_without_killing_active() {
     // Shrink to 2 while 4 are "active" (permits parked).
     mgr_arc.set_capacity(2);
 
-    // Release active permits. Debt is 2; two releases retire both.
+    // Release active permits. Debt is 2; two releases retire both, but the
+    // remaining active count still equals the shrunken target.
     mgr_arc.release_permit("t0").await;
     mgr_arc.release_permit("t1").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Debt was 2; two releases retired both. The 2 remaining pending tasks
-    // (t4, t5) can now dispatch since debt is 0 and slots freed.
+    assert_eq!(
+        spawner.native_calls.load(Ordering::SeqCst),
+        4,
+        "pending tasks must not dispatch while active count already meets the shrunken target"
+    );
+
+    mgr_arc.release_permit("t2").await;
+    mgr_arc.release_permit("t3").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     assert_eq!(
         spawner.native_calls.load(Ordering::SeqCst),
         6,
-        "shrink converges: after debt exhausted, remaining pending dispatch"
+        "pending tasks dispatch after active count falls below the shrunken target"
     );
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn aria2_resume_waits_for_shrunk_capacity() {
+    let (mgr, _spawner) = make_manager(3);
+    let mgr_arc = Arc::new(mgr);
+
+    let active = mgr_arc.acquire_permit().await.unwrap();
+    mgr_arc.park_permit("active", active).await;
+    let paused = mgr_arc.acquire_permit().await.unwrap();
+    mgr_arc.park_permit("paused", paused).await;
+    mgr_arc.release_permit("paused").await;
+
+    mgr_arc.set_capacity(1);
+
+    let waiter = {
+        let mgr_clone = Arc::clone(&mgr_arc);
+        tokio::spawn(async move { mgr_clone.ensure_aria2_permit("paused").await })
+    };
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        !waiter.is_finished(),
+        "paused resume must wait while current active count already meets shrunk limit"
+    );
+
+    mgr_arc.release_permit("active").await;
+    assert!(timeout(Duration::from_secs(1), waiter)
+        .await
+        .expect("resume permit should unblock after active transfer exits")
+        .expect("resume task should not panic"));
 }
 
 fn aria2_task(id: &str) -> QueuedTask {

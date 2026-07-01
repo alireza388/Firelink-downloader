@@ -469,10 +469,10 @@ async fn download_file(
     // until this future resolves). `download_attempt` re-issues a Range header
     // from the existing partial file on every retry, so no bytes are discarded.
     //
-    // The legacy `max_tries` payload field is still honored as a cap on
-    // attempts, but transient backoff is additionally bounded by
-    // `retry::MAX_RETRIES` so a single URL cannot spin forever.
-    let max_attempts = payload.max_tries.max(1) as usize;
+    // `max_tries` is the user-facing retry count. Attempts include the first
+    // try plus those configured retries.
+    let max_retries = payload.max_tries as usize;
+    let max_attempts = max_retries + 1;
     'url: for url in &payload.urls {
         let mut strike = 0_usize;
         let mut attempts = 0_usize;
@@ -513,7 +513,7 @@ async fn download_file(
                     }
 
                     let transient = crate::retry::is_transient_network_error(&error);
-                    let strikes_left = strike < crate::retry::MAX_RETRIES;
+                    let strikes_left = strike < max_retries;
 
                     if transient && strikes_left {
                         // Transient: announce `Retrying`, back off, then retry.

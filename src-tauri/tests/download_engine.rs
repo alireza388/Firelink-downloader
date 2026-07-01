@@ -427,7 +427,7 @@ async fn reports_terminal_http_errors_after_retry_budget() {
     };
 
     assert!(error.contains("500 Internal Server Error"));
-    assert_eq!(server.state.requests.load(Ordering::SeqCst), 2);
+    assert_eq!(server.state.requests.load(Ordering::SeqCst), 3);
     assert!(!output_path.exists());
 }
 

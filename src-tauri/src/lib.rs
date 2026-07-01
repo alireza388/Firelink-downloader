@@ -2472,9 +2472,7 @@ pub(crate) async fn start_media_download_internal(
     let config_path = config_file.into_temp_path();
 
     use crate::ipc::DownloadStateEvent;
-    use crate::retry::{
-        backoff_and_emit_cancel, is_transient_network_error, BackoffOutcome, MAX_RETRIES,
-    };
+    use crate::retry::{backoff_and_emit_cancel, is_transient_network_error, BackoffOutcome};
 
     const STDERR_TAIL: usize = 2048;
 
@@ -2504,10 +2502,11 @@ pub(crate) async fn start_media_download_internal(
     // user-installed tools, or platform-specific executable aliases.
     let trusted_path = crate::platform::trusted_system_path()?;
 
+    let max_retries = max_tries.unwrap_or(0).max(0) as usize;
     let mut strike = 0_usize;
     let mut processing_started = false;
 
-    while strike <= MAX_RETRIES {
+    while strike <= max_retries {
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
         let mut cmd = app_handle
             .shell()
@@ -2520,7 +2519,7 @@ pub(crate) async fn start_media_download_internal(
             .arg("--socket-timeout")
             .arg("20")
             .arg("--retries")
-            .arg("3")
+            .arg(max_retries.to_string())
             .arg("--extractor-retries")
             .arg("3")
             .arg("--ffmpeg-location")
@@ -2567,10 +2566,6 @@ pub(crate) async fn start_media_download_internal(
             if !ua.is_empty() {
                 cmd = cmd.arg("--user-agent").arg(ua);
             }
-        }
-
-        if let Some(tries) = max_tries {
-            cmd = cmd.arg("--retries").arg(tries.to_string());
         }
 
         if let Some(loc) = config_location.as_ref() {
@@ -2781,7 +2776,7 @@ pub(crate) async fn start_media_download_internal(
         };
 
         let transient = is_transient_network_error(&failure_reason);
-        let strikes_left = strike < MAX_RETRIES;
+        let strikes_left = strike < max_retries;
         if !(transient && strikes_left) {
             return Err(failure_reason);
         }

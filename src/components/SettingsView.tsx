@@ -528,19 +528,6 @@ runEngineChecks(false);
                 </div>
                 <div className="mac-settings-row">
                   <div className="settings-row-label">
-                    <span>Global speed limit:</span>
-                    <small>{settings.globalSpeedLimit || 'Unlimited'}</small>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => settings.setActiveView('speedLimiter')}
-                    className="app-button px-3 text-xs"
-                  >
-                    Configure…
-                  </button>
-                </div>
-                <div className="mac-settings-row">
-                  <div className="settings-row-label">
                     <span>Automatic retries:</span>
                     <small>If a connection fails</small>
                   </div>
@@ -571,12 +558,11 @@ runEngineChecks(false);
                     className="mac-switch"
                   />
                 </label>
-                <label className="mac-settings-row cursor-default" style={{ opacity: settings.showNotifications ? 1 : 0.5 }}>
+                <label className="mac-settings-row cursor-default">
                   <span className="text-[13px] text-text-primary">Play sound when download completes</span>
                   <input
                     type="checkbox"
                     checked={settings.playCompletionSound}
-                    disabled={!settings.showNotifications}
                     onChange={(e) => settings.setPlayCompletionSound(e.target.checked)}
                     className="mac-switch"
                   />

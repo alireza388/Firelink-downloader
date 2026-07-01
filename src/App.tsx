@@ -42,9 +42,34 @@ const getScheduledQueueIds = () => {
   return selectedQueueIds;
 };
 
+type AudioContextConstructor = typeof AudioContext;
+
+const playCompletionChime = () => {
+  const AudioCtor =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
+  if (!AudioCtor) return;
+
+  const context = new AudioCtor();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(880, context.currentTime);
+  oscillator.frequency.exponentialRampToValueAtTime(1320, context.currentTime + 0.12);
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.24);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.24);
+  oscillator.onended = () => {
+    void context.close();
+  };
+};
+
 function App() {
   const platform = usePlatformInfo();
-  const platformOsRef = useRef(platform.os);
   const [filter, setFilter] = useState<SidebarFilter>('all');
   const [coreReady, setCoreReady] = useState(false);
 
@@ -114,10 +139,6 @@ function App() {
   }, [sidebarWidth]);
 
   const { addToast } = useToast();
-
-  useEffect(() => {
-    platformOsRef.current = platform.os;
-  }, [platform.os]);
 
   useEffect(() => {
     let active = true;
@@ -520,24 +541,22 @@ function App() {
     const unlistenTerminalState = listen('download-state', (event) => {
       if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
       const settings = useSettingsStore.getState();
+      if (event.payload.status === 'completed' && settings.playCompletionSound) {
+        try {
+          playCompletionChime();
+        } catch (error) {
+          console.error('Completion sound failed:', error);
+        }
+      }
       if (!settings.showNotifications) return;
 
       const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload.id);
       const fileName = item?.fileName || 'A file';
-      const platformOs = platformOsRef.current;
-      const sound = settings.playCompletionSound
-        ? platformOs === 'macos'
-          ? 'Ping'
-          : platformOs === 'linux'
-            ? 'message-new-instant'
-            : undefined
-        : undefined;
       if (event.payload.status === 'completed') {
         try {
           sendNotification({
             title: 'Download Complete',
-            body: `${fileName} has finished downloading.`,
-            sound
+            body: `${fileName} has finished downloading.`
           });
         } catch (error) {
           console.error('Completion notification failed:', error);

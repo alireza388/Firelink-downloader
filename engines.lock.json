@@ -16,10 +16,10 @@
           "sha256": "111b2f5ed760f1e1a2ec06117c4e8094fcde336ba16122dda1c5e7209bf1862d"
         },
         "ffmpeg": {
-          "version": "8.1.1",
+          "version": "N-125385-ge2e889d9da",
           "source": "https://ffmpeg.org/",
           "build": "GPLv3 build identified by binary as https://www.martin-riedl.de",
-          "sha256": "ef4fe121377039053b0d7bed4a9aa46e7912918f5ba6424a1dd155f4eed625b0"
+          "sha256": "3027bd75166a596c31a271ce9ae14b5441492b9557011993c0bf873b5a7c6a09"
         },
         "deno": {
           "version": "2.9.1",

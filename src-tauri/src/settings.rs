@@ -6,7 +6,9 @@ use serde_json::{Map, Value};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
-pub fn load_settings<R: tauri::Runtime>(app_handle: &AppHandle<R>) -> Result<PersistedSettings, String> {
+pub fn load_settings<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+) -> Result<PersistedSettings, String> {
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
     let stored = crate::db::load_settings(&connection)?
@@ -296,7 +298,7 @@ fn default_settings() -> PersistedSettings {
         custom_user_agent: String::new(),
         ask_where_to_save_each_file: false,
         prevents_sleep_while_downloading: true,
-        media_cookie_source: MediaCookieSource::None,
+        media_cookie_source: MediaCookieSource::default(),
         site_logins: Vec::new(),
         extension_pairing_token: String::new(),
         auto_check_updates: true,

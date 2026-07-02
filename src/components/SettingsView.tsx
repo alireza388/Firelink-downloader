@@ -47,6 +47,24 @@ const engineChecks = [
   { kind: 'deno', name: 'Deno', command: 'get_deno_engine_status' },
 ] as const;
 
+const browserCookieSourceOptions = [
+  { value: 'none', label: 'None' },
+  { value: 'safari', label: 'Safari' },
+  { value: 'chrome', label: 'Chrome' },
+  { value: 'chromium', label: 'Chromium' },
+  { value: 'firefox', label: 'Firefox' },
+  { value: 'edge', label: 'Edge' },
+  { value: 'brave', label: 'Brave' },
+  { value: 'opera', label: 'Opera' },
+  { value: 'vivaldi', label: 'Vivaldi' },
+  { value: 'whale', label: 'Whale' },
+] as const;
+
+const normalizeBrowserCookieSource = (source: string) => {
+  const trimmed = source.trim();
+  return trimmed.length > 0 ? trimmed : 'none';
+};
+
 type EngineCheck = typeof engineChecks[number];
 
 const engineStatusCache = new Map<string, EngineStatusItem>();
@@ -1103,24 +1121,33 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                         </div>
                       ))}
 
-                      <div className="grid grid-cols-[180px_1fr] items-center gap-4 text-[13px] border-t border-border-modal/50 pt-3 mt-2">
-                        <label className="text-text-secondary font-semibold">Browser Cookies Source:</label>
+                    <div className="grid grid-cols-[180px_1fr] items-start gap-4 text-[13px] border-t border-border-modal/50 pt-3 mt-2">
+                      <label className="text-text-secondary font-semibold pt-1.5">Browser Cookies Source:</label>
+                      <div className="space-y-2">
                         <select
-                          value={settings.mediaCookieSource}
-                          onChange={(e) => settings.setMediaCookieSource(
-                            e.target.value as typeof settings.mediaCookieSource
-                          )}
-                          className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent"
+                          value={browserCookieSourceOptions.some(option => option.value === settings.mediaCookieSource) ? settings.mediaCookieSource : 'custom'}
+                          onChange={(e) => {
+                            if (e.target.value !== 'custom') {
+                              settings.setMediaCookieSource(e.target.value);
+                            }
+                          }}
+                          className="bg-bg-input border border-border-modal rounded-lg p-1.5 text-[13px] text-text-primary focus:outline-none focus:border-accent w-full"
                         >
-                          <option value="none">None</option>
-                          <option value="safari">Safari</option>
-                          <option value="chrome">Chrome</option>
-                          <option value="firefox">Firefox</option>
-                          <option value="edge">Edge</option>
-                          <option value="brave">Brave</option>
+                          {browserCookieSourceOptions.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                          <option value="custom">Custom yt-dlp source</option>
                         </select>
+                        <input
+                          value={settings.mediaCookieSource === 'none' ? '' : settings.mediaCookieSource}
+                          onChange={(e) => settings.setMediaCookieSource(normalizeBrowserCookieSource(e.target.value))}
+                          placeholder="firefox:/path/to/profile or chrome:Profile 1"
+                          className="app-control w-full px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay text-[13px]"
+                          aria-label="Custom yt-dlp browser cookie source"
+                        />
                       </div>
-                      <p className="text-text-muted text-xs mt-1">yt-dlp reads browser cookies to bypass video download limits or access restricted media. Firelink does not save browser cookies.</p>
+                    </div>
+                    <p className="text-text-muted text-xs mt-1">yt-dlp reads browser cookies to bypass video download limits or access restricted media. Firelink does not save browser cookies.</p>
                     </div>
                   </div>
                 );

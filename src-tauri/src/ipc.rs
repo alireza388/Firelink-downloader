@@ -215,15 +215,13 @@ pub enum ProxyMode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
-pub enum MediaCookieSource {
-    None,
-    Safari,
-    Chrome,
-    Firefox,
-    Edge,
-    Brave,
+pub struct MediaCookieSource(#[ts(type = "string")] pub String);
+
+impl Default for MediaCookieSource {
+    fn default() -> Self {
+        Self("none".to_string())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -275,7 +273,7 @@ pub struct PersistedSettings {
     pub prevents_sleep_while_downloading: bool,
     pub media_cookie_source: MediaCookieSource,
     pub site_logins: Vec<SiteLogin>,
-    /// The HMAC shared secret for the browser extension.  It is persisted in the
+    /// HMAC shared secret for the browser extension.  It is persisted in the
     /// settings database so that startup never needs to touch the OS keychain.
     /// The keychain is still used as defence-in-depth — grant_keychain_access
     /// writes the token there — but the DB copy is the primary read path,

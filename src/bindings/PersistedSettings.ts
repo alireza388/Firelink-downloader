@@ -10,7 +10,7 @@ import type { Theme } from "./Theme";
 
 export type PersistedSettings = { theme: Theme, baseDownloadFolder: string, categorySubfolders: { [key in string]: string }, categoryDirectoryOverrides: { [key in string]: string }, approvedDownloadRoots: Array<string>, maxConcurrentDownloads: number, globalSpeedLimit: string, isSidebarVisible: boolean, activeSettingsTab: SettingsTab, scheduler: SchedulerSettings, schedulerRunning: boolean, schedulerActiveDownloadIds: Array<string>, schedulerLastStartKey: string, schedulerLastStopKey: string, lastCustomSpeedLimitKiB: number, perServerConnections: number, maxAutomaticRetries: number, showNotifications: boolean, playCompletionSound: boolean, appFontSize: AppFontSize, listRowDensity: ListRowDensity, showDockBadge: boolean, showMenuBarIcon: boolean, proxyMode: ProxyMode, proxyHost: string, proxyPort: number, customUserAgent: string, askWhereToSaveEachFile: boolean, preventsSleepWhileDownloading: boolean, mediaCookieSource: MediaCookieSource, siteLogins: Array<SiteLogin>, 
 /**
- * The HMAC shared secret for the browser extension.  It is persisted in the
+ * HMAC shared secret for the browser extension.  It is persisted in the
  * settings database so that startup never needs to touch the OS keychain.
  * The keychain is still used as defence-in-depth — grant_keychain_access
  * writes the token there — but the DB copy is the primary read path,

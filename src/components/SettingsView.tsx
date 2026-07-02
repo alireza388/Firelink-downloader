@@ -799,7 +799,7 @@ runEngineChecks(false);
               </div>
 
               <h2 className="settings-section-title">Identity</h2>
-              <div className="mac-settings-group">
+              <div className="mac-settings-group settings-popup-group">
                 <div className="mac-settings-row settings-network-row">
                   <div className="settings-row-label">
                     <span>Custom User-Agent</span>

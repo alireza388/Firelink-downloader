@@ -1189,6 +1189,12 @@ html[data-list-density="relaxed"] {
     margin-bottom: 24px;
   }
 
+  .settings-popup-group {
+    position: relative;
+    z-index: 10;
+    overflow: visible;
+  }
+
   .mac-settings-row {
     display: flex;
     justify-content: space-between;
@@ -1243,10 +1249,20 @@ html[data-list-density="relaxed"] {
 }
 
 .settings-network-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
+}
+
+.settings-popup-group .settings-network-row:focus-within {
+  z-index: 20;
+}
+
+.settings-popup-group .settings-group-footer {
+  position: relative;
+  z-index: 0;
 }
 
 .settings-network-row > .settings-row-label {
@@ -1272,7 +1288,7 @@ html[data-list-density="relaxed"] {
 
 .settings-combobox-menu {
   position: absolute;
-  z-index: 50;
+  z-index: 100;
   top: calc(100% + 6px);
   right: 0;
   left: 0;

@@ -178,6 +178,28 @@ export default function SettingsView() {
   const settings = useSettingsStore();
   const activeTab = settings.activeSettingsTab;
   const platform = usePlatformInfo();
+  const platformName =
+    platform.os === 'macos'
+      ? 'macOS'
+      : platform.os === 'windows'
+        ? 'Windows'
+        : platform.os === 'linux'
+          ? 'Linux'
+          : 'this OS';
+  const trayIconLabel =
+    platform.os === 'macos'
+      ? 'Show menu bar icon'
+      : platform.os === 'linux'
+        ? 'Show status indicator icon'
+        : 'Show system tray icon';
+  const trayIconDescription =
+    platform.os === 'macos'
+      ? 'Provides quick access from the macOS menu bar.'
+      : platform.os === 'windows'
+        ? 'Provides quick access from the Windows notification area.'
+        : platform.os === 'linux'
+          ? 'Provides quick access from the desktop tray or status area when available.'
+          : 'Provides quick access from the OS tray area when available.';
 
   // Local state for engine status
 const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
@@ -606,13 +628,16 @@ runEngineChecks(false);
                     ))}
                   </div>
                 </div>
-                <p className="settings-group-footer">Select a color palette for the app's user interface.</p>
+                <p className="settings-group-footer">System follows the current {platformName} light or dark appearance.</p>
               </div>
 
               <h2 className="settings-section-title">Display</h2>
               <div className="mac-settings-group">
                 <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Font Size</span>
+                  <div className="settings-row-label">
+                    <span>Font size</span>
+                    <small>Scales the download list and compact controls.</small>
+                  </div>
                   <select
                     value={settings.appFontSize}
                     onChange={(e) => settings.setAppFontSize(e.target.value as AppFontSize)}
@@ -624,22 +649,23 @@ runEngineChecks(false);
                   </select>
                 </div>
                 <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">List Row Density</span>
+                  <div className="settings-row-label">
+                    <span>List density</span>
+                    <small>Changes row height, spacing, and progress bar scale.</small>
+                  </div>
                   <select
                     value={settings.listRowDensity}
                     onChange={(e) => settings.setListRowDensity(e.target.value as ListRowDensity)}
                     className="app-control w-40"
                   >
                     <option value="compact">Compact</option>
-                    <option value="standard">Standard</option>
+                    <option value="standard">Comfortable</option>
                     <option value="relaxed">Relaxed</option>
                   </select>
                 </div>
               </div>
 
-              <h2 className="settings-section-title">
-                {platform.os === 'macos' ? 'macOS Integration' : 'Desktop Integration'}
-              </h2>
+              <h2 className="settings-section-title">OS Integration</h2>
               <div className="mac-settings-group">
                 {platform.os === 'macos' && (
                   <label className="mac-settings-row cursor-default">
@@ -657,8 +683,8 @@ runEngineChecks(false);
                 )}
                 <label className="mac-settings-row cursor-default">
                   <div className="settings-row-label">
-                    <span>{platform.os === 'macos' ? 'Show menu bar icon' : 'Show system tray icon'}</span>
-                    <small>Provides quick access to downloads and queues.</small>
+                    <span>{trayIconLabel}</span>
+                    <small>{trayIconDescription}</small>
                   </div>
                   <input
                     type="checkbox"

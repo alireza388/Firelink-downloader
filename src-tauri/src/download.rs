@@ -736,8 +736,8 @@ fn build_client(payload: &DownloadPayload) -> Result<(Client, HeaderMap), String
     {
         builder = builder.user_agent(user_agent);
     }
-    if let Some(proxy) = payload.proxy.as_deref().filter(|value| !value.is_empty()) {
-        if proxy == "none" {
+    if let Some(proxy) = payload.proxy.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if proxy.eq_ignore_ascii_case("none") {
             builder = builder.no_proxy();
         } else {
             builder = builder.proxy(

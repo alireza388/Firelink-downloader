@@ -904,13 +904,14 @@ async fn fetch_metadata(
         let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
 
         if let Some(ref ua) = user_agent {
+            let ua = ua.trim();
             if !ua.is_empty() {
                 builder = builder.user_agent(ua);
             } else {
-                builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
             }
         } else {
-            builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            builder = builder.user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36");
         }
 
         let resolved_addr = validate_url_ssrf(&current_url).await?;
@@ -2544,8 +2545,8 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
-        if let Some(p) = proxy.as_ref().filter(|s| !s.is_empty()) {
-            if p == "none" {
+        if let Some(p) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if p.eq_ignore_ascii_case("none") {
                 cmd = cmd.arg("--proxy").arg("");
             } else {
                 cmd = cmd.arg("--proxy").arg(p);

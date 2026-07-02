@@ -274,7 +274,11 @@ export const useSettingsStore = create<SettingsState>()(
       setShowMenuBarIcon: (showMenuBarIcon) => set({ showMenuBarIcon }),
       setProxyMode: (proxyMode) => set({ proxyMode }),
       setProxyHost: (proxyHost) => set({ proxyHost }),
-      setProxyPort: (proxyPort) => set({ proxyPort }),
+      setProxyPort: (proxyPort) => set({
+        proxyPort: Number.isFinite(proxyPort)
+          ? Math.min(65535, Math.max(1, Math.trunc(proxyPort)))
+          : 8080
+      }),
       setCustomUserAgent: (customUserAgent) => set({ customUserAgent }),
       setAskWhereToSaveEachFile: (askWhereToSaveEachFile) => set({ askWhereToSaveEachFile }),
       setPreventsSleepWhileDownloading: (preventsSleepWhileDownloading) => {

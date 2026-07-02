@@ -245,7 +245,7 @@ export const AddDownloadsModal = () => {
             }
             const meta = await invoke('fetch_metadata', {
               url: row.sourceUrl,
-              userAgent: settingsStore.customUserAgent || null,
+              userAgent: settingsStore.customUserAgent.trim() || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
               headers: headers?.trim() || null,

@@ -957,8 +957,10 @@ async fn probe_bounded_range_support(
         .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(std::time::Duration::from_secs(10));
 
-    if let Some(proxy) = payload.proxy.as_deref().filter(|value| !value.is_empty()) {
-        if proxy != "none" {
+    if let Some(proxy) = payload.proxy.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if proxy.eq_ignore_ascii_case("none") {
+            builder = builder.no_proxy();
+        } else {
             builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|error| error.to_string())?);
         }
     }
@@ -1129,8 +1131,8 @@ impl SidecarSpawner for ProductionSpawner {
         if !header_list.is_empty() {
             options.insert("header".to_string(), serde_json::json!(header_list));
         }
-        if let Some(prox) = payload.proxy.as_deref().filter(|s| !s.is_empty()) {
-            if prox == "none" {
+        if let Some(prox) = payload.proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if prox.eq_ignore_ascii_case("none") {
                 options.insert("all-proxy".to_string(), serde_json::json!(""));
             } else {
                 options.insert("all-proxy".to_string(), serde_json::json!(prox));

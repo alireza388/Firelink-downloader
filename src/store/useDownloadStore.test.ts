@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useDownloadStore } from './useDownloadStore';
+import { getProxyArgs, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
 import { useSettingsStore } from './useSettingsStore';
 import * as ipc from '../ipc';
 
@@ -62,6 +62,32 @@ describe('useDownloadStore', () => {
       pendingAddHeaders: '',
       pendingAddCookies: '',
     });
+  });
+
+  it('normalizes proxy settings for download dispatch', async () => {
+    expect(normalizeCustomProxy('127.0.0.1', 8080)).toBe('http://127.0.0.1:8080');
+    expect(normalizeCustomProxy(' socks5://127.0.0.1 ', 1080)).toBe('socks5://127.0.0.1:1080');
+    expect(normalizeCustomProxy('http://proxy.local:9000', 8080)).toBe('http://proxy.local:9000');
+    expect(normalizeCustomProxy('127.0.0.1', NaN)).toBeNull();
+
+    expect(await getProxyArgs({
+      proxyMode: 'none',
+      proxyHost: '',
+      proxyPort: 8080
+    } as ReturnType<typeof useSettingsStore.getState>)).toBe('none');
+
+    vi.mocked(ipc.invokeCommand).mockResolvedValueOnce(null);
+    expect(await getProxyArgs({
+      proxyMode: 'system',
+      proxyHost: '',
+      proxyPort: 8080
+    } as ReturnType<typeof useSettingsStore.getState>)).toBe('none');
+
+    expect(await getProxyArgs({
+      proxyMode: 'custom',
+      proxyHost: 'socks5://127.0.0.1',
+      proxyPort: 1080
+    } as ReturnType<typeof useSettingsStore.getState>)).toBe('socks5://127.0.0.1:1080');
   });
 
   it('Start Queue dispatches exactly once for mixed dispatched/undispatched items', async () => {

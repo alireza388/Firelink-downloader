@@ -56,6 +56,39 @@ const upsertEngineStatus = (items: EngineStatusItem[], item: EngineStatusItem) =
   return next;
 };
 
+const USER_AGENT_SUGGESTIONS = [
+  {
+    label: 'Chrome (Windows)',
+    detail: 'Windows desktop',
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'
+  },
+  {
+    label: 'Chrome (macOS)',
+    detail: 'macOS desktop',
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'
+  },
+  {
+    label: 'Edge (Windows)',
+    detail: 'Windows desktop',
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0'
+  },
+  {
+    label: 'Firefox (Windows)',
+    detail: 'Windows desktop',
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0'
+  },
+  {
+    label: 'Firefox (macOS)',
+    detail: 'macOS desktop',
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0'
+  },
+  {
+    label: 'Safari (macOS)',
+    detail: 'macOS desktop',
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15'
+  }
+] as const;
+
 const buildEngineStatusError = (check: EngineCheck, error: unknown): EngineStatusItem => ({
   name: check.name,
   kind: check.kind,
@@ -200,6 +233,8 @@ export default function SettingsView() {
         : platform.os === 'linux'
           ? 'Provides quick access from the desktop tray or status area when available.'
           : 'Provides quick access from the OS tray area when available.';
+  const userAgentMenuRef = useRef<HTMLDivElement>(null);
+  const [isUserAgentMenuOpen, setIsUserAgentMenuOpen] = useState(false);
 
   // Local state for engine status
 const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null);
@@ -702,12 +737,15 @@ runEngineChecks(false);
             <div className="settings-pane max-w-[720px]">
               <h2 className="settings-section-title">Proxy</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row settings-choice-row">
-                  <span className="text-[13px] text-text-primary pt-0.5">Mode</span>
+                <div className="mac-settings-row settings-network-row settings-choice-row">
+                  <div className="settings-row-label">
+                    <span>Mode</span>
+                    <small>Controls proxy use for new download requests.</small>
+                  </div>
                   <div className="settings-radio-group">
                     {[
                       ['none', 'No Proxy'],
-                      ['system', 'Use System Proxy'],
+                      ['system', 'System Proxy'],
                       ['custom', 'Custom Proxy'],
                     ].map(([value, label]) => (
                       <label key={value}>
@@ -724,64 +762,93 @@ runEngineChecks(false);
                 </div>
                 {settings.proxyMode === 'custom' && (
                   <>
-                    <div className="mac-settings-row">
-                      <span className="text-[13px] text-text-primary pl-4">Proxy Host</span>
+                    <div className="mac-settings-row settings-network-row">
+                      <div className="settings-row-label">
+                        <span>Proxy host</span>
+                        <small>Host name, IP address, or URL with scheme.</small>
+                      </div>
                       <input
                         type="text"
                         value={settings.proxyHost}
                         onChange={(e) => settings.setProxyHost(e.target.value)}
-                        placeholder="127.0.0.1"
-                        className="app-control w-40 font-mono"
+                        placeholder="127.0.0.1 or socks5://127.0.0.1"
+                        className="app-control settings-network-input font-mono"
                       />
                     </div>
-                    <div className="mac-settings-row">
-                      <span className="text-[13px] text-text-primary pl-4">Proxy Port</span>
+                    <div className="mac-settings-row settings-network-row">
+                      <div className="settings-row-label">
+                        <span>Proxy port</span>
+                        <small>Valid range is 1 to 65535.</small>
+                      </div>
                       <input
                         type="number" min="1" max="65535"
                         value={settings.proxyPort}
                         onChange={(e) => settings.setProxyPort(Number(e.target.value))}
-                        onBlur={(e) => {
-                          const val = Number(e.target.value);
-                          if (val < 1) settings.setProxyPort(1);
-                          if (val > 65535) settings.setProxyPort(65535);
-                        }}
-                        className="app-control w-24 text-center"
+                        className="app-control settings-port-input text-center"
                       />
                     </div>
                   </>
                 )}
                 <p className="settings-group-footer">
                   {settings.proxyMode === 'none' && 'Downloads ignore configured proxies.'}
-                  {settings.proxyMode === 'system' && `Downloads use the detected ${platform.os === 'macos' ? 'macOS' : platform.os === 'windows' ? 'Windows' : 'desktop'} system proxy when available.`}
+                  {settings.proxyMode === 'system' && `Downloads use the detected ${platform.os === 'macos' ? 'macOS' : platform.os === 'windows' ? 'Windows' : 'desktop'} system proxy when available, otherwise no proxy.`}
                   {settings.proxyMode === 'custom' && (settings.proxyHost
-                    ? `Downloads use http://${settings.proxyHost}:${settings.proxyPort}.`
+                    ? 'Downloads use the configured proxy URL for HTTP, HTTPS, and media engines.'
                     : 'Enter a proxy host and port to enable the custom proxy.')}
                 </p>
               </div>
 
               <h2 className="settings-section-title">Identity</h2>
               <div className="mac-settings-group">
-                <div className="mac-settings-row">
-                  <span className="text-[13px] text-text-primary">Custom User Agent</span>
-                  <div className="flex-1 ml-4 relative">
+                <div className="mac-settings-row settings-network-row">
+                  <div className="settings-row-label">
+                    <span>Custom User-Agent</span>
+                    <small>Applied to metadata fetches and download engines.</small>
+                  </div>
+                  <div
+                    className="settings-combobox"
+                    ref={userAgentMenuRef}
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setIsUserAgentMenuOpen(false);
+                      }
+                    }}
+                  >
                     <input
                       type="text"
-                      list="user-agents"
                       value={settings.customUserAgent}
                       onChange={(e) => settings.setCustomUserAgent(e.target.value)}
-                      placeholder="e.g. Mozilla/5.0..."
-                      className="app-control w-full font-mono text-[11px]"
+                      onFocus={() => setIsUserAgentMenuOpen(true)}
+                      placeholder="Leave blank for Firelink default"
+                      className="app-control settings-network-input font-mono"
+                      role="combobox"
+                      aria-expanded={isUserAgentMenuOpen}
+                      aria-controls="user-agent-suggestions"
                     />
-                    <datalist id="user-agents">
-                      <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (Windows)</option>
-                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36">Chrome (macOS)</option>
-                      <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0">Firefox (Windows)</option>
-                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0">Firefox (macOS)</option>
-                      <option value="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15">Safari (macOS)</option>
-                    </datalist>
+                    {isUserAgentMenuOpen && (
+                      <div id="user-agent-suggestions" className="settings-combobox-menu" role="listbox">
+                        {USER_AGENT_SUGGESTIONS.map(option => (
+                          <button
+                            key={option.label}
+                            type="button"
+                            className="settings-combobox-option"
+                            role="option"
+                            aria-selected={settings.customUserAgent === option.value}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              settings.setCustomUserAgent(option.value);
+                              setIsUserAgentMenuOpen(false);
+                            }}
+                          >
+                            <span className="settings-combobox-value">{option.value}</span>
+                            <span className="settings-combobox-meta">{option.label} · {option.detail}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-                <p className="settings-group-footer">Spoofs the browser User-Agent to bypass download restrictions. Leave blank for default.</p>
+                <p className="settings-group-footer">Overrides the outbound User-Agent header. Leave blank for Firelink defaults.</p>
               </div>
             </div>
           )}

@@ -54,7 +54,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
         checksum: item.checksum || null,
         cookies: item.cookies || null,
         mirrors: item.mirrors || null,
-        user_agent: settings.customUserAgent || null,
+        user_agent: settings.customUserAgent.trim() || null,
         max_tries: settings.maxAutomaticRetries,
         proxy: await getProxyArgs(settings),
         format_selector: item.mediaFormatSelector || null,
@@ -87,7 +87,25 @@ export async function dispatchItem(id: string): Promise<boolean> {
   return promise;
 }
 
-const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.getState>) => {
+export const normalizeCustomProxy = (host: string, port: number): string | null => {
+  const trimmedHost = host.trim();
+  const normalizedPort = Number.isFinite(port) ? Math.trunc(port) : NaN;
+  if (!trimmedHost || !Number.isFinite(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) return null;
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmedHost)) {
+    try {
+      const parsed = new URL(trimmedHost);
+      if (!parsed.port) parsed.port = String(normalizedPort);
+      return parsed.toString().replace(/\/$/, '');
+    } catch {
+      return null;
+    }
+  }
+
+  return `http://${trimmedHost}:${normalizedPort}`;
+};
+
+export const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.getState>) => {
   if (settings.proxyMode === 'system') {
     try {
       const sysProxy = await invoke('get_system_proxy');
@@ -97,8 +115,8 @@ const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.getStat
       return "none";
     }
   }
-  if (settings.proxyMode === 'custom' && settings.proxyHost) {
-    return `http://${settings.proxyHost}:${settings.proxyPort}`;
+  if (settings.proxyMode === 'custom') {
+    return normalizeCustomProxy(settings.proxyHost, settings.proxyPort) ?? "none";
   }
   if (settings.proxyMode === 'none') {
     return "none";
@@ -778,7 +796,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               checksum: item.checksum || null,
               cookies: item.cookies || null,
               mirrors: item.mirrors || null,
-              user_agent: settings.customUserAgent || null,
+              user_agent: settings.customUserAgent.trim() || null,
               max_tries: settings.maxAutomaticRetries,
               proxy: await getProxyArgs(settings),
               format_selector: item.mediaFormatSelector || null,

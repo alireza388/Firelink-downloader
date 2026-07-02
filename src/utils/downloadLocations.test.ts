@@ -11,9 +11,11 @@ vi.mock('@tauri-apps/api/path', () => ({
 import {
   downloadLocationEquals,
   DEFAULT_CATEGORY_SUBFOLDERS,
+  formatDerivedCategoryPath,
   normalizeCategorySubfolder,
   normalizeDownloadLocationSettings,
-  resolveCategoryDestination
+  resolveCategoryDestination,
+  subfolderFromDerivedCategoryPath
 } from './downloadLocations';
 
 describe('download locations', () => {
@@ -67,5 +69,22 @@ describe('download locations', () => {
     expect(normalizeCategorySubfolder('../Media/./Movies', 'Movies')).toBe('Media/Movies');
     expect(normalizeCategorySubfolder('C:\\Media\\Movies', 'Movies')).toBe('Media/Movies');
     expect(normalizeCategorySubfolder('../../', 'Movies')).toBe('Movies');
+  });
+
+  it('formats and parses derived category paths with platform path separators', () => {
+    expect(formatDerivedCategoryPath('/Users/test/Downloads', 'Video Files'))
+      .toBe('/Users/test/Downloads/Video Files');
+    expect(formatDerivedCategoryPath('D:\\Downloads', 'Video Files'))
+      .toBe('D:\\Downloads\\Video Files');
+    expect(subfolderFromDerivedCategoryPath(
+      'D:\\Downloads\\Video Files',
+      'd:\\downloads'
+    )).toBe('Video Files');
+    expect(subfolderFromDerivedCategoryPath(
+      '/Users/test/Downloads/Video Files',
+      '/Users/test/Downloads'
+    )).toBe('Video Files');
+    expect(subfolderFromDerivedCategoryPath('/Volumes/Media', '/Users/test/Downloads'))
+      .toBeNull();
   });
 });

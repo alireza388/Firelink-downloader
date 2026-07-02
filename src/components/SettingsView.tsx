@@ -22,7 +22,9 @@ import appIcon from '../assets/app-icon.png';
 import {
   DEFAULT_CATEGORY_SUBFOLDERS,
   DOWNLOAD_CATEGORIES,
-  normalizeCategorySubfolder
+  formatDerivedCategoryPath,
+  normalizeCategorySubfolder,
+  subfolderFromDerivedCategoryPath
 } from '../utils/downloadLocations';
 import { usePlatformInfo } from '../utils/platform';
 
@@ -146,10 +148,10 @@ const CategoryFolderInput = ({
   settings: SettingsState;
   onBrowse: () => void;
 }) => {
-  const base = settings.baseDownloadFolder.replace(/\/+$/, '') || '~/Downloads';
+  const base = settings.baseDownloadFolder || '~/Downloads';
   const sub = settings.categorySubfolders[category] || DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS];
   const override = settings.categoryDirectoryOverrides[category];
-  const displayPath = override ?? `${base}/${sub}`;
+  const displayPath = override ?? formatDerivedCategoryPath(base, sub);
 
   const [localValue, setLocalValue] = useState<string | null>(null);
 
@@ -164,17 +166,17 @@ const CategoryFolderInput = ({
         onChange={(e) => setLocalValue(e.target.value)}
         onBlur={() => {
           const val = localValue ?? displayPath;
-          const basePrefix = base + '/';
+          const derivedSubfolder = subfolderFromDerivedCategoryPath(val, base);
 
           if (!val.trim()) {
             settings.setCategoryDirectoryOverride(category, undefined);
             settings.setCategorySubfolder(category, '');
-          } else if (val.startsWith(basePrefix)) {
+          } else if (derivedSubfolder !== null) {
             settings.setCategoryDirectoryOverride(category, undefined);
             settings.setCategorySubfolder(
               category,
               normalizeCategorySubfolder(
-                val.substring(basePrefix.length),
+                derivedSubfolder,
                 DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS]
               )
             );
@@ -867,6 +869,9 @@ runEngineChecks(false);
                       type="text"
                       value={settings.baseDownloadFolder}
                       onChange={(e) => settings.setBaseDownloadFolder(e.target.value)}
+                      onBlur={() => {
+                        settings.setBaseDownloadFolder(settings.baseDownloadFolder.trim() || '~/Downloads');
+                      }}
                       className="app-control w-64 text-[11px] px-2"
                       placeholder="~/Downloads"
                     />

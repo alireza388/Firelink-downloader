@@ -61,6 +61,31 @@ const normalizedForComparison = (value: string): string =>
 const legacyDerivedPath = (base: string, subfolder: string): string =>
   `${normalizedForComparison(base)}/${subfolder.replace(/^[\\/]+|[\\/]+$/g, '')}`;
 
+const isWindowsLikePath = (value: string): boolean =>
+  /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\') || value.includes('\\');
+
+export const formatDerivedCategoryPath = (base: string, subfolder: string): string => {
+  const trimmedBase = base.trim() || '~/Downloads';
+  const relative = subfolder.replace(/^[\\/]+|[\\/]+$/g, '');
+  const separator = isWindowsLikePath(trimmedBase) ? '\\' : '/';
+  return `${trimmedBase.replace(/[\\/]+$/, '')}${separator}${relative}`;
+};
+
+export const subfolderFromDerivedCategoryPath = (
+  value: string,
+  base: string
+): string | null => {
+  const normalizedValue = normalizedForComparison(value.trim());
+  const normalizedBase = normalizedForComparison((base.trim() || '~/Downloads'));
+  const isWindows = isWindowsLikePath(base);
+  const comparableValue = isWindows ? normalizedValue.toLocaleLowerCase() : normalizedValue;
+  const comparableBase = isWindows ? normalizedBase.toLocaleLowerCase() : normalizedBase;
+
+  if (comparableValue === comparableBase) return '';
+  if (!comparableValue.startsWith(`${comparableBase}/`)) return null;
+  return normalizedValue.slice(normalizedBase.length + 1);
+};
+
 export const normalizeCategorySubfolder = (
   value: string,
   fallback: string

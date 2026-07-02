@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getProxyArgs, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
+import { getProxyArgs, getSiteLogin, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
 import { useSettingsStore } from './useSettingsStore';
 import * as ipc from '../ipc';
 
@@ -88,6 +88,25 @@ describe('useDownloadStore', () => {
       proxyHost: 'socks5://127.0.0.1',
       proxyPort: 1080
     } as ReturnType<typeof useSettingsStore.getState>)).toBe('socks5://127.0.0.1:1080');
+  });
+
+  it('matches site logins by host, wildcard host, path, and full URL patterns', () => {
+    const settings = {
+      siteLogins: [
+        { id: 'host', urlPattern: 'example.com', username: 'host' },
+        { id: 'wildcard', urlPattern: '*.cdn.example.com', username: 'wildcard' },
+        { id: 'broad', urlPattern: '*.example.com', username: 'broad' },
+        { id: 'path', urlPattern: 'secure.example.com/private/*', username: 'path' },
+        { id: 'url', urlPattern: 'https://downloads.example.net/releases/*', username: 'url' }
+      ]
+    } as ReturnType<typeof useSettingsStore.getState>;
+
+    expect(getSiteLogin('https://example.com/file.zip', settings)?.id).toBe('host');
+    expect(getSiteLogin('https://assets.cdn.example.com/file.zip', settings)?.id).toBe('wildcard');
+    expect(getSiteLogin('https://secure.example.com/private/file.zip', settings)?.id).toBe('path');
+    expect(getSiteLogin('https://downloads.example.net/releases/app.zip', settings)?.id).toBe('url');
+    expect(getSiteLogin('https://secure.example.com/public/file.zip', settings)?.id).toBe('broad');
+    expect(getSiteLogin('https://unrelated.example.org/public/file.zip', settings)).toBeNull();
   });
 
   it('Start Queue dispatches exactly once for mixed dispatched/undispatched items', async () => {

@@ -124,24 +124,64 @@ export const getProxyArgs = async (settings: ReturnType<typeof useSettingsStore.
   return null;
 };
 
+const escapeRegex = (value: string): string =>
+  value.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+
+const wildcardToRegex = (pattern: string): RegExp =>
+  new RegExp(`^${escapeRegex(pattern).replace(/\*+/g, '.*')}$`);
+
+const patternSpecificity = (pattern: string): number =>
+  pattern.replace(/\*/g, '').length;
+
+const hostPatternScore = (pattern: string, host: string): number | null => {
+  if (pattern.startsWith('*.')) {
+    const suffix = pattern.substring(2);
+    return host === suffix || host.endsWith(`.${suffix}`)
+      ? 1000 + patternSpecificity(pattern)
+      : null;
+  }
+
+  if (pattern.includes('*')) {
+    return wildcardToRegex(pattern).test(host)
+      ? 1000 + patternSpecificity(pattern)
+      : null;
+  }
+
+  return host === pattern ? 2000 + patternSpecificity(pattern) : null;
+};
+
+const urlPatternScore = (pattern: string, url: URL): number | null => {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(pattern)) {
+    const normalizedPattern = pattern.toLowerCase().replace(/\/+$/, '');
+    const normalizedUrl = url.toString().toLowerCase().replace(/\/+$/, '');
+    return wildcardToRegex(normalizedPattern).test(normalizedUrl)
+      ? 4000 + patternSpecificity(normalizedPattern)
+      : null;
+  }
+
+  if (pattern.includes('/')) {
+    const normalizedPattern = pattern.toLowerCase().replace(/^\/+/, '');
+    const normalizedTarget = `${url.hostname}${url.pathname}`.toLowerCase().replace(/\/+$/, '');
+    return wildcardToRegex(normalizedPattern).test(normalizedTarget)
+      ? 3000 + patternSpecificity(normalizedPattern)
+      : null;
+  }
+
+  return hostPatternScore(pattern, url.hostname.toLowerCase());
+};
+
 export const getSiteLogin = (url: string, settings: ReturnType<typeof useSettingsStore.getState>) => {
   try {
     const urlObj = new URL(url);
-    const host = urlObj.hostname.toLowerCase();
+    let bestMatch: { login: typeof settings.siteLogins[number]; score: number } | null = null;
     for (const login of settings.siteLogins) {
-      let pattern = login.urlPattern.toLowerCase().trim();
-      if (pattern.startsWith('*.')) {
-        const suffix = pattern.substring(2);
-        if (host === suffix || host.endsWith('.' + suffix)) return login;
-      } else if (pattern.includes('*')) {
-        const collapsed = pattern.replace(/\*+/g, '*');
-        const escaped = collapsed.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp('^' + escaped.replace(/\*/g, '.*') + '$');
-        if (regex.test(host)) return login;
-      } else if (host === pattern) {
-        return login;
+      const pattern = login.urlPattern.toLowerCase().trim();
+      const score = pattern ? urlPatternScore(pattern, urlObj) : null;
+      if (score !== null && (!bestMatch || score > bestMatch.score)) {
+        bestMatch = { login, score };
       }
     }
+    return bestMatch?.login ?? null;
   } catch (e) {}
   return null;
 };

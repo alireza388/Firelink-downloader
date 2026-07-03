@@ -8,7 +8,8 @@ import {
 } from '../store/useSettingsStore';
 import {
   Download, Palette, Globe, Folder, Key,
-  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code, ShieldAlert, Check
+  Moon, Terminal, Puzzle, Info, Plus, Trash2, Copy, RefreshCw, Code, ShieldAlert, Check,
+  ExternalLink, BadgeCheck, AlertCircle
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getVersion } from '@tauri-apps/api/app';
@@ -61,6 +62,18 @@ const browserCookieSourceOptions = [
 ] as const;
 
 type EngineCheck = typeof engineChecks[number];
+
+const FIRELINK_SOURCE_URL = 'https://github.com/nimbold/Firelink';
+const FIRELINK_LICENSE_URL = 'https://github.com/nimbold/Firelink/blob/main/LICENSE';
+const FIRELINK_FIREFOX_ADDON_URL = 'https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/';
+const FIRELINK_EXTENSION_RELEASES_URL = 'https://github.com/nimbold/Firelink-Extension/releases';
+
+type ManualUpdateStatus =
+  | { type: 'idle' }
+  | { type: 'checking' }
+  | { type: 'up-to-date'; latestVersion: string; localVersion: string }
+  | { type: 'update-available'; version: string; releaseUrl: string }
+  | { type: 'error'; message: string };
 
 const engineStatusCache = new Map<string, EngineStatusItem>();
 const engineStatusInFlight = new Map<string, Promise<EngineStatusItem>>();
@@ -268,6 +281,7 @@ const [extensionServerPort, setExtensionServerPort] = useState<number | null>(nu
   // Toast notifications
   const { addToast } = useToast();
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+  const [manualUpdateStatus, setManualUpdateStatus] = useState<ManualUpdateStatus>({ type: 'idle' });
 
 useEffect(() => {
 getVersion().then(setAppVersion).catch(() => undefined);
@@ -341,6 +355,14 @@ runEngineChecks(false);
     addToast({ message: msg, variant });
   };
 
+  const openExternalUrl = async (url: string, label: string) => {
+    try {
+      await openUrl(url);
+    } catch (error) {
+      showToast(`Could not open ${label}: ${String(error)}`, 'error');
+    }
+  };
+
   const findEngine = (kind: string) => engineStatus?.find(e => e.kind === kind) ?? null;
 
   const renderEngineStatus = (item: EngineStatusItem | null) => {
@@ -391,37 +413,34 @@ runEngineChecks(false);
     if (isCheckingForUpdates) return;
 
     setIsCheckingForUpdates(true);
-    showToast('Checking for updates...');
+    setManualUpdateStatus({ type: 'checking' });
 
     try {
       const result = await invoke('check_for_updates');
 
       if (result.type === 'UpToDate') {
-        showToast(`Firelink ${result.latest_version} is up to date`, 'success');
+        setManualUpdateStatus({
+          type: 'up-to-date',
+          latestVersion: result.latest_version,
+          localVersion: result.local_version
+        });
       } else if (result.type === 'UpdateAvailable') {
-        addToast({
-          variant: 'info',
-          isActionable: true,
-          message: (
-            <div className="flex items-center gap-3">
-              <span>Firelink {result.update.version} is available.</span>
-              <button
-                type="button"
-                className="app-button px-2 py-1"
-                onClick={() => {
-                  void openUrl(result.update.release_url);
-                }}
-              >
-                View release
-              </button>
-            </div>
-          )
+        setManualUpdateStatus({
+          type: 'update-available',
+          version: result.update.version,
+          releaseUrl: result.update.release_url
         });
       } else {
-        showToast('The update check returned an unexpected response', 'warning');
+        setManualUpdateStatus({
+          type: 'error',
+          message: 'The update check returned an unexpected response.'
+        });
       }
     } catch (error) {
-      showToast(`Update check failed: ${String(error)}`, 'error');
+      setManualUpdateStatus({
+        type: 'error',
+        message: `Update check failed: ${String(error)}`
+      });
     } finally {
       setIsCheckingForUpdates(false);
     }
@@ -1225,20 +1244,22 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                     <p className="text-text-muted text-[11px] leading-relaxed">Install the Firelink Companion extension on your browser.</p>
                   </div>
                   <div className="space-y-2">
-                    <a
-                      href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"
-                      target="_blank" rel="noreferrer"
-                      className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] block text-center transition-colors"
+                    <button
+                      type="button"
+                      onClick={() => void openExternalUrl(FIRELINK_FIREFOX_ADDON_URL, 'Firefox Add-ons')}
+                      className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 transition-colors"
                     >
                       Firefox Add-ons
-                    </a>
-                    <a
-                      href="https://github.com/nimbold/Firelink-Extension/releases"
-                      target="_blank" rel="noreferrer"
-                      className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] block text-center transition-colors"
+                      <ExternalLink size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void openExternalUrl(FIRELINK_EXTENSION_RELEASES_URL, 'GitHub Releases')}
+                      className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 transition-colors"
                     >
                       GitHub Releases
-                    </a>
+                      <ExternalLink size={11} />
+                    </button>
                   </div>
                 </div>
 
@@ -1268,22 +1289,70 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
           {/* About Pane */}
           {activeTab === 'about' && (
             <div className="settings-pane space-y-6 max-w-[760px]">
-              {/* Header Box */}
-              <div className="bg-bg-modal border border-border-modal/40 rounded-xl p-6 flex items-center gap-4">
-                <img src={appIcon} alt="Firelink Icon" className="w-[72px] h-[72px] drop-shadow-md rounded-xl" />
-                <div className="space-y-1">
-                  <h3 className="text-[17px] font-bold text-text-primary">Firelink</h3>
-                  <p className="text-text-secondary text-[12px] font-medium">Version {appVersion}</p>
-                  <p className="text-text-muted text-[11px]">
-                    A fast desktop download manager powered by Rust and Tauri.
-                  </p>
+              <div className="bg-bg-modal border border-border-modal/40 rounded-lg p-5 flex items-center justify-between gap-5">
+                <div className="flex items-center gap-4 min-w-0">
+                  <img src={appIcon} alt="Firelink Icon" className="w-[68px] h-[68px] drop-shadow-md rounded-xl shrink-0" />
+                  <div className="space-y-1 min-w-0">
+                    <h3 className="text-[18px] font-bold text-text-primary leading-tight">Firelink</h3>
+                    <p className="text-text-secondary text-[12px] font-medium">Version {appVersion}</p>
+                    <p className="text-text-muted text-[11px]">
+                      Cross-platform download manager for macOS, Windows, and Linux.
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => void openExternalUrl(FIRELINK_SOURCE_URL, 'Source Code')}
+                  className="app-button px-3 py-1.5 text-xs shrink-0 flex items-center gap-1.5"
+                >
+                  <Code size={13} />
+                  Source
+                  <ExternalLink size={12} />
+                </button>
               </div>
 
-              {/* Updates Section */}
+              {manualUpdateStatus.type !== 'idle' && manualUpdateStatus.type !== 'checking' && (
+                <div
+                  className={`rounded-lg border px-4 py-3 flex items-center justify-between gap-3 text-[12px] ${
+                    manualUpdateStatus.type === 'up-to-date'
+                      ? 'bg-green-500/10 border-green-500/20 text-green-500'
+                      : manualUpdateStatus.type === 'update-available'
+                        ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                        : 'bg-red-500/10 border-red-500/20 text-red-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {manualUpdateStatus.type === 'up-to-date' ? (
+                      <BadgeCheck size={16} className="shrink-0" />
+                    ) : manualUpdateStatus.type === 'update-available' ? (
+                      <Info size={16} className="shrink-0" />
+                    ) : (
+                      <AlertCircle size={16} className="shrink-0" />
+                    )}
+                    <span className="font-medium">
+                      {manualUpdateStatus.type === 'up-to-date' &&
+                        `Firelink ${manualUpdateStatus.latestVersion} is up to date.`}
+                      {manualUpdateStatus.type === 'update-available' &&
+                        `Firelink ${manualUpdateStatus.version} is available.`}
+                      {manualUpdateStatus.type === 'error' && manualUpdateStatus.message}
+                    </span>
+                  </div>
+                  {manualUpdateStatus.type === 'update-available' && (
+                    <button
+                      type="button"
+                      onClick={() => void openExternalUrl(manualUpdateStatus.releaseUrl, 'latest release')}
+                      className="app-button px-3 py-1 text-xs text-text-primary shrink-0 flex items-center gap-1.5"
+                    >
+                      View release
+                      <ExternalLink size={12} />
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2">
                 <h4 className="text-[12px] font-bold text-text-primary px-1">Updates</h4>
-                <div className="bg-bg-modal border border-border-modal/40 rounded-xl overflow-hidden">
+                <div className="bg-bg-modal border border-border-modal/40 rounded-lg overflow-hidden">
                   <div className="p-4 flex items-center justify-between border-b border-border-modal/40">
                     <div>
                       <p className="text-[13px] font-bold text-text-primary">Check for Updates</p>
@@ -1317,20 +1386,20 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                 </div>
               </div>
 
-              {/* Credits Footer */}
-              <div className="bg-bg-modal border border-border-modal/40 rounded-xl p-4 text-[11px] space-y-3">
+              <div className="bg-bg-modal border border-border-modal/40 rounded-lg p-4 text-[11px] space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-text-primary font-bold">Created by NimBold</span>
-                  <a href="https://github.com/nimbold/Firelink" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-text-secondary hover:text-accent transition-colors font-medium">
-                    <Code size={14} /> Source Code
-                  </a>
-                </div>
-                <div className="flex justify-between items-center text-text-muted">
-                  <span>Built with <span className="text-accent">Rust</span> • <span className="text-accent">Tauri</span> • <span className="text-accent">React</span> • <span className="text-accent">TypeScript</span></span>
-                  <a href="https://github.com/nimbold/Firelink/blob/main/LICENSE" target="_blank" rel="noreferrer" className="text-accent hover:underline">MIT License</a>
+                  <button
+                    type="button"
+                    onClick={() => void openExternalUrl(FIRELINK_LICENSE_URL, 'MIT License')}
+                    className="flex items-center gap-1.5 text-text-secondary hover:text-accent transition-colors font-medium"
+                  >
+                    MIT License
+                    <ExternalLink size={12} />
+                  </button>
                 </div>
                 <div className="text-text-muted">
-                  Download engines: <span className="text-accent">aria2</span> • <span className="text-accent">yt-dlp</span> • <span className="text-accent">FFmpeg</span> • <span className="text-accent">Deno</span>
+                  Download engines: aria2, yt-dlp, FFmpeg, and Deno.
                 </div>
                 <div className="text-text-muted pt-1 border-t border-border-modal/40">
                   Copyright © 2026 NimBold. All rights reserved.

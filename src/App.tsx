@@ -87,6 +87,7 @@ function App() {
   const showNotifications = useSettingsStore(state => state.showNotifications);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
+  const logsEnabled = useSettingsStore(state => state.logsEnabled);
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
   const downloads = useDownloadStore(state => state.downloads);
   const activeDownloadCount = downloads.filter(download => download.status === 'downloading').length;
@@ -294,6 +295,10 @@ function App() {
   useEffect(() => {
     invoke('toggle_tray_icon', { show: showMenuBarIcon }).catch(console.error);
   }, [showMenuBarIcon]);
+
+  useEffect(() => {
+    invoke('toggle_log_pause', { pause: !logsEnabled }).catch(console.error);
+  }, [logsEnabled]);
 
   useEffect(() => {
     if (!extensionPairingToken) return;

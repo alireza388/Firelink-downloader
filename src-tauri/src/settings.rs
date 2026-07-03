@@ -267,6 +267,8 @@ fn default_settings() -> PersistedSettings {
         approved_download_roots: Vec::new(),
         max_concurrent_downloads: 3,
         global_speed_limit: String::new(),
+        speed_limit_preset_values: vec![1.0, 5.0, 10.0],
+        logs_enabled: false,
         is_sidebar_visible: true,
         active_settings_tab: SettingsTab::Downloads,
         scheduler: SchedulerSettings {
@@ -360,6 +362,8 @@ mod tests {
 
         assert_eq!(settings.max_concurrent_downloads, 7);
         assert_eq!(settings.global_speed_limit, "2M");
+        assert_eq!(settings.speed_limit_preset_values, vec![1.0, 5.0, 10.0]);
+        assert!(!settings.logs_enabled);
         assert!(settings.scheduler.enabled);
         assert_eq!(settings.scheduler.start_time, "06:30");
         assert_eq!(settings.scheduler.selected_days, vec![1, 3, 5]);
@@ -381,7 +385,27 @@ mod tests {
 
         assert_eq!(settings.max_concurrent_downloads, 5);
         assert_eq!(settings.global_speed_limit, "512K");
+        assert_eq!(settings.speed_limit_preset_values, vec![1.0, 5.0, 10.0]);
+        assert!(!settings.logs_enabled);
         assert!(!settings.scheduler.enabled);
+    }
+
+    #[test]
+    fn decodes_persisted_log_opt_in() {
+        let stored = json!({
+            "state": {
+                "speedLimitPresetValues": [1, 2.5, 8],
+                "logsEnabled": true
+            },
+            "version": 3
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert_eq!(settings.speed_limit_preset_values, vec![1.0, 2.5, 8.0]);
+        assert!(settings.logs_enabled);
+        assert!(!settings.scheduler.enabled);
+        assert!(settings.global_speed_limit.is_empty());
     }
 
     #[test]

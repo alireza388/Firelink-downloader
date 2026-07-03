@@ -4807,15 +4807,40 @@ pub fn run() {
                 *pairing_token = initial_pairing_token;
             }
             app.manage(database);
+            let persisted_settings = crate::settings::load_settings(app.handle()).ok();
+            let logs_enabled = persisted_settings
+                .as_ref()
+                .is_some_and(|settings| settings.logs_enabled);
+            LOG_PAUSED.store(!logs_enabled, std::sync::atomic::Ordering::Relaxed);
+            if logs_enabled {
+                log::info!("=== System Information ===");
+                log::info!(
+                    "OS: {} {}",
+                    sysinfo::System::name().unwrap_or_else(|| "Unknown".to_string()),
+                    sysinfo::System::os_version().unwrap_or_else(|| "Unknown".to_string())
+                );
+                let arch = sysinfo::System::cpu_arch();
+                log::info!(
+                    "Architecture: {}",
+                    if arch.is_empty() { "Unknown" } else { &arch }
+                );
+                log::info!(
+                    "CPU: {} ({} cores)",
+                    sys.cpus().first().map(|c| c.brand()).unwrap_or("Unknown"),
+                    sys.cpus().len()
+                );
+                log::info!("Memory: {} MB total", sys.total_memory() / 1024 / 1024);
+                log::info!("App Version: {}", env!("CARGO_PKG_VERSION"));
+                log::info!("==========================");
+            }
 
             let max_concurrent = {
-                crate::settings::load_settings(app.handle())
+                persisted_settings
+                    .as_ref()
                     .map(|settings| settings.max_concurrent_downloads)
                     .unwrap_or(crate::queue::DEFAULT_MAX_CONCURRENT)
             };
-            let scheduler_settings = Arc::new(RwLock::new(
-                crate::settings::load_settings(app.handle()).ok(),
-            ));
+            let scheduler_settings = Arc::new(RwLock::new(persisted_settings.clone()));
 
             let queue_manager = Arc::new(queue::QueueManager::new(app.handle().clone(), max_concurrent));
             let dispatcher_mgr = Arc::clone(&queue_manager);
@@ -4888,8 +4913,9 @@ pub fn run() {
             }
             crate::scheduler::spawn_scheduler(app.handle().clone(), scheduler_settings);
 
-            let global_speed_limit = crate::settings::load_settings(app.handle())
-                .map(|settings| settings.global_speed_limit)
+            let global_speed_limit = persisted_settings
+                .as_ref()
+                .map(|settings| settings.global_speed_limit.clone())
                 .unwrap_or_default();
 
             let aria2_secret_clone = aria2_secret.clone();

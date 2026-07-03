@@ -75,6 +75,10 @@ export default function SchedulerView() {
 
 
   const nextRun = useMemo(() => nextScheduledRun(draft), [draft]);
+  const hasUnsavedChanges = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(savedSettings),
+    [draft, savedSettings]
+  );
 
   const updateDraft = <K extends keyof SchedulerSettings>(key: K, value: SchedulerSettings[K]) => {
     setDraft(current => ({ ...current, [key]: value }));
@@ -110,15 +114,15 @@ export default function SchedulerView() {
   };
 
   const save = () => {
-    if (!draft.everyday && draft.selectedDays.length === 0) {
+    if (draft.enabled && !draft.everyday && draft.selectedDays.length === 0) {
       addToast({ message: 'Select at least one day for the scheduler', variant: 'error', isActionable: true });
       return;
     }
-    if (effectiveSelectedQueueIds.length === 0) {
+    if (draft.enabled && effectiveSelectedQueueIds.length === 0) {
       addToast({ message: 'Select at least one queue for the scheduler', variant: 'error', isActionable: true });
       return;
     }
-    if (draft.stopTimeEnabled && minuteOfDay(draft.stopTime) <= minuteOfDay(draft.startTime)) {
+    if (draft.enabled && draft.stopTimeEnabled && minuteOfDay(draft.stopTime) <= minuteOfDay(draft.startTime)) {
       addToast({ message: 'Stop time must be later than start time', variant: 'error', isActionable: true });
       return;
     }
@@ -237,11 +241,7 @@ export default function SchedulerView() {
       <div className="flex items-center gap-3 border-b border-border-color px-6 pb-4">
         <div className="flex items-center gap-3 text-[17px] font-semibold tracking-tight text-text-primary">
           <button
-            onClick={() => {
-              const newValue = !draft.enabled;
-              updateDraft('enabled', newValue);
-              setScheduler({ ...savedSettings, enabled: newValue });
-            }}
+            onClick={() => updateDraft('enabled', !draft.enabled)}
             className={`relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${draft.enabled ? 'bg-accent' : 'bg-item-hover'}`}
             aria-checked={draft.enabled}
             role="switch"
@@ -257,6 +257,11 @@ export default function SchedulerView() {
         }`}>
           {schedulerRunning ? 'Running' : nextRun}
         </span>
+        {hasUnsavedChanges && (
+          <span className="rounded-full bg-orange-500/10 px-2.5 py-1 text-[11px] font-semibold text-orange-300">
+            Unsaved changes
+          </span>
+        )}
         <div className="ml-auto flex gap-2">
           <button onClick={runNow} className="app-button px-3 text-[11px]">
             <Play size={14} /> Run Now

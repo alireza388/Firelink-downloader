@@ -20,6 +20,7 @@ import {
 
 let settingsSave = Promise.resolve();
 const DEFAULT_SCHEDULER_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
+export const DEFAULT_SPEED_LIMIT_PRESET_VALUES = [1, 5, 10];
 
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
@@ -77,6 +78,8 @@ export interface SettingsState {
   approvedDownloadRoots: string[];
   maxConcurrentDownloads: number;
   globalSpeedLimit: string;
+  speedLimitPresetValues: number[];
+  logsEnabled: boolean;
   isSidebarVisible: boolean;
   activeView: ActiveView;
   activeSettingsTab: SettingsTab;
@@ -115,6 +118,8 @@ export interface SettingsState {
   approveDownloadRoot: (path: string) => Promise<string>;
   setMaxConcurrentDownloads: (count: number) => void;
   setGlobalSpeedLimit: (limit: string) => void;
+  setSpeedLimitPresetValues: (values: number[]) => void;
+  setLogsEnabled: (enabled: boolean) => void;
   setActiveView: (view: ActiveView) => void;
   setActiveSettingsTab: (tab: SettingsTab) => void;
   setScheduler: (settings: SchedulerSettings) => void;
@@ -187,6 +192,8 @@ export const useSettingsStore = create<SettingsState>()(
       approvedDownloadRoots: [],
       maxConcurrentDownloads: 3,
       globalSpeedLimit: '',
+      speedLimitPresetValues: DEFAULT_SPEED_LIMIT_PRESET_VALUES,
+      logsEnabled: false,
       activeView: 'downloads',
       activeSettingsTab: 'downloads',
       isSidebarVisible: true,
@@ -251,6 +258,8 @@ export const useSettingsStore = create<SettingsState>()(
         info('Settings updated: globalSpeedLimit');
         set({ globalSpeedLimit: limit });
       },
+      setSpeedLimitPresetValues: (speedLimitPresetValues) => set({ speedLimitPresetValues }),
+      setLogsEnabled: (logsEnabled) => set({ logsEnabled }),
       setActiveView: (view) => set({ activeView: view }),
       setActiveSettingsTab: (activeSettingsTab) => set({ activeSettingsTab }),
       setScheduler: (scheduler) => set({ scheduler }),
@@ -366,7 +375,11 @@ export const useSettingsStore = create<SettingsState>()(
           siteLogins: Array.isArray(persisted.siteLogins) ? persisted.siteLogins : [],
           approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
             ? persisted.approvedDownloadRoots
-            : []
+            : [],
+          speedLimitPresetValues: Array.isArray(persisted.speedLimitPresetValues)
+            ? persisted.speedLimitPresetValues
+            : DEFAULT_SPEED_LIMIT_PRESET_VALUES,
+          logsEnabled: persisted.logsEnabled === true
         } as SettingsState;
       },
       partialize: (state): PersistedSettings => ({
@@ -377,6 +390,8 @@ export const useSettingsStore = create<SettingsState>()(
         approvedDownloadRoots: state.approvedDownloadRoots,
         maxConcurrentDownloads: state.maxConcurrentDownloads,
         globalSpeedLimit: state.globalSpeedLimit,
+        speedLimitPresetValues: state.speedLimitPresetValues,
+        logsEnabled: state.logsEnabled,
         isSidebarVisible: state.isSidebarVisible,
         activeSettingsTab: state.activeSettingsTab,
         scheduler: state.scheduler,
@@ -412,12 +427,16 @@ export const useSettingsStore = create<SettingsState>()(
           : {};
         const locations = normalizeDownloadLocationSettings(persisted);
         return ({
-        ...currentState,
-        ...persisted,
-        ...locations,
-        approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
-          ? persisted.approvedDownloadRoots
-          : currentState.approvedDownloadRoots,
+          ...currentState,
+          ...persisted,
+          ...locations,
+          speedLimitPresetValues: Array.isArray(persisted.speedLimitPresetValues)
+            ? persisted.speedLimitPresetValues
+            : currentState.speedLimitPresetValues,
+          logsEnabled: persisted.logsEnabled === true,
+          approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
+            ? persisted.approvedDownloadRoots
+            : currentState.approvedDownloadRoots,
         scheduler: {
           ...currentState.scheduler,
           ...persisted.scheduler,

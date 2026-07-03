@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
-import { attachLogger, setLogPaused, getLogPaused, initLogger } from '../utils/logger';
+import { attachLogger, setLogPaused, initLogger } from '../utils/logger';
 import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 interface LogEntry {
   level: 'Trace' | 'Debug' | 'Info' | 'Warn' | 'Error';
@@ -14,9 +15,10 @@ interface LogEntry {
 
 export default function LogsView() {
   const { addToast } = useToast();
+  const logsEnabled = useSettingsStore(state => state.logsEnabled);
+  const setLogsEnabled = useSettingsStore(state => state.setLogsEnabled);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
-  const [isPaused, setIsPaused] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const rawLineCountRef = useRef(0);
@@ -34,8 +36,6 @@ export default function LogsView() {
           invoke('read_logs', { limit: MAX_LOG_LINES })
         ]);
         if (!active) return;
-        setIsPaused(getLogPaused());
-        if (!active) return;
         const initialLogs = lines.map(message => {
           const level: LogEntry['level'] = message.includes('[ERROR]') ? 'Error'
             : message.includes('[WARN]') ? 'Warn'
@@ -48,28 +48,28 @@ export default function LogsView() {
         setLogs(initialLogs);
         rawLineCountRef.current = initialLogs.length;
 
-        unlisten = await attachLogger((log) => {
-          if (!active) return;
-          const levelStr: LogEntry['level'] = log.level === 5 ? 'Error'
-            : log.level === 4 ? 'Warn'
-              : log.level === 3 ? 'Info'
-                : log.level === 1 ? 'Trace'
-                  : 'Debug';
-          
-          const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-          const formattedMsg = `[${timeStr}] [${levelStr.toUpperCase()}] ${log.message}`;
+        if (logsEnabled) {
+          unlisten = await attachLogger((log) => {
+            if (!active) return;
+            const levelStr: LogEntry['level'] = log.level === 5 ? 'Error'
+              : log.level === 4 ? 'Warn'
+                : log.level === 3 ? 'Info'
+                  : log.level === 1 ? 'Trace'
+                    : 'Debug';
 
-          setLogs(prev => {
-            const newLogs = [...prev, { level: levelStr, message: formattedMsg }];
-            rawLineCountRef.current = newLogs.length;
-            if (newLogs.length > MAX_LOG_LINES + 500) {
-              const trimmed = newLogs.slice(newLogs.length - MAX_LOG_LINES);
+            const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const formattedMsg = `[${timeStr}] [${levelStr.toUpperCase()}] ${log.message}`;
 
-              return trimmed;
-            }
-            return newLogs;
+            setLogs(prev => {
+              const newLogs = [...prev, { level: levelStr, message: formattedMsg }];
+              rawLineCountRef.current = newLogs.length;
+              if (newLogs.length > MAX_LOG_LINES + 500) {
+                return newLogs.slice(newLogs.length - MAX_LOG_LINES);
+              }
+              return newLogs;
+            });
           });
-        });
+        }
       } catch (e) {
         console.error('Failed to init logs:', e);
       }
@@ -80,7 +80,7 @@ export default function LogsView() {
       active = false;
       if (unlisten) unlisten();
     };
-  }, []);
+  }, [logsEnabled]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -143,6 +143,16 @@ export default function LogsView() {
     await invoke('clear_logs').catch(console.error);
   };
 
+  const handleToggleLogging = async () => {
+    const nextEnabled = !logsEnabled;
+    setLogsEnabled(nextEnabled);
+    await setLogPaused(!nextEnabled);
+    addToast({
+      message: nextEnabled ? 'Diagnostic logging enabled' : 'Diagnostic logging disabled',
+      variant: 'success'
+    });
+  };
+
   const severityClass = (level: string) => {
     switch (level) {
       case 'Error': return 'log-error';
@@ -162,6 +172,11 @@ export default function LogsView() {
           <Terminal size={16} strokeWidth={1.8} />
           <span className="text-[13px] font-semibold text-text-primary">Logs</span>
           <span className="text-[11px] text-text-muted">({logs.length} entries)</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+            logsEnabled ? 'bg-accent/15 text-accent' : 'bg-item-hover text-text-muted'
+          }`}>
+            {logsEnabled ? 'Collecting' : 'Off'}
+          </span>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
@@ -181,15 +196,11 @@ export default function LogsView() {
           </div>
           <div className="w-[1px] h-4 bg-border-modal mx-0.5" />
           <button
-            onClick={async () => {
-              const newState = !isPaused;
-              setIsPaused(newState);
-              await setLogPaused(newState);
-            }}
-            className={`app-icon-button ${isPaused ? 'text-accent' : ''}`}
-            title={isPaused ? "Resume logs" : "Pause logs system"}
+            onClick={handleToggleLogging}
+            className={`app-icon-button ${logsEnabled ? 'text-accent' : ''}`}
+            title={logsEnabled ? "Pause diagnostic logging" : "Enable diagnostic logging"}
           >
-            {isPaused ? <Play size={14} /> : <Pause size={14} />}
+            {logsEnabled ? <Pause size={14} /> : <Play size={14} />}
           </button>
           <button
             onClick={handleClear}
@@ -214,7 +225,7 @@ export default function LogsView() {
         <Info size={12} className="text-text-muted opacity-80 shrink-0" />
         <span className="opacity-90 leading-tight">
           <strong className="font-medium text-text-primary mr-1">Local diagnostics:</strong>
-          Firelink keeps bounded rotating logs on this device for troubleshooting. Common secrets, URL queries, and home-directory paths are redacted during display and export. Nothing is uploaded automatically.
+          Diagnostic collection is opt-in, bounded, and local. Common secrets, URL queries, and home-directory paths are redacted during display and export. Nothing is uploaded automatically.
         </span>
       </div>
 
@@ -226,7 +237,9 @@ export default function LogsView() {
         style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
       >
         {logs.length === 0 && (
-          <div className="text-text-muted italic select-none">No persisted log entries are available yet.</div>
+          <div className="text-text-muted italic select-none">
+            {logsEnabled ? 'No persisted log entries are available yet.' : 'Diagnostic logging is off. Existing support logs will appear here when available.'}
+          </div>
         )}
         {logs.filter(entry => levelFilter === 'All' || entry.level === levelFilter).map((entry, i) => (
           <div key={i} className={`log-line ${severityClass(entry.level)}`}>

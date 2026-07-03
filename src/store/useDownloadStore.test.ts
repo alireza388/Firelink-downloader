@@ -29,6 +29,8 @@ vi.mock('./useSettingsStore', () => ({
       proxyMode: 'none',
       siteLogins: [],
       globalSpeedLimit: '',
+      speedLimitPresetValues: [1, 5, 10],
+      logsEnabled: false,
       perServerConnections: 16,
       customUserAgent: '',
       maxAutomaticRetries: 3,

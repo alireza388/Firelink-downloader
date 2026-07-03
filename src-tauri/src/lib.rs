@@ -1435,27 +1435,10 @@ async fn test_ytdlp(app_handle: tauri::AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn test_ffmpeg(app_handle: tauri::AppHandle) -> Result<String, String> {
     let (version, error, _) = run_sidecar_version(&app_handle, "ffmpeg", &["-version"]).await;
-    if let Some(text) = version {
-        let first_line = text.lines().next().unwrap_or("");
-        let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
-        let clean = re
-            .captures(first_line)
-            .and_then(|c| c.get(1))
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| {
-                let parts: Vec<&str> = first_line.split_whitespace().collect();
-                parts
-                    .get(2)
-                    .unwrap_or(&first_line)
-                    .split('-')
-                    .next()
-                    .unwrap_or("")
-                .to_string()
-            });
-        Ok(clean)
-    } else {
-        Err(error.unwrap_or_else(|| "ffmpeg returned no version output".to_string()))
-    }
+    version
+        .as_deref()
+        .and_then(parse_ffmpeg_version)
+        .ok_or_else(|| error.unwrap_or_else(|| "ffmpeg returned no version output".to_string()))
 }
 
 #[tauri::command]
@@ -2327,19 +2310,9 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
 
     let (version_raw, run_error, stderr_tail) =
         run_sidecar_version(app_handle, sidecar_name, &["-version"]).await;
-    let version = version_raw.as_ref().and_then(|text| {
-        text.lines().next().and_then(|first| {
-            let re = regex::Regex::new(r"(?i)version\s+([\d\.]+)").unwrap();
-            if let Some(caps) = re.captures(first) {
-                caps.get(1).map(|m| m.as_str().to_string())
-            } else {
-                let parts: Vec<&str> = first.split_whitespace().collect();
-                parts
-                    .get(2)
-                    .map(|v| v.split('-').next().unwrap_or(v).to_string())
-            }
-        })
-    });
+    let version = version_raw
+        .as_ref()
+        .and_then(|text| parse_ffmpeg_version(text));
 
     let error = run_error;
     let remediation_hint = error
@@ -2364,6 +2337,35 @@ async fn check_ffmpeg(app_handle: &tauri::AppHandle) -> EngineStatusItem {
         has_internal_dir: None,
         has_python_framework: None,
     }
+}
+
+fn parse_ffmpeg_version(output: &str) -> Option<String> {
+    let first = output.lines().next()?.trim();
+    let token = first
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|window| {
+            window[0]
+                .eq_ignore_ascii_case("version")
+                .then_some(window[1])
+        })?;
+
+    let without_url = token
+        .split_once("-https://")
+        .or_else(|| token.split_once("-http://"))
+        .map(|(prefix, _)| prefix)
+        .unwrap_or(token);
+
+    if without_url.starts_with("N-") {
+        return Some(without_url.to_string());
+    }
+
+    without_url
+        .split('-')
+        .next()
+        .filter(|version| !version.trim().is_empty())
+        .map(str::to_string)
 }
 
 async fn check_deno(app_handle: &tauri::AppHandle) -> EngineStatusItem {
@@ -4303,7 +4305,7 @@ mod tests {
         filename_from_content_disposition, filename_from_url_disposition_query,
         filename_from_url_path, is_excluded_yt_dlp_format, json_lower, media_output_template,
         media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_deep_link,
-        parse_media_progress_line, redact_log_line, FirelinkDeepLink, MediaProgress,
+        parse_ffmpeg_version, parse_media_progress_line, redact_log_line, FirelinkDeepLink, MediaProgress,
         MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
@@ -4614,6 +4616,23 @@ mod tests {
                 downloaded_bytes: Some(5242880.0),
             })
         );
+    }
+
+    #[test]
+    fn parses_ffmpeg_snapshot_version_without_collapsing_to_n() {
+        let output = "ffmpeg version N-125385-ge2e889d9da-https://www.martin-riedl.de Copyright (c) 2000-2026 the FFmpeg developers";
+
+        assert_eq!(
+            parse_ffmpeg_version(output),
+            Some("N-125385-ge2e889d9da".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_ffmpeg_release_version_without_build_suffix() {
+        let output = "ffmpeg version 8.1.2-static https://example.invalid Copyright (c) 2000-2026 the FFmpeg developers";
+
+        assert_eq!(parse_ffmpeg_version(output), Some("8.1.2".to_string()));
     }
 
     #[test]

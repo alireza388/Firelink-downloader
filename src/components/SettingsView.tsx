@@ -1399,7 +1399,7 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                   </button>
                 </div>
                 <div className="text-text-muted">
-                  Download engines: aria2, yt-dlp, FFmpeg, and Deno.
+                  Credits: aria2, yt-dlp, FFmpeg, and Deno.
                 </div>
                 <div className="text-text-muted pt-1 border-t border-border-modal/40">
                   Copyright © 2026 NimBold. All rights reserved.

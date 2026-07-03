@@ -1667,6 +1667,7 @@ html[data-list-density="relaxed"] {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
+  --download-column-padding-x: 14px;
 }
 
 .download-table-header > div {
@@ -1676,6 +1677,15 @@ html[data-list-density="relaxed"] {
   align-items: center;
   min-width: 0;
   overflow: hidden;
+  padding-inline: var(--download-column-padding-x);
+}
+
+.download-table-header > div:first-child {
+  padding-left: 0;
+}
+
+.download-table-header > div:last-child {
+  padding-right: 0;
 }
 
 .download-table-header > div > span {
@@ -1686,7 +1696,7 @@ html[data-list-density="relaxed"] {
 }
 
 .download-table-header > div:not(:first-child) {
-  padding-left: 0;
+  padding-left: var(--download-column-padding-x);
 }
 
 .column-resize-handle {
@@ -1766,6 +1776,15 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-row > div {
   min-width: 0;
   overflow: hidden;
+  padding-inline: var(--download-column-padding-x);
+}
+
+.download-row > div:first-child {
+  padding-left: 0;
+}
+
+.download-row > div:last-child {
+  padding-right: 0;
 }
 
 
@@ -1805,7 +1824,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-cell-truncate {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 0;
   overflow: hidden;
 }
@@ -1813,7 +1832,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-cell-truncate > span,
 .download-cell-right > span {
   display: block;
-  text-align: center;
+  text-align: left;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -1826,9 +1845,9 @@ html[data-list-density="relaxed"] .download-ghost-row {
   }
 
 .download-cell-right {
-  text-align: center;
+  text-align: left;
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   min-width: 0;
   overflow: hidden;
@@ -1858,7 +1877,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
 .download-status-cell {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: var(--download-status-gap);
   min-width: 0;
   overflow: hidden;
@@ -1868,7 +1887,7 @@ html[data-list-density="relaxed"] .download-ghost-row {
   min-width: 0;
   max-width: 100%;
   flex: 0 0 auto;
-  text-align: center;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

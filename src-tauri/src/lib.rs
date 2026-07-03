@@ -18,6 +18,113 @@ fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
+fn sanitize_metadata_filename(filename: &str) -> Option<String> {
+    let normalized = filename.trim().replace('\\', "/");
+    let basename = std::path::Path::new(&normalized)
+        .file_name()?
+        .to_str()?
+        .trim()
+        .trim_end_matches(|c| c == '.' || c == ' ');
+
+    if basename.is_empty() || basename == "." || basename == ".." || basename.len() > 255 {
+        return None;
+    }
+
+    Some(basename.to_string())
+}
+
+fn percent_decode_metadata_value(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
+            if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                decoded.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(decoded).ok()
+}
+
+fn filename_from_content_disposition(disposition: &str) -> Option<String> {
+    let mut fallback = None;
+
+    for part in disposition.split(';').map(str::trim) {
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        let normalized_name = name.trim().to_ascii_lowercase();
+        let raw_value = value.trim().trim_matches('"').trim_matches('\'');
+
+        if normalized_name == "filename*" {
+            let encoded = raw_value
+                .split_once("''")
+                .map(|(_, value)| value)
+                .unwrap_or(raw_value);
+            if let Some(filename) = percent_decode_metadata_value(encoded)
+                .and_then(|value| sanitize_metadata_filename(&value))
+            {
+                return Some(filename);
+            }
+        } else if normalized_name == "filename" {
+            fallback = sanitize_metadata_filename(raw_value);
+        }
+    }
+
+    fallback
+}
+
+fn filename_from_url_disposition_query(raw_url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw_url).ok()?;
+
+    for (name, value) in parsed.query_pairs() {
+        if name.eq_ignore_ascii_case("response-content-disposition")
+            || name.eq_ignore_ascii_case("rscd")
+        {
+            if let Some(filename) = filename_from_content_disposition(&value) {
+                return Some(filename);
+            }
+        }
+    }
+
+    None
+}
+
+fn filename_from_url_path(raw_url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(raw_url).ok()?;
+    let last = parsed.path_segments()?.next_back()?;
+    sanitize_metadata_filename(last)
+}
+
+fn metadata_filename_from_response(
+    response: &reqwest::Response,
+    current_url: &str,
+    original_url: &str,
+) -> String {
+    if let Some(filename) = response
+        .headers()
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(filename_from_content_disposition)
+    {
+        return filename;
+    }
+
+    filename_from_url_disposition_query(current_url)
+        .or_else(|| filename_from_url_path(original_url))
+        .or_else(|| filename_from_url_path(current_url))
+        .unwrap_or_else(|| "download".to_string())
+}
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct MetadataResponse {
@@ -1002,39 +1109,7 @@ async fn fetch_metadata(
         break;
     }
 
-    let mut filename = String::new();
-    if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION) {
-        if let Ok(cd_str) = cd.to_str() {
-            if let Some(idx) = cd_str.find("filename=") {
-                let rest = &cd_str[idx + 9..];
-                let raw_filename = rest.trim_matches(|c| c == '"' || c == '\'');
-                let normalized = raw_filename.replace('\\', "/");
-                filename = std::path::Path::new(&normalized)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("download")
-                    .to_string();
-            }
-        }
-    }
-
-    if filename.is_empty() {
-        if let Ok(parsed) = reqwest::Url::parse(&current_url) {
-            if let Some(mut segments) = parsed.path_segments() {
-                if let Some(last) = segments.next_back() {
-                    let normalized = last.replace('\\', "/");
-                    filename = std::path::Path::new(&normalized)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("download")
-                        .to_string();
-                }
-            }
-        }
-    }
-    if filename.is_empty() {
-        filename = "download".to_string();
-    }
+    let filename = metadata_filename_from_response(&res, &current_url, &url);
     
     let mut size_str = "Unknown".to_string();
     let mut size_bytes = 0;
@@ -4225,9 +4300,11 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 mod tests {
     use super::{
         aggregate_media_fraction, build_media_format_options, collect_download_uris,
-        is_excluded_yt_dlp_format, json_lower, media_output_template, media_progress_speed,
-        normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_media_progress_line,
-        redact_log_line, FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        filename_from_content_disposition, filename_from_url_disposition_query,
+        filename_from_url_path, is_excluded_yt_dlp_format, json_lower, media_output_template,
+        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_deep_link,
+        parse_media_progress_line, redact_log_line, FirelinkDeepLink, MediaProgress,
+        MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -4247,6 +4324,34 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn metadata_filename_prefers_content_disposition_filename() {
+        assert_eq!(
+            filename_from_content_disposition(
+                "attachment; filename*=UTF-8''OnionHop-3.5-macOS-arm64.dmg; filename=ignored.bin"
+            ),
+            Some("OnionHop-3.5-macOS-arm64.dmg".to_string())
+        );
+        assert_eq!(
+            filename_from_content_disposition("attachment; filename=OnionHop-3.5-macOS-arm64.dmg"),
+            Some("OnionHop-3.5-macOS-arm64.dmg".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_filename_reads_redirect_disposition_query_before_opaque_path() {
+        let redirected = "https://release-assets.githubusercontent.com/github-production-release-asset/1117828249/7aae36e6-00ec-4e7d-8dec-f14ace170bdb?rscd=attachment%3B+filename%3DOnionHop-3.5-macOS-arm64.dmg";
+
+        assert_eq!(
+            filename_from_url_disposition_query(redirected),
+            Some("OnionHop-3.5-macOS-arm64.dmg".to_string())
+        );
+        assert_eq!(
+            filename_from_url_path(redirected),
+            Some("7aae36e6-00ec-4e7d-8dec-f14ace170bdb".to_string())
+        );
     }
 
     #[test]

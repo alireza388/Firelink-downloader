@@ -2887,7 +2887,7 @@ async fn pause_download(
     log::info!("pause_download called for id: {}", id);
 
     let active_kind = state.queue_manager.active_kind(&id).await;
-    state.queue_manager.remove_from_pending(&id).await;
+    let removed_pending = state.queue_manager.remove_from_pending(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
@@ -2933,6 +2933,10 @@ async fn pause_download(
         return Ok(());
     }
 
+    if matches!(active_kind, Some(crate::queue::TaskKind::Aria2)) {
+        state.queue_manager.cancel_aria2_retries(&id).await;
+    }
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
         state
@@ -2952,6 +2956,9 @@ async fn pause_download(
 
     if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
         state.queue_manager.release_permit(&id).await;
+    }
+    if removed_pending || matches!(active_kind, Some(crate::queue::TaskKind::Aria2)) {
+        state.queue_manager.release_registered_id(&id).await;
     }
     use tauri::Emitter;
     let _ = app_handle.emit(

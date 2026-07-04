@@ -625,12 +625,22 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     const acceptedIds: string[] = [];
     for (const item of runnable) {
+      const backendRegistered = get().backendRegisteredIds.has(item.id);
+      const backendPending = get().pendingOrder.includes(item.id);
+
+      if (item.status === 'queued' && backendRegistered && !backendPending) {
+        if (await get().resumeDownload(item.id)) {
+          acceptedIds.push(item.id);
+        }
+        continue;
+      }
+
       if (
         item.status === 'ready' ||
         item.status === 'staged' ||
         item.status === 'failed' ||
         !item.hasBeenDispatched ||
-        !get().backendRegisteredIds.has(item.id)
+        !backendRegistered
       ) {
         if (await dispatchItem(item.id)) {
           const current = get().downloads.find(download => download.id === item.id);

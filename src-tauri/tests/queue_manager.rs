@@ -15,6 +15,44 @@ struct CountingSpawner {
     native_calls: AtomicUsize,
 }
 
+struct DelayedAria2Spawner {
+    gid_tx: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    remove_uri_calls: AtomicUsize,
+}
+
+impl DelayedAria2Spawner {
+    fn new(gid_tx: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            gid_tx: tokio::sync::Mutex::new(Some(gid_tx)),
+            remove_uri_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl SidecarSpawner for DelayedAria2Spawner {
+    async fn add_uri(&self, _id: &str, _payload: &SpawnPayload) -> Result<String, String> {
+        let tx = self.gid_tx.lock().await.take().expect("gid release sender");
+        let _ = tx.send(());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Ok("late-gid".to_string())
+    }
+
+    async fn remove_uri(&self, gid: &str) -> Result<(), String> {
+        assert_eq!(gid, "late-gid");
+        self.remove_uri_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+        unreachable!("media is not used by delayed aria2 tests")
+    }
+
+    async fn run_native(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+        unreachable!("native is not used by delayed aria2 tests")
+    }
+}
+
 impl CountingSpawner {
     fn new() -> Self {
         Self {
@@ -474,6 +512,39 @@ async fn aria2_completion_forgets_gid_and_releases_permit() {
 
     assert!(mgr.aria2_gid_for_download("a").is_none());
     assert_eq!(mgr.available_permits(), 1);
+}
+
+#[tokio::test]
+async fn late_aria2_gid_after_cancellation_is_removed_without_leaking_permit() {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let (gid_started_tx, gid_started_rx) = tokio::sync::oneshot::channel();
+    let spawner = Arc::new(DelayedAria2Spawner::new(gid_started_tx));
+    let manager = Arc::new(QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        spawner.clone(),
+    ));
+    manager.push(aria2_task("late")).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+
+    gid_started_rx.await.expect("add_uri should start");
+    manager.cancel_aria2_retries("late").await;
+    manager.release_registered_id("late").await;
+    manager.release_permit("late").await;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert!(manager.aria2_gid_for_download("late").is_none());
+    assert_eq!(manager.available_permits(), 1);
+    assert_eq!(spawner.remove_uri_calls.load(Ordering::SeqCst), 1);
+
+    dispatcher.abort();
 }
 
 #[tokio::test]

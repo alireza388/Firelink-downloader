@@ -168,6 +168,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.registered_ids.lock().await.remove(id);
     }
 
+    async fn is_registered(&self, id: &str) -> bool {
+        self.registered_ids.lock().await.contains(id)
+    }
+
     /// Enqueue a task. Checks the centralized `registered_ids` for deduplication.
     pub async fn push(&self, task: QueuedTask) -> Result<(), String> {
         let id = task.id.clone();
@@ -390,7 +394,30 @@ impl<R: tauri::Runtime> QueueManager<R> {
                     .insert(id.clone(), task.payload.clone());
                 self.aria2_retry_strikes.lock().await.remove(&id);
                 match self.spawner.add_uri(&id, &task.payload).await {
-                    Ok(gid) => self.remember_gid(id.clone(), gid).await,
+                    Ok(gid) => {
+                        let cancelled = self.aria2_retry_cancelled.lock().await.contains(&id);
+                        if cancelled || !self.is_registered(&id).await {
+                            log::info!(
+                                "aria2 dispatch cancellation [{}]: removing late gid {}",
+                                id,
+                                gid
+                            );
+                            if !gid.starts_with("native:") {
+                                if let Err(error) = self.spawner.remove_uri(&gid).await {
+                                    log::warn!(
+                                        "aria2 dispatch cancellation [{}]: failed to remove late gid {}: {}",
+                                        id,
+                                        gid,
+                                        error
+                                    );
+                                }
+                            }
+                            self.clear_aria2_retry_state(&id).await;
+                            self.release_permit(&id).await;
+                            return;
+                        }
+                        self.remember_gid(id.clone(), gid).await;
+                    }
                     Err(error) => {
                         self.clear_aria2_retry_state(&id).await;
                         self.emit_failed(&id, error);
@@ -488,7 +515,9 @@ impl<R: tauri::Runtime> QueueManager<R> {
             PendingOutcome::Error(error) => {
                 if error.to_ascii_lowercase().contains("checksum") {
                     log::warn!("Checksum error detected for {}, cleaning up assets", id);
-                    if let Ok(primary_path) = crate::download_ownership::primary_path_for_id(&self.app_handle, id) {
+                    if let Ok(primary_path) =
+                        crate::download_ownership::primary_path_for_id(&self.app_handle, id)
+                    {
                         if let Some(path) = primary_path.as_deref() {
                             let _ = crate::remove_download_assets(path, &self.app_handle).await;
                         }
@@ -957,7 +986,12 @@ async fn probe_bounded_range_support(
         .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(std::time::Duration::from_secs(10));
 
-    if let Some(proxy) = payload.proxy.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(proxy) = payload
+        .proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if proxy.eq_ignore_ascii_case("none") {
             builder = builder.no_proxy();
         } else {
@@ -1131,7 +1165,12 @@ impl SidecarSpawner for ProductionSpawner {
         if !header_list.is_empty() {
             options.insert("header".to_string(), serde_json::json!(header_list));
         }
-        if let Some(prox) = payload.proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(prox) = payload
+            .proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             if prox.eq_ignore_ascii_case("none") {
                 options.insert("all-proxy".to_string(), serde_json::json!(""));
             } else {

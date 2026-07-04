@@ -118,6 +118,7 @@ describe('useDownloadStore', () => {
         { id: '2', url: 'http://test2', fileName: 'f2', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
       ] as any[],
       backendRegisteredIds: new Set(['1']), // 1 is already registered, so it skips dispatch
+      pendingOrder: ['1'],
     });
 
     vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
@@ -132,6 +133,28 @@ describe('useDownloadStore', () => {
     const enqueues = calls.filter(c => c[0] === 'enqueue_download');
     expect(enqueues.length).toBe(1);
     expect((enqueues[0] as any)[1].item.id).toBe('2');
+  });
+
+  it('repairs stale queued backend registrations before accepting a queue start', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'stale', url: 'http://test', fileName: 'f', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
+      ] as any[],
+      backendRegisteredIds: new Set(['stale']),
+      pendingOrder: [],
+    });
+
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'resume_download') return false;
+      if (cmd === 'get_pending_order') return ['stale'];
+      return undefined;
+    });
+
+    expect(await useDownloadStore.getState().startQueue('MAIN')).toEqual(['stale']);
+
+    const calls = vi.mocked(ipc.invokeCommand).mock.calls;
+    expect(calls.some(call => call[0] === 'resume_download')).toBe(true);
+    expect(calls.some(call => call[0] === 'enqueue_download')).toBe(true);
   });
 
   it('does not overwrite a downloading event received while starting a queue', async () => {

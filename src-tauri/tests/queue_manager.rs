@@ -140,6 +140,18 @@ async fn ensure_aria2_permit_does_not_double_acquire() {
 }
 
 #[tokio::test]
+async fn aria2_control_epoch_invalidates_stale_resume_workers() {
+    let (mgr, _spawner) = make_manager(1);
+    let first_resume = mgr.next_aria2_control_epoch("a").await;
+    assert!(mgr.is_aria2_control_epoch_current("a", first_resume).await);
+
+    let pause = mgr.next_aria2_control_epoch("a").await;
+    assert_ne!(pause, first_resume);
+    assert!(!mgr.is_aria2_control_epoch_current("a", first_resume).await);
+    assert!(mgr.is_aria2_control_epoch_current("a", pause).await);
+}
+
+#[tokio::test]
 async fn forgetting_aria2_gid_clears_mapping_without_releasing_twice() {
     let (mgr, _spawner) = make_manager(1);
     let permit = mgr.acquire_permit().await;

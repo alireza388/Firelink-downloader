@@ -113,6 +113,10 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     /// Download ids whose aria2 retry loop must not create another job.
     aria2_retry_cancelled: Mutex<HashSet<String>>,
 
+    /// Monotonic per-download aria2 control generation. Long-running queued
+    /// resume tasks capture this and abort when a later pause/remove wins.
+    aria2_control_epochs: Mutex<HashMap<String, u64>>,
+
     spawner: Arc<dyn SidecarSpawner>,
     app_handle: AppHandle<R>,
 }
@@ -147,6 +151,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             aria2_payloads: Mutex::new(HashMap::new()),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
             aria2_retry_cancelled: Mutex::new(HashSet::new()),
+            aria2_control_epochs: Mutex::new(HashMap::new()),
             spawner,
             app_handle,
         }
@@ -168,8 +173,33 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.registered_ids.lock().await.remove(id);
     }
 
-    async fn is_registered(&self, id: &str) -> bool {
+    pub async fn is_registered(&self, id: &str) -> bool {
         self.registered_ids.lock().await.contains(id)
+    }
+
+    pub async fn next_aria2_control_epoch(&self, id: &str) -> u64 {
+        let mut epochs = self.aria2_control_epochs.lock().await;
+        let epoch = epochs.get(id).copied().unwrap_or_default().wrapping_add(1);
+        epochs.insert(id.to_string(), epoch);
+        epoch
+    }
+
+    pub async fn is_aria2_control_epoch_current(&self, id: &str, epoch: u64) -> bool {
+        self.aria2_control_epochs
+            .lock()
+            .await
+            .get(id)
+            .copied()
+            .unwrap_or_default()
+            == epoch
+    }
+
+    pub async fn is_aria2_retry_cancelled(&self, id: &str) -> bool {
+        self.aria2_retry_cancelled.lock().await.contains(id)
+    }
+
+    pub async fn has_aria2_retry_state(&self, id: &str) -> bool {
+        self.aria2_retry_strikes.lock().await.contains_key(id)
     }
 
     /// Enqueue a task. Checks the centralized `registered_ids` for deduplication.
@@ -1267,6 +1297,7 @@ impl SidecarSpawner for ProductionSpawner {
             payload.username.clone(),
             payload.password.clone(),
             payload.headers.clone(),
+            payload.cookies.clone(),
             payload.proxy.clone(),
             payload.user_agent.clone(),
             payload.max_tries,

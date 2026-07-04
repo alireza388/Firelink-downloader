@@ -951,6 +951,67 @@ async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: boo
     }
 }
 
+fn sanitize_ytdlp_config_value(value: &str) -> String {
+    value.replace(['\n', '\r'], "")
+}
+
+fn append_ytdlp_config_option(config: &mut String, option: &str, value: &str) {
+    let safe_value = sanitize_ytdlp_config_value(value);
+    if !safe_value.is_empty() {
+        config.push_str(option);
+        config.push('\n');
+        config.push_str(&safe_value);
+        config.push('\n');
+    }
+}
+
+fn append_ytdlp_add_header(config: &mut String, header: &str) -> Result<bool, String> {
+    let safe_header = sanitize_ytdlp_config_value(header).trim().to_string();
+    if safe_header.is_empty() {
+        return Ok(false);
+    }
+    let Some((name, _)) = safe_header.split_once(':') else {
+        return Err(format!("invalid HTTP header: {safe_header}"));
+    };
+    if name.trim().is_empty() {
+        return Err(format!("invalid HTTP header: {safe_header}"));
+    }
+    append_ytdlp_config_option(config, "--add-header", &safe_header);
+    Ok(name.trim().eq_ignore_ascii_case("cookie"))
+}
+
+fn append_ytdlp_http_headers(
+    config: &mut String,
+    headers: Option<&str>,
+    cookies: Option<&str>,
+) -> Result<(), String> {
+    let mut has_cookie_header = false;
+    if let Some(headers) = headers {
+        for header in headers.lines() {
+            has_cookie_header |= append_ytdlp_add_header(config, header)?;
+        }
+    }
+
+    if !has_cookie_header {
+        if let Some(cookies) = cookies {
+            let safe_cookies = sanitize_ytdlp_config_value(cookies).trim().to_string();
+            if !safe_cookies.is_empty() {
+                append_ytdlp_add_header(config, &format!("Cookie: {safe_cookies}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn should_cleanup_media_artifacts_after_failure(
+    failure_reason: &str,
+    strike: usize,
+    max_retries: usize,
+) -> bool {
+    !(crate::retry::is_transient_network_error(failure_reason) && strike < max_retries)
+}
+
 async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::SocketAddr)>, String> {
     let parsed = reqwest::Url::parse(url).map_err(|_| "SSRF blocked: Invalid URL")?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
@@ -1343,14 +1404,12 @@ async fn fetch_media_metadata_uncached(
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
-            let safe_user = user.replace(['\n', '\r'], "");
-            config_content.push_str(&format!("--username\n{}\n", safe_user));
+            append_ytdlp_config_option(&mut config_content, "--username", &user);
         }
     }
     if let Some(pass) = password {
         if !pass.is_empty() {
-            let safe_pass = pass.replace(['\n', '\r'], "");
-            config_content.push_str(&format!("--password\n{}\n", safe_pass));
+            append_ytdlp_config_option(&mut config_content, "--password", &pass);
         }
     }
     use std::io::Write;
@@ -2485,6 +2544,7 @@ pub(crate) async fn start_media_download_internal(
     username: Option<String>,
     password: Option<String>,
     headers: Option<String>,
+    cookies: Option<String>,
     proxy: Option<String>,
     user_agent: Option<String>,
     max_tries: Option<i32>,
@@ -2526,23 +2586,15 @@ pub(crate) async fn start_media_download_internal(
     let mut config_content = String::new();
     if let Some(user) = username {
         if !user.is_empty() {
-            config_content.push_str(&format!("--username\n{}\n", user));
+            append_ytdlp_config_option(&mut config_content, "--username", &user);
         }
     }
     if let Some(pass) = password {
         if !pass.is_empty() {
-            config_content.push_str(&format!("--password\n{}\n", pass));
+            append_ytdlp_config_option(&mut config_content, "--password", &pass);
         }
     }
-    if let Some(headers) = headers {
-        for header in headers
-            .lines()
-            .map(str::trim)
-            .filter(|header| !header.is_empty())
-        {
-            config_content.push_str(&format!("--add-header\n{}\n", header));
-        }
-    }
+    append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
     use std::io::Write;
     config_file
         .write_all(config_content.as_bytes())
@@ -2806,7 +2858,6 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
                             log::error!("yt-dlp shell error [{}]: {}", id, err);
-                            cleanup_media_artifacts(&out_path, false).await;
                             break err;
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
@@ -2832,7 +2883,6 @@ pub(crate) async fn start_media_download_internal(
                                 return Ok(completed_path);
                             }
                             log::error!("yt-dlp exited with non-zero code {:?} for id: {}", payload.code, id);
-                            cleanup_media_artifacts(&out_path, false).await;
                             break if stderr_tail.is_empty() {
                                 format!("yt-dlp exited with code {:?}", payload.code)
                             } else {
@@ -2841,7 +2891,6 @@ pub(crate) async fn start_media_download_internal(
                         }
                         Some(_) => {}
                         None => {
-                            cleanup_media_artifacts(&out_path, false).await;
                             break if stderr_tail.is_empty() {
                                 "yt-dlp process ended unexpectedly".to_string()
                             } else {
@@ -2855,6 +2904,9 @@ pub(crate) async fn start_media_download_internal(
 
         let transient = is_transient_network_error(&failure_reason);
         let strikes_left = strike < max_retries;
+        if should_cleanup_media_artifacts_after_failure(&failure_reason, strike, max_retries) {
+            cleanup_media_artifacts(&out_path, false).await;
+        }
         if !(transient && strikes_left) {
             return Err(failure_reason);
         }
@@ -2899,9 +2951,13 @@ async fn pause_download(
         .await?;
         match status.as_str() {
             "paused" => {
+                state.queue_manager.next_aria2_control_epoch(&id).await;
+                state.queue_manager.cancel_aria2_retries(&id).await;
                 log::info!("aria2 pause [{}]: gid {} was already paused", id, gid);
             }
             "active" | "waiting" => {
+                state.queue_manager.next_aria2_control_epoch(&id).await;
+                state.queue_manager.cancel_aria2_retries(&id).await;
                 let result = rpc_call(
                     state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                     &state.aria2_secret,
@@ -2914,9 +2970,23 @@ async fn pause_download(
                 log::info!("aria2 pause [{}]: gid {} paused", id, gid);
             }
             terminal => {
+                let retrying = state.queue_manager.has_aria2_retry_state(&id).await;
                 state.queue_manager.clear_aria2_retry_state(&id).await;
                 state.queue_manager.forget_aria2_gid(&id).await;
                 state.queue_manager.release_permit(&id).await;
+                state.queue_manager.next_aria2_control_epoch(&id).await;
+                state.queue_manager.cancel_aria2_retries(&id).await;
+                if retrying && matches!(terminal, "error" | "removed") {
+                    use tauri::Emitter;
+                    let _ = app_handle.emit(
+                        "download-state",
+                        crate::ipc::DownloadStateEvent::new(
+                            id,
+                            crate::ipc::DownloadStatus::Paused,
+                        ),
+                    );
+                    return Ok(());
+                }
                 state.queue_manager.release_registered_id(&id).await;
                 return Err(format!(
                     "cannot pause aria2 gid {gid} in terminal state {terminal}"
@@ -2997,6 +3067,8 @@ async fn resume_download(
     .await?;
     match status.as_str() {
         "paused" => {
+            let control_epoch = state.queue_manager.next_aria2_control_epoch(&id).await;
+            state.queue_manager.allow_aria2_retries(&id).await;
             use tauri::Emitter;
             let _ = app_handle.emit(
                 "download-state",
@@ -3012,6 +3084,20 @@ async fn resume_download(
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
+                if !acquired {
+                    return;
+                }
+                if queue_manager.is_aria2_retry_cancelled(&id_clone).await
+                    || !queue_manager
+                        .is_aria2_control_epoch_current(&id_clone, control_epoch)
+                        .await
+                    || queue_manager.aria2_gid_for_download(&id_clone).as_deref()
+                        != Some(gid_clone.as_str())
+                    || !queue_manager.is_registered(&id_clone).await
+                {
+                    queue_manager.release_permit(&id_clone).await;
+                    return;
+                }
                 let result = match rpc_call(
                     aria2_port,
                     &aria2_secret,
@@ -3022,9 +3108,7 @@ async fn resume_download(
                 {
                     Ok(result) => result,
                     Err(error) => {
-                        if acquired {
-                            queue_manager.release_permit(&id_clone).await;
-                        }
+                        queue_manager.release_permit(&id_clone).await;
                         log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
                         let _ = app_handle_clone.emit(
                             "download-state",
@@ -3037,9 +3121,7 @@ async fn resume_download(
                     }
                 };
                 if let Err(error) = ensure_aria2_gid_result("unpause", &gid_clone, &result) {
-                    if acquired {
-                        queue_manager.release_permit(&id_clone).await;
-                    }
+                    queue_manager.release_permit(&id_clone).await;
                     log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
                     let _ = app_handle_clone.emit(
                         "download-state",
@@ -3048,6 +3130,23 @@ async fn resume_download(
                             crate::ipc::DownloadStatus::Failed,
                         ),
                     );
+                    return;
+                }
+                if queue_manager.is_aria2_retry_cancelled(&id_clone).await
+                    || !queue_manager
+                        .is_aria2_control_epoch_current(&id_clone, control_epoch)
+                        .await
+                    || queue_manager.aria2_gid_for_download(&id_clone).as_deref()
+                        != Some(gid_clone.as_str())
+                {
+                    let _ = rpc_call(
+                        aria2_port,
+                        &aria2_secret,
+                        "aria2.forcePause",
+                        serde_json::json!([gid_clone]),
+                    )
+                    .await;
+                    queue_manager.release_permit(&id_clone).await;
                     return;
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
@@ -3109,6 +3208,7 @@ async fn remove_download(
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
 
+    state.queue_manager.next_aria2_control_epoch(&id).await;
     state.queue_manager.cancel_aria2_retries(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
@@ -3251,6 +3351,7 @@ async fn detach_download_for_reconfigure(
     log::info!("detach_download_for_reconfigure called for id: {}", id);
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
+    state.queue_manager.next_aria2_control_epoch(&id).await;
     state.queue_manager.cancel_aria2_retries(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
@@ -4308,12 +4409,13 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_media_fraction, build_media_format_options, collect_download_uris,
-        filename_from_content_disposition, filename_from_url_disposition_query,
-        filename_from_url_path, is_excluded_yt_dlp_format, json_lower, media_output_template,
-        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_deep_link,
-        parse_ffmpeg_version, parse_media_progress_line, redact_log_line, FirelinkDeepLink, MediaProgress,
-        MEDIA_PROGRESS_PREFIX,
+        aggregate_media_fraction, append_ytdlp_http_headers, build_media_format_options,
+        collect_download_uris, filename_from_content_disposition,
+        filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
+        json_lower, media_output_template, media_progress_speed, normalize_speed_limit_for_aria2,
+        parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line, redact_log_line,
+        sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
+        FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -4333,6 +4435,56 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn ytdlp_config_values_cannot_inject_extra_lines() {
+        assert_eq!(
+            sanitize_ytdlp_config_value("user\n--exec\rmalicious"),
+            "user--execmalicious"
+        );
+    }
+
+    #[test]
+    fn ytdlp_media_headers_include_captured_cookies_once() {
+        let mut config = String::new();
+        append_ytdlp_http_headers(
+            &mut config,
+            Some("Referer: https://example.com/video"),
+            Some("session=abc\r\n--proxy=http://bad.invalid"),
+        )
+        .unwrap();
+
+        assert!(config.contains("--add-header\nReferer: https://example.com/video\n"));
+        assert!(config.contains("--add-header\nCookie: session=abc--proxy=http://bad.invalid\n"));
+    }
+
+    #[test]
+    fn ytdlp_media_headers_reject_invalid_lines() {
+        let mut config = String::new();
+        let error = append_ytdlp_http_headers(&mut config, Some("not a header"), None)
+            .expect_err("invalid header line should be rejected");
+
+        assert!(error.contains("invalid HTTP header"));
+    }
+
+    #[test]
+    fn retryable_media_failures_preserve_resumable_artifacts() {
+        assert!(!should_cleanup_media_artifacts_after_failure(
+            "The response status is not successful. status=503",
+            0,
+            1
+        ));
+        assert!(should_cleanup_media_artifacts_after_failure(
+            "The response status is not successful. status=503",
+            1,
+            1
+        ));
+        assert!(should_cleanup_media_artifacts_after_failure(
+            "HTTP 404 Not Found",
+            0,
+            3
+        ));
     }
 
     #[test]

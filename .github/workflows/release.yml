@@ -151,10 +151,29 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           awk '/^## \['"$VERSION"'\]/{flag=1; next} /^## \[/{if(flag) exit} flag' CHANGELOG.md > release_notes.md
           test -s release_notes.md
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          rename_asset() {
+            local pattern="$1"
+            local destination="$2"
+            local source
+            source="$(find release-assets -maxdepth 1 -type f -name "$pattern" -print -quit)"
+            if [[ -z "$source" ]]; then
+              echo "::error::Missing release asset matching $pattern"
+              exit 1
+            fi
+            mv "$source" "release-assets/$destination"
+          }
+
+          rename_asset '*.dmg' "Firelink_${VERSION}_macOS-ARM64.dmg"
+          rename_asset '*.AppImage' "Firelink_${VERSION}_Linux-x64.AppImage"
+          rename_asset '*.exe' "Firelink_${VERSION}_Windows-x64-setup.exe"
       - name: Generate checksums
         run: |
           cd release-assets
-          find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
       - uses: softprops/action-gh-release@v3
         with:
           files: release-assets/**

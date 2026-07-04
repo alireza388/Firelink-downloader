@@ -1,5 +1,6 @@
 import { initMediaDomains, isActiveDownloadStatus, normalizeSpeedLimitForBackend } from './utils/downloads';
-import { useEffect, useRef, useState } from "react";
+import { schedulerCompletionState } from './utils/schedulerCompletion';
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
 import { DownloadTable } from "./components/DownloadTable";
 import { AddDownloadsModal } from "./components/AddDownloadsModal";
@@ -20,6 +21,7 @@ import { WindowControls } from "./components/WindowControls";
 import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { usePlatformInfo } from './utils/platform';
+import type { PostQueueAction } from './bindings/PostQueueAction';
 
 let automaticUpdateCheckStarted = false;
 const processingScheduleKeys = new Set<string>();
@@ -103,6 +105,7 @@ function App() {
   const schedulerActiveDownloadIds = useSettingsStore(state => state.schedulerActiveDownloadIds);
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const previousSpeedLimit = useRef<string | null>(null);
+  const pendingPostActionTimer = useRef<number | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
   const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
   const activeTransferCount = downloads.filter(download =>
@@ -110,12 +113,81 @@ function App() {
     download.status === 'processing' ||
     download.status === 'retrying'
   ).length;
+  const { addToast } = useToast();
 
   const acknowledgePairingTokenChange = () => {
     invoke('acknowledge_pairing_token_change').catch(error => {
       console.error('Failed to acknowledge pairing token migration notice:', error);
     });
   };
+
+  const clearPendingPostActionTimer = useCallback(() => {
+    if (pendingPostActionTimer.current !== null) {
+      window.clearTimeout(pendingPostActionTimer.current);
+      pendingPostActionTimer.current = null;
+    }
+  }, []);
+
+  const schedulePostQueueAction = useCallback((action: Exclude<PostQueueAction, 'none'>) => {
+    clearPendingPostActionTimer();
+
+    const actionLabel = action === 'shutdown' ? 'Shut down' : action === 'restart' ? 'Restart' : 'Sleep';
+    let timerId: number | null = null;
+    const cancel = () => {
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+        if (pendingPostActionTimer.current === timerId) {
+          pendingPostActionTimer.current = null;
+        }
+        timerId = null;
+      }
+    };
+
+    addToast({
+      variant: 'warning',
+      isActionable: true,
+      message: (
+        <div className="flex items-center gap-3">
+          <span>{actionLabel} in 10 seconds.</span>
+          <button
+            type="button"
+            className="app-button px-2 py-1"
+            onClick={cancel}
+          >
+            Cancel
+          </button>
+        </div>
+      )
+    });
+
+    timerId = window.setTimeout(() => {
+      if (pendingPostActionTimer.current === timerId) {
+        pendingPostActionTimer.current = null;
+      }
+      timerId = null;
+
+      const activeTransfers = useDownloadStore.getState().downloads.some(download =>
+        isActiveDownloadStatus(download.status)
+      );
+      if (activeTransfers) {
+        addToast({
+          message: 'System action cancelled because another download is active.',
+          variant: 'warning',
+          isActionable: true
+        });
+        return;
+      }
+      invoke('perform_system_action', { action }).catch(error => {
+        console.error('Scheduled post action failed:', error);
+        addToast({
+          message: `Scheduled system action failed: ${String(error)}`,
+          variant: 'error',
+          isActionable: true
+        });
+      });
+    }, 10_000);
+    pendingPostActionTimer.current = timerId;
+  }, [addToast, clearPendingPostActionTimer]);
 
   const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -139,11 +211,13 @@ function App() {
   };
 
   useEffect(() => {
+    return clearPendingPostActionTimer;
+  }, [clearPendingPostActionTimer]);
+
+  useEffect(() => {
     initMediaDomains();
     window.localStorage.setItem('firelink-sidebar-width', String(sidebarWidth));
   }, [sidebarWidth]);
-
-  const { addToast } = useToast();
 
   useEffect(() => {
     let active = true;
@@ -331,6 +405,7 @@ function App() {
       processingScheduleKeys.add(payload.key);
       try {
         if (payload.action === 'start') {
+          clearPendingPostActionTimer();
           const scheduledQueueIds = getScheduledQueueIds();
           if (scheduledQueueIds.length === 0) {
             state.setSchedulerActiveDownloadIds([]);
@@ -359,6 +434,7 @@ function App() {
           state.setSchedulerRunning(activeIds.length > 0);
           await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
         } else if (payload.action === 'stop') {
+          clearPendingPostActionTimer();
           const trackedIds = state.schedulerActiveDownloadIds;
           if (trackedIds.length > 0) {
             const pauseResults = await Promise.allSettled(
@@ -385,79 +461,36 @@ function App() {
     return () => {
       unlisten.then(f => f()).catch(console.error);
     };
-  }, [addToast, coreReady]);
+  }, [addToast, clearPendingPostActionTimer, coreReady]);
 
   useEffect(() => {
     if (!schedulerRunning) return;
     if (schedulerActiveDownloadIds.length === 0) return;
+    clearPendingPostActionTimer();
     const settings = useSettingsStore.getState();
-    const scheduledItems = schedulerActiveDownloadIds.map(id =>
-      downloads.find(download => download.id === id)
-    );
-    if (scheduledItems.some(item => item && isActiveDownloadStatus(item.status))) return;
+    const completionState = schedulerCompletionState(downloads, schedulerActiveDownloadIds);
+    if (completionState === 'active') return;
 
-    const allCompleted = scheduledItems.every(item => item?.status === 'completed');
     settings.setSchedulerActiveDownloadIds([]);
     settings.setSchedulerRunning(false);
-    
-    let timer: number | undefined;
-    if (!allCompleted) {
+
+    if (completionState !== 'completed') {
       addToast({
         message: 'Scheduled downloads did not all complete. The post-queue system action was skipped.',
         variant: 'warning',
         isActionable: true
       });
     } else if (settings.scheduler.postQueueAction !== 'none') {
-      const action = settings.scheduler.postQueueAction;
-      let cancelled = false;
-      addToast({
-        variant: 'warning',
-        isActionable: true,
-        message: (
-          <div className="flex items-center gap-3">
-            <span>{action === 'shutdown' ? 'Shut down' : action === 'restart' ? 'Restart' : 'Sleep'} in 10 seconds.</span>
-            <button
-              type="button"
-              className="app-button px-2 py-1"
-              onClick={() => {
-                cancelled = true;
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        )
-      });
-      timer = window.setTimeout(() => {
-        if (cancelled) return;
-        const activeTransfers = useDownloadStore.getState().downloads.some(download =>
-          isActiveDownloadStatus(download.status)
-        );
-        if (activeTransfers) {
-          addToast({
-            message: 'System action cancelled because another download is active.',
-            variant: 'warning',
-            isActionable: true
-          });
-          return;
-        }
-        invoke('perform_system_action', { action }).catch(error => {
-          console.error('Scheduled post action failed:', error);
-          addToast({
-            message: `Scheduled system action failed: ${String(error)}`,
-            variant: 'error',
-            isActionable: true
-          });
-        });
-      }, 10_000);
+      schedulePostQueueAction(settings.scheduler.postQueueAction);
     }
-
-    return () => {
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [addToast, downloads, schedulerRunning, schedulerActiveDownloadIds]);
+  }, [
+    addToast,
+    clearPendingPostActionTimer,
+    downloads,
+    schedulePostQueueAction,
+    schedulerRunning,
+    schedulerActiveDownloadIds
+  ]);
 
   useEffect(() => {
     const initNotifications = async () => {

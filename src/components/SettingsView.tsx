@@ -269,7 +269,7 @@ const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null
 const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
 const [isRecheckingEngines, setIsRecheckingEngines] = useState(false);
 const engineRunId = useRef(0);
-const [appVersion, setAppVersion] = useState('1.0.0');
+const [appVersion, setAppVersion] = useState('1.0.1');
 const [extensionServerPort, setExtensionServerPort] = useState<number | null>(null);
 
   // Local state for adding site login

@@ -1,19 +1,43 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Firelink will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-07-04
 
-### Changed
-- Promote the Rust, Tauri, React, and TypeScript application to the repository root.
-- Archive the original SwiftUI implementation under `legacy/swift`.
-- Refresh project documentation, package metadata, CI, and the in-app About section for the current architecture and migration status.
+### Highlights
+- Firelink is now a cross-platform desktop download manager built with Rust, Tauri, React, and TypeScript.
+- macOS, Windows, and Linux release builds are prepared through native GitHub Actions runners.
+- The older macOS-only Swift app has been removed from the active product and replaced by the new desktop app.
 
-### Removed
-- Delete obsolete template assets, scratch files, duplicate icon exports, and unused backend helpers.
+### New
+- Add full browser-to-desktop integration through Firelink Companion, including signed local requests, desktop identity checks, and automatic-capture protection.
+- Add a complete Add window for links captured from the browser, pasted manually, or extracted from media pages.
+- Add segmented direct downloads, media downloads, queue controls, scheduling, speed limits, and duplicate handling.
+- Add persistent downloads, categories, save-location settings, site logins, and safe redownload behavior.
+- Add native tray controls, notifications, completion sounds, sleep prevention, file reveal/open/trash actions, and OS keychain support where available.
+- Add built-in diagnostics for media engines, app logs, packaged-engine validation, and release smoke checks.
+
+### Improved
+- Rework the main window, settings, logs, Add window, download list, toasts, context menus, and table interactions for the new desktop interface.
+- Improve media extraction with better YouTube metadata loading, format filtering, size estimates, output names, progress, retries, and cleanup.
+- Improve download reliability on rate-limited servers, servers with broken range support, interrupted app sessions, and queue-concurrency changes.
+- Improve extension captures so browser downloads are resumed unless Firelink confirms the handoff.
+- Improve cross-platform packaging by bundling target-specific aria2, yt-dlp, FFmpeg, and Deno payloads.
+- Improve privacy by avoiding startup keychain prompts, redacting secrets from local persistence, and narrowing when browser cookies are forwarded.
+
+### Fixed
+- Fix stuck queued/downloading/completed states, stale aria2 dispatches, queue shrink behavior, retry caps, scheduler actions, and post-queue system actions.
+- Fix many Windows, Linux, and macOS packaging issues, including hidden helper consoles, AppImage engine handling, installer validation, and smoke-test timing.
+- Fix media child-process cleanup so paused, canceled, failed, or removed downloads do not leave stray processes or partial files behind.
+- Fix UI hangs, overflow, sorting, selection, animation, and contrast issues across the main list, Add window, settings, and log viewer.
+- Fix security issues around local server authentication, request signing, replay protection, private IP metadata checks, path ownership, header sanitization, and command execution boundaries.
+
+### Notes
+- This is a major release from `0.7.3`. Older Firelink Companion builds are not compatible with every 1.0 capture path; update the extension together with the desktop app.
+- macOS builds are unsigned and not notarized. Windows builds are unsigned. See [RELEASE.md](RELEASE.md) for distribution details.
 
 ## [0.7.3] - 2026-06-11
 

@@ -1,8 +1,8 @@
 {
   "name": "firelink",
   "private": true,
-  "version": "0.7.3",
-  "description": "A fast desktop download manager powered by Rust, Tauri, React, and TypeScript.",
+  "version": "1.0.0",
+  "description": "A fast cross-platform desktop download manager powered by Rust, Tauri, React, aria2, and yt-dlp.",
   "license": "MIT",
   "homepage": "https://github.com/nimbold/Firelink",
   "repository": {
@@ -20,6 +20,7 @@
     "typescript",
     "aria2",
     "yt-dlp",
+    "ffmpeg",
     "desktop"
   ],
   "engines": {

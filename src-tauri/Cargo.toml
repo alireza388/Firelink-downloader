@@ -1,13 +1,13 @@
 [package]
 name = "firelink"
-version = "0.7.3"
-description = "A fast desktop download manager powered by Rust and Tauri"
+version = "1.0.0"
+description = "A fast cross-platform desktop download manager powered by Rust and Tauri"
 authors = ["NimBold"]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/nimbold/Firelink"
 homepage = "https://github.com/nimbold/Firelink"
-keywords = ["download-manager", "tauri", "aria2", "yt-dlp"]
+keywords = ["download-manager", "tauri", "aria2", "yt-dlp", "ffmpeg"]
 categories = ["network-programming"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

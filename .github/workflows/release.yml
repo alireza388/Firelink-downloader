@@ -140,10 +140,17 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
+      - name: Extract changelog release notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk '/^## \['"$VERSION"'\]/{flag=1; next} /^## \[/{if(flag) exit} flag' CHANGELOG.md > release_notes.md
+          test -s release_notes.md
       - name: Generate checksums
         run: |
           cd release-assets
@@ -151,4 +158,4 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           files: release-assets/**
-          generate_release_notes: true
+          body_path: release_notes.md

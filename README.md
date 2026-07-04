@@ -3,81 +3,93 @@
 
   # Firelink
 
-  **A fast, focused desktop download manager powered by Rust and Tauri.**
+  **A fast, focused desktop download manager for macOS, Windows, and Linux.**
 
-  [![Version](https://img.shields.io/badge/version-0.7.3-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
-  [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#project-status)
-  [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=microsoft&logoColor=white)](#project-status)
-  [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#project-status)
+  [![Version](https://img.shields.io/badge/version-1.0.0-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
+  [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
+  [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows11&logoColor=white)](#platforms)
+  [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
   [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app/)
   [![Rust](https://img.shields.io/badge/Rust-backend-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+  [![React](https://img.shields.io/badge/React-TypeScript-61DAFB?style=flat-square&logo=react&logoColor=111111)](https://react.dev/)
   [![License](https://img.shields.io/github/license/nimbold/Firelink?style=flat-square)](LICENSE)
   [![CI](https://img.shields.io/github/actions/workflow/status/nimbold/Firelink/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/nimbold/Firelink/actions/workflows/ci.yml)
 
-  [Features](#features) · [Install](#installation) · [Development](#development) · [Project status](#project-status)
+  [Features](#features) · [Install](#installation) · [Browser Extension](#browser-extension) · [Development](#development) · [Release Notes](CHANGELOG.md)
 </div>
 
 <br/>
 
 <div align="center">
-  <img src="Screenshots/Dark%20theme%20-%20main.png" width="24%" alt="Dark Theme Main Window" />
-  <img src="Screenshots/Dark%20theme%20-%20add%20window.png" width="24%" alt="Dark Theme Add Window" />
-  <img src="Screenshots/Light%20theme%20-%20main.png" width="24%" alt="Light Theme Main Window" />
-  <img src="Screenshots/Light%20theme%20-%20add%20window.png" width="24%" alt="Light Theme Add Window" />
+  <img src="Screenshots/Dark%20theme%20-%20main.png" width="24%" alt="Firelink dark theme main window" />
+  <img src="Screenshots/Dark%20theme%20-%20add%20window.png" width="24%" alt="Firelink dark theme add window" />
+  <img src="Screenshots/Light%20theme%20-%20main.png" width="24%" alt="Firelink light theme main window" />
+  <img src="Screenshots/Light%20theme%20-%20add%20window.png" width="24%" alt="Firelink light theme add window" />
 
   <details>
-    <summary><b>View More Screenshots</b></summary>
+    <summary><b>View more screenshots</b></summary>
     <br/>
-    <img src="Screenshots/Dark%20theme%20-%20settings.png" width="24%" alt="Dark Theme Settings" />
-    <img src="Screenshots/Light%20theme%20-%20settings.png" width="24%" alt="Light Theme Settings" />
+    <img src="Screenshots/Dark%20theme%20-%20settings.png" width="32%" alt="Firelink dark theme settings" />
+    <img src="Screenshots/Light%20theme%20-%20settings.png" width="32%" alt="Firelink light theme settings" />
   </details>
 </div>
 
-<br/>
+## Why Firelink
 
-Firelink brings segmented downloads, media extraction, scheduling, and browser integration into one native-feeling desktop application. The application is built with a Rust backend and a React/TypeScript interface, providing excellent cross-platform support.
+Firelink is built for people who want a real desktop download manager again: fast segmented transfers, browser capture, media extraction, scheduling, recovery, and clear control over where files land. Version 1.0.0 completes the move from the earlier macOS-only Swift app to a modern Rust/Tauri application with a React and TypeScript interface.
+
+The app keeps the heavy work native. Downloads are coordinated by a Rust backend, accelerated with aria2, enriched with yt-dlp and FFmpeg for media workflows, and persisted locally with SQLite so queues survive restarts and app updates.
 
 ## Features
 
-- **Fast transfers** with segmented downloading powered by aria2
-- **Media downloads** through yt-dlp, FFmpeg, and Deno
-- **Persistent queues** with configurable concurrency and speed limits
-- **Download scheduling** with optional post-queue system actions
-- **Pause, resume, retry, and duplicate-file handling**
-- **Smart organization** with categories and configurable destinations
-- **Browser integration** through the Firelink Companion extension
-- **Secure local handoff** using authenticated extension pairing
-- **System integration** including tray controls, notifications, and sleep prevention
-- **Built-in update checks** backed by GitHub Releases
+- **Fast segmented downloads** powered by aria2 with configurable connections, retries, and speed limits.
+- **Media extraction** with yt-dlp, FFmpeg, and Deno for video/audio links and richer format selection.
+- **A real Add window** for manual, extension-captured, and media downloads, including metadata, duplicate handling, and save-location choices before downloads start.
+- **Persistent queue management** with safe concurrency limits, pause/resume, retry, redownload, sorting, multi-select, and bulk controls.
+- **Download scheduling** with start/stop windows, speed-limiter tools, and optional post-queue actions.
+- **Smart organization** through categories, default folders, per-download overrides, and open/reveal/trash actions.
+- **Private browser handoff** through authenticated local pairing with replay protection and desktop-server proof checks.
+- **Native desktop integration** including tray controls, notifications, completion sounds, sleep prevention, and OS keychain support where available.
+- **Diagnostics built in** with engine health checks, structured logs, and packaged-engine verification.
 
 ## Installation
 
-> [!IMPORTANT]
-> The cross-platform rust implementation is completing release packaging for macOS, Windows, and Linux. The current `v0.7.3` macOS asset on GitHub Releases belongs to the archived SwiftUI implementation.
+Download the latest desktop build from [GitHub Releases](https://github.com/nimbold/Firelink/releases).
 
-For now, run the maintained application from source using the development instructions below. New packaged builds will be published through [GitHub Releases](https://github.com/nimbold/Firelink/releases) once the packaging CI workflow is fully ready.
+| Platform | Package | Notes |
+| --- | --- | --- |
+| **macOS Apple silicon** | `.dmg` | Unsigned and not notarized. Open through Finder or approve once in **System Settings -> Privacy & Security**. |
+| **Windows x64** | NSIS `.exe` installer | Unsigned. Windows SmartScreen may warn until code signing is added. |
+| **Linux x64** | `.AppImage` | Make executable before launching if your desktop environment does not do that automatically. |
 
-Production bundles include target-specific media engines, so packaged releases do not require separate aria2, yt-dlp, FFmpeg, Deno, Python, or package-manager installations.
+Production bundles include the required media engines for the target platform. Users do not need to install aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or a package manager for normal app usage.
 
-macOS builds are distributed without Apple code signing or notarization. Users must approve the downloaded app through Finder or **System Settings → Privacy & Security**. Firelink does not claim Gatekeeper trust.
+## Browser Extension
 
-## 🧩 Browser Extension
+<div align="center">
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"><img src="https://img.shields.io/badge/Install%20Firelink%20Companion-Firefox-FF7139?style=for-the-badge&logo=firefox-browser&logoColor=white" alt="Install Firelink Companion on Firefox" /></a>
+</div>
 
-[![Install on Firefox](https://img.shields.io/badge/Install%20on-Firefox-FF7139?style=flat-square&logo=firefox&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/)
+Firelink Companion connects your browser to the desktop app so links and browser downloads can open in Firelink instead of disappearing into the browser's default download shelf.
 
-Install the companion extension to send browser downloads directly to Firelink. Pair the extension from **Settings → Integrations** using the generated local token.
+What it adds:
 
-## Project Status
+- **Automatic capture** for normal browser downloads, while still routing every captured link through Firelink's Add window.
+- **Context-menu actions** for "Download with Firelink" and selected links.
+- **Signed local requests** using the pairing token from **Settings -> Integrations**.
+- **Server identity checks** so the extension only trusts the real local Firelink app.
+- **Offline-safe behavior** that resumes browser downloads when Firelink is closed or rejects a handoff.
+- **Protocol-aware compatibility** so older desktop builds are rejected before automatic capture can cancel a browser download.
 
-The cross-platform audit has been successfully completed. Firelink implements robust OS-specific behaviors to ensure native integration and stability across all platforms. 
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. The Firefox add-on is maintained in the [Firelink-Extension](https://github.com/nimbold/Firelink-Extension) repository and is also vendored here as the `Extensions/Firefox` submodule.
+
+## Platforms
 
 | Target | Status |
 | --- | --- |
-| **macOS arm64** | Fully supported. Automated build, engine validation, and unsigned DMG packaging complete. |
-| **Windows x64** | Fully supported. Native CI and NSIS packaging configured. |
-| **Linux x64** | Fully supported. Native CI and AppImage packaging configured. |
-
-See the [changelog](CHANGELOG.md) for release history and recent work.
+| **macOS arm64** | Supported. Automated native build, engine validation, packaged launch smoke test, and unsigned DMG packaging. |
+| **Windows x64** | Supported. Native GitHub Actions build, engine validation, silent installer smoke test, and NSIS packaging. |
+| **Linux x64** | Supported. Native GitHub Actions build, engine validation, AppImage repackaging, and xvfb launch smoke test. |
 
 ## Development
 
@@ -102,9 +114,11 @@ npm install
 npm run tauri dev
 ```
 
-Run the frontend build and backend tests:
+Run the core checks:
 
 ```sh
+node --test scripts/*.node-test.js
+npm test -- --run
 npm run build
 cd src-tauri
 cargo test --all-targets
@@ -130,21 +144,28 @@ Build staging includes only the current target. See `engines.lock.json`, `engine
 ```text
 .
 ├── src/                  React and TypeScript interface
-├── src-tauri/            Rust backend and Tauri configuration
+├── src-tauri/            Rust backend, Tauri config, and native tests
+├── scripts/              Engine provisioning, release, and smoke-test tooling
 └── Extensions/Firefox/   Firelink Companion submodule
 ```
 
+## Help and Project Status
+
+- Report bugs or request improvements in [GitHub Issues](https://github.com/nimbold/Firelink/issues).
+- Read [CHANGELOG.md](CHANGELOG.md) for release history.
+- Review [RELEASE.md](RELEASE.md) for packaging policy and release verification.
+
 ## Technology & Credits
 
-Firelink is made possible by these incredible open-source projects:
+Firelink is made possible by these open-source projects:
 
-- **[Tauri 2](https://tauri.app/)** for the lightweight, secure desktop runtime
-- **[Rust](https://www.rust-lang.org/)** and **[Tokio](https://tokio.rs/)** for high-performance native application logic
-- **[React](https://react.dev/)** and **[TypeScript](https://www.typescriptlang.org/)** for the responsive user interface
-- **[Zustand](https://zustand-demo.pmnd.rs/)** for simplified frontend state management
-- **[SQLite](https://www.sqlite.org/)** for reliable, persistent application data
-- **[aria2](https://aria2.github.io/)** for blazing fast segmented downloading
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**, **[FFmpeg](https://ffmpeg.org/)**, and **[Deno](https://deno.com/)** for unmatched media extraction and processing capabilities
+- **[Tauri 2](https://tauri.app/)** for the lightweight desktop runtime
+- **[Rust](https://www.rust-lang.org/)** and **[Tokio](https://tokio.rs/)** for native application logic
+- **[React](https://react.dev/)** and **[TypeScript](https://www.typescriptlang.org/)** for the interface
+- **[Zustand](https://zustand-demo.pmnd.rs/)** for frontend state management
+- **[SQLite](https://www.sqlite.org/)** for persistent local data
+- **[aria2](https://aria2.github.io/)** for segmented downloading
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)**, **[FFmpeg](https://ffmpeg.org/)**, and **[Deno](https://deno.com/)** for media extraction and processing
 
 ## License
 

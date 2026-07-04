@@ -398,10 +398,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return {
       isAddModalOpen: true,
       pendingAddUrls: mergedUrls,
-      pendingAddReferer: referer?.trim() || state.pendingAddReferer || '',
-      pendingAddFilename: filename?.trim() || state.pendingAddFilename || '',
-      pendingAddHeaders: headers?.trim() || state.pendingAddHeaders || '',
-      pendingAddCookies: cookies?.trim() || state.pendingAddCookies || ''
+      pendingAddReferer: referer?.trim() || '',
+      pendingAddFilename: filename?.trim() || '',
+      pendingAddHeaders: headers?.trim() || '',
+      pendingAddCookies: cookies?.trim() || ''
     };
   }),
   handleExtensionDownload: async (request) => {

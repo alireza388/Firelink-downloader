@@ -439,6 +439,33 @@ describe('useDownloadStore', () => {
   expect(state.pendingAddCookies).toBe('session=secret');
  });
 
+ it('does not reuse stale extension metadata for a later single-link handoff', async () => {
+  useDownloadStore.setState({
+   isAddModalOpen: true,
+   pendingAddUrls: '',
+   pendingAddReferer: 'https://old.example/page',
+   pendingAddFilename: '7aae36e6-00ec-4e7d-8dec-f14ace170bdb',
+   pendingAddHeaders: 'X-Old: value',
+   pendingAddCookies: 'old=session'
+  });
+
+  await useDownloadStore.getState().handleExtensionDownload({
+   urls: ['https://github.com/center2055/OnionHop/releases/download/v3.5/OnionHop-3.5-macOS-arm64.dmg'],
+   referer: 'https://github.com/center2055/OnionHop/releases/tag/v3.5',
+   silent: false,
+   filename: null,
+   headers: 'User-Agent: Firefox Test',
+   cookies: null
+  });
+
+  const state = useDownloadStore.getState();
+  expect(state.pendingAddUrls).toBe('https://github.com/center2055/OnionHop/releases/download/v3.5/OnionHop-3.5-macOS-arm64.dmg');
+  expect(state.pendingAddReferer).toBe('https://github.com/center2055/OnionHop/releases/tag/v3.5');
+  expect(state.pendingAddFilename).toBe('');
+  expect(state.pendingAddHeaders).toBe('User-Agent: Firefox Test');
+  expect(state.pendingAddCookies).toBe('');
+ });
+
  it('routes silent extension captures to the Add Modal instead of queuing immediately', async () => {
   await useDownloadStore.getState().handleExtensionDownload({
    urls: ['https://example.com/downloads/report.pdf'],

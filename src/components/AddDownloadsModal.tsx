@@ -37,6 +37,16 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
+const isCrossHostRedirect = (sourceUrl: string, downloadUrl: string) => {
+  try {
+    const sourceHost = new URL(sourceUrl).hostname;
+    const downloadHost = new URL(downloadUrl).hostname;
+    return downloadHost !== sourceHost && !downloadHost.endsWith(`.${sourceHost}`);
+  } catch {
+    return false;
+  }
+};
+
 export const AddDownloadsModal = () => {
   const { addToast } = useToast();
   const {
@@ -85,6 +95,7 @@ export const AddDownloadsModal = () => {
   const [checksumValue, setChecksumValue] = useState('');
   const [headers, setHeaders] = useState('');
   const [cookies, setCookies] = useState('');
+  const cookiesFromExtensionRef = useRef(false);
   const [mirrors, setMirrors] = useState('');
 
   useEffect(() => {
@@ -111,6 +122,7 @@ export const AddDownloadsModal = () => {
         pendingAddHeaders
       ].filter(Boolean).join('\n'));
       setCookies(pendingAddCookies);
+      cookiesFromExtensionRef.current = Boolean(pendingAddCookies?.trim());
       setMirrors('');
       setIsQueueMenuOpen(false);
       setIsSubmitting(false);
@@ -251,6 +263,11 @@ export const AddDownloadsModal = () => {
               headers: headers?.trim() || null,
               cookies: cookies?.trim() || null
             });
+            const nextDownloadUrl = meta.url || row.sourceUrl;
+            if (cookiesFromExtensionRef.current && isCrossHostRedirect(row.sourceUrl, nextDownloadUrl)) {
+              setCookies('');
+              cookiesFromExtensionRef.current = false;
+            }
             setParsedItems(current => updateRowIfCurrent(
               current,
               row.id,
@@ -258,7 +275,7 @@ export const AddDownloadsModal = () => {
               row.generation,
               currentRow => ({
                 ...currentRow,
-                downloadUrl: meta.url || currentRow.downloadUrl,
+                downloadUrl: nextDownloadUrl || currentRow.downloadUrl,
                 file: canonicalizeDownloadFileName(
                   current.length === 1 && pendingAddFilename
                     ? pendingAddFilename
@@ -1008,7 +1025,17 @@ export const AddDownloadsModal = () => {
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold tracking-wider text-text-muted mb-1">Cookies</label>
-                      <input type="text" value={cookies} onChange={e=>setCookies(e.target.value)} placeholder="name=value; other=value" className="add-download-control w-full px-3 py-1.5 text-xs font-mono" aria-label="Cookies" />
+                      <input
+                        type="text"
+                        value={cookies}
+                        onChange={e => {
+                          cookiesFromExtensionRef.current = false;
+                          setCookies(e.target.value);
+                        }}
+                        placeholder="name=value; other=value"
+                        className="add-download-control w-full px-3 py-1.5 text-xs font-mono"
+                        aria-label="Cookies"
+                      />
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold tracking-wider text-text-muted mb-1">Mirrors</label>

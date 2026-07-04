@@ -639,8 +639,8 @@ runEngineChecks(false);
               <div className="mac-settings-group">
                 <label className="mac-settings-row cursor-default">
                   <div className="settings-row-label">
-                    <span>Show notification when download completes</span>
-                    <small>Alerts you in Notification Center</small>
+                    <span>Show system notification when download completes</span>
+                    <small>Uses your operating system notification settings</small>
                   </div>
                   <input
                     type="checkbox"
@@ -650,7 +650,10 @@ runEngineChecks(false);
                   />
                 </label>
                 <label className="mac-settings-row cursor-default">
-                  <span className="text-[13px] text-text-primary">Play sound when download completes</span>
+                    <div className="settings-row-label">
+                      <span>Play in-app completion chime</span>
+                      <small>Optional Firelink sound, independent of system notifications</small>
+                    </div>
                   <input
                     type="checkbox"
                     checked={settings.playCompletionSound}

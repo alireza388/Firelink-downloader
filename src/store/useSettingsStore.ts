@@ -217,7 +217,7 @@ export const useSettingsStore = create<SettingsState>()(
       perServerConnections: 16,
       maxAutomaticRetries: 3,
       showNotifications: true,
-      playCompletionSound: true,
+      playCompletionSound: false,
       appFontSize: 'standard',
       listRowDensity: 'standard',
       showDockBadge: true,

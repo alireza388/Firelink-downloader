@@ -44,13 +44,17 @@ const getScheduledQueueIds = () => {
 
 type AudioContextConstructor = typeof AudioContext;
 
-const playCompletionChime = () => {
+const playCompletionChime = async () => {
   const AudioCtor =
     window.AudioContext ||
     (window as Window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
   if (!AudioCtor) return;
 
   const context = new AudioCtor();
+  if (context.state === 'suspended') {
+    await context.resume();
+  }
+
   const oscillator = context.createOscillator();
   const gain = context.createGain();
   oscillator.type = 'sine';
@@ -551,11 +555,9 @@ function App() {
       if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
       const settings = useSettingsStore.getState();
       if (event.payload.status === 'completed' && settings.playCompletionSound) {
-        try {
-          playCompletionChime();
-        } catch (error) {
+        playCompletionChime().catch(error => {
           console.error('Completion sound failed:', error);
-        }
+        });
       }
       if (!settings.showNotifications) return;
 

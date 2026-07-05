@@ -102,6 +102,7 @@ export const normalizeCustomProxy = (host: string, port: number): string | null 
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmedHost)) {
     try {
       const parsed = new URL(trimmedHost);
+      if (parsed.protocol !== 'http:') return null;
       if (!parsed.port) parsed.port = String(normalizedPort);
       return parsed.toString().replace(/\/$/, '');
     } catch {

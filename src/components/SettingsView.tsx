@@ -802,13 +802,13 @@ runEngineChecks(false);
                     <div className="mac-settings-row settings-network-row">
                       <div className="settings-row-label">
                         <span>Proxy host</span>
-                        <small>Host name, IP address, or URL with scheme.</small>
+                        <small>Host name, IP address, or HTTP proxy URL.</small>
                       </div>
                       <input
                         type="text"
                         value={settings.proxyHost}
                         onChange={(e) => settings.setProxyHost(e.target.value)}
-                        placeholder="127.0.0.1 or socks5://127.0.0.1"
+                        placeholder="127.0.0.1 or http://127.0.0.1"
                         className="app-control settings-network-input font-mono"
                       />
                     </div>

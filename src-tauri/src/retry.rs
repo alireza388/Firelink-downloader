@@ -1,5 +1,5 @@
-//! Connection-aware retry engine, shared by all three download backends
-//! (native `reqwest`, `yt-dlp` media, and `aria2c`).
+//! Connection-aware retry engine, shared by aria2c file downloads and yt-dlp
+//! media downloads.
 //!
 //! ## Design contract
 //!
@@ -9,11 +9,9 @@
 //! allocation (semaphore permit / worker slot) is preserved.
 //!
 //! This module is deliberately runtime-agnostic and free of Tauri types so it
-//! can be unit-tested headlessly. Each backend translates the schedule into its
-//! own state-emission + cancellation vocabulary:
+//! can be unit-tested headlessly. Each path translates the schedule into its
+//! own state-emission and cancellation vocabulary:
 //!
-//! - **Native** (`download.rs`): calls [`BACKOFF_SCHEDULE`] inside the existing
-//!   `control_rx` `tokio::select!`, so pause/cancel still interrupt backoff.
 //! - **yt-dlp** (`lib.rs`): sleeps between child re-spawns; `--continue` resumes.
 //! - **aria2** (`queue.rs` / WS poller): sleeps before re-issuing `aria2.addUri`.
 //!
@@ -67,10 +65,8 @@ pub fn backoff_for(strike: usize) -> Duration {
 /// Classify an error string as a transient network condition worth retrying.
 ///
 /// Returns `true` for socket drops, connect/read timeouts, connection resets,
-/// and HTTP 408 / request-timeout conditions across all three backends:
+/// and HTTP 408 / request-timeout conditions across both download paths:
 ///
-/// - **reqwest**: `error.is_timeout()`, `error.is_connect()` surface as
-///   "operation timed out", "error sending request", "connection reset".
 /// - **yt-dlp**: stderr lines like `ERROR: unable to ... Connection timed out`,
 ///   `HTTP Error 408`.
 /// - **aria2c**: `Timeout.`, `Connection was closed by server`.
@@ -103,7 +99,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
 
     const TRANSIENT: [&str; 35] = [
-        // reqwest / hyper / OS socket-layer
+        // socket-layer / HTTP-client phrasing surfaced by aria2 and yt-dlp
         "timed out",
         "timeout",
         "connection reset",
@@ -231,7 +227,7 @@ mod tests {
     // --- transient classification: positive cases -------------------------
 
     #[test]
-    fn classifies_reqwest_timeouts_as_transient() {
+    fn classifies_socket_timeouts_as_transient() {
         assert!(is_transient_network_error("operation timed out"));
         assert!(is_transient_network_error(
             "error sending request: operation timed out"
@@ -305,9 +301,8 @@ mod tests {
 
     #[test]
     fn permanent_keyword_wins_over_transient_in_composite_message() {
-        // The native backend formats HTTP statuses as "{url} returned HTTP {status}"
-        // (download.rs). A 404 whose URL happens to contain "timeout" must still
-        // fail fast because the explicit "http 404" token wins.
+        // A 404 whose URL happens to contain "timeout" must still fail fast
+        // because the explicit "http 404" token wins.
         assert!(!is_transient_network_error(
             "https://site/timeout-page returned HTTP 404 Not Found"
         ));

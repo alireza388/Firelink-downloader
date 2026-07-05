@@ -108,6 +108,8 @@ pub struct DownloadItem {
     pub queue_position: Option<i32>,
     #[ts(optional)]
     pub has_been_dispatched: Option<bool>,
+    #[ts(optional)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

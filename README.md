@@ -62,7 +62,7 @@ Download the latest desktop build from [GitHub Releases](https://github.com/nimb
 | **Windows x64** | NSIS `.exe` installer | Unsigned. Windows SmartScreen may warn until code signing is added. |
 | **Linux x64** | `.AppImage` | Make executable before launching if your desktop environment does not do that automatically. |
 
-Production bundles include the required media engines for the target platform. Users do not need to install aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or a package manager for normal app usage.
+Production bundles include the required media engines for the target platform. Users do not need to install aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or a package manager for everyday app usage.
 
 ## Browser Extension
 
@@ -74,7 +74,7 @@ Firelink Companion connects your browser to the desktop app so links and browser
 
 What it adds:
 
-- **Automatic capture** for normal browser downloads, while still routing every captured link through Firelink's Add window.
+- **Automatic capture** for ordinary browser downloads, while still routing every captured link through Firelink's Add window.
 - **Context-menu actions** for "Download with Firelink" and selected links.
 - **Signed local requests** using the pairing token from **Settings -> Integrations**.
 - **Server identity checks** so the extension only trusts the real local Firelink app.

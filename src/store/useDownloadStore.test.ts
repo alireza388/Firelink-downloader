@@ -268,6 +268,41 @@ describe('useDownloadStore', () => {
 
     expect(added).toBe(false);
     expect(useDownloadStore.getState().downloads[0].status).toBe('failed');
+    expect(useDownloadStore.getState().downloads[0].lastError).toBe('backend unavailable');
+  });
+
+  it('preserves backend rejection reasons while auto-resuming saved queued items', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'startup-failed',
+          url: 'https://example.com/file.bin',
+          fileName: 'file.bin',
+          status: 'queued',
+          category: 'Other',
+          dateAdded: '',
+          queueId: '00000000-0000-0000-0000-000000000001',
+          hasBeenDispatched: true
+        })];
+      }
+      if (cmd === 'enqueue_many') {
+        return [{
+          id: 'startup-failed',
+          success: false,
+          error: 'aria2 addUri failed: connection refused'
+        }];
+      }
+      if (cmd === 'get_pending_order') return [];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'failed',
+      lastError: 'aria2 addUri failed: connection refused'
+    });
   });
 
   it('redownloads fallback media without requiring a format selector', async () => {

@@ -132,7 +132,9 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
             key={`status-${download.status}`}
             ref={statusTextRef}
             title={
-              (download.status === 'queued' || download.status === 'staged') && queueIndex !== -1
+              download.lastError && (download.status === 'failed' || download.status === 'retrying')
+                ? download.lastError
+                : (download.status === 'queued' || download.status === 'staged') && queueIndex !== -1
                 ? `${download.status === 'staged' ? 'In queue' : 'Queued'} #${queueIndex + 1}`
                 : download.status === 'downloading'
                   ? `${((download.fraction || 0) * 100).toFixed(0)}%`

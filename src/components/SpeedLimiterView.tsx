@@ -144,7 +144,7 @@ export default function SpeedLimiterView() {
             <Gauge size={18} className="text-accent" /> Global Speed Limit
           </div>
           <p className="max-w-2xl text-[12px] leading-relaxed text-text-muted">
-            Applies to new and active aria2 transfers, native fallback transfers, and yt-dlp media downloads. Per-download limits still take precedence.
+            Applies to new and active aria2 transfers and yt-dlp media downloads. Per-download limits still take precedence.
           </p>
 
           <div className="mt-6 flex items-center gap-3">

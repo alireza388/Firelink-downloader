@@ -17,6 +17,9 @@ export type { DownloadCategory } from '../utils/downloads';
 
 const backendDispatchPromises = new Map<string, Promise<boolean>>();
 
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export async function dispatchItem(id: string): Promise<boolean> {
   if (backendDispatchPromises.has(id)) return backendDispatchPromises.get(id)!;
 
@@ -73,10 +76,14 @@ export async function dispatchItem(id: string): Promise<boolean> {
       const order = await invoke('get_pending_order', { queueId: item.queueId || MAIN_QUEUE_ID });
       useDownloadStore.getState().setPendingOrder(order);
       useDownloadStore.getState().registerBackendIds([id]);
+      useDownloadStore.getState().updateDownload(id, { lastError: undefined });
       return true;
     } catch (e) {
       console.error(`Failed to dispatch ${id}:`, e);
-      useDownloadStore.getState().updateDownload(id, { status: 'failed' });
+      useDownloadStore.getState().updateDownload(id, {
+        status: 'failed',
+        lastError: errorMessage(e)
+      });
       return false;
     } finally {
       backendDispatchPromises.delete(id);
@@ -856,7 +863,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           }
           const results = await invoke('enqueue_many', { items: itemsToEnqueue });
           const registeredIds = results.filter(result => result.success).map(result => result.id);
-          const failedIds = new Set(results.filter(result => !result.success).map(result => result.id));
+          const failedErrors = new Map(
+            results
+              .filter(result => !result.success)
+              .map(result => [result.id, result.error || 'Backend rejected the queued download.'])
+          );
           const order = await invoke('get_pending_order', { queueId: null });
           set(state => ({
             pendingOrder: order,
@@ -865,10 +876,14 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               ...registeredIds
             ]),
             downloads: state.downloads.map(download =>
-              failedIds.has(download.id)
-                ? { ...download, status: 'failed' as const }
+              failedErrors.has(download.id)
+                ? {
+                    ...download,
+                    status: 'failed' as const,
+                    lastError: failedErrors.get(download.id)
+                  }
                 : registeredIds.includes(download.id)
-                  ? { ...download, hasBeenDispatched: true }
+                  ? { ...download, hasBeenDispatched: true, lastError: undefined }
                   : download
             )
           }));

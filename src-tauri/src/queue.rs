@@ -28,7 +28,6 @@ pub enum PendingOutcome {
 pub enum TaskKind {
     Aria2,
     Media,
-    Native,
 }
 
 /// Everything needed to start a sidecar, captured at enqueue time so the
@@ -64,7 +63,7 @@ pub struct SpawnPayload {
     pub is_media: bool,
 }
 
-/// A sidecar spawner. In production this calls the real aria2/yt-dlp/native
+/// A sidecar spawner. In production this calls the real aria2/yt-dlp
 /// runners; in tests it is replaced with a fake that records calls and
 /// optionally hangs to simulate a long-running download.
 #[async_trait::async_trait]
@@ -80,9 +79,6 @@ pub trait SidecarSpawner: Send + Sync + 'static {
     /// Run a media download to completion. The permit is parked for the full
     /// duration; release is handled by QueueManager on the runner's exit.
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
-
-    /// Run a native HTTP download to completion.
-    async fn run_native(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
 }
 
 /// The centralized concurrency gatekeeper. One instance lives in AppState.
@@ -407,7 +403,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let id = task.id.clone();
         // Park the permit BEFORE spawning. Uniform parking:
         // aria2's RPC returns instantly, so the permit must outlive the
-        // dispatch_one call. Media/Native runners release on exit.
+        // dispatch_one call. Media runners release on exit.
         self.park_permit(&id, permit).await;
         self.active_kinds
             .lock()
@@ -432,15 +428,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
                                 id,
                                 gid
                             );
-                            if !gid.starts_with("native:") {
-                                if let Err(error) = self.spawner.remove_uri(&gid).await {
-                                    log::warn!(
-                                        "aria2 dispatch cancellation [{}]: failed to remove late gid {}: {}",
-                                        id,
-                                        gid,
-                                        error
-                                    );
-                                }
+                            if let Err(error) = self.spawner.remove_uri(&gid).await {
+                                log::warn!(
+                                    "aria2 dispatch cancellation [{}]: failed to remove late gid {}: {}",
+                                    id,
+                                    gid,
+                                    error
+                                );
                             }
                             self.clear_aria2_retry_state(&id).await;
                             self.release_permit(&id).await;
@@ -462,21 +456,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 tauri::async_runtime::spawn(async move {
                     let outcome = this.spawner.run_media(&id_for_task, &payload).await;
                     this.finish_runner(&id_for_task, outcome).await;
-                });
-            }
-            TaskKind::Native => {
-                // Native coordinator is event-driven (fire-and-observe). Send
-                // Start; completion is handled by the download-complete/
-                // download-failed listener in lib.rs setup() which calls
-                // release_permit + apply_completion.
-                let this = Arc::clone(&self);
-                let payload = task.payload.clone();
-                let id_for_task = id.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(error) = this.spawner.run_native(&id_for_task, &payload).await {
-                        this.emit_failed(&id_for_task, error);
-                        this.release_permit(&id_for_task).await;
-                    }
                 });
             }
         }
@@ -924,6 +903,17 @@ fn is_retryable_aria2_error(error: &str) -> bool {
     is_transient_network_error(error) || is_aria2_range_mode_error(error)
 }
 
+fn is_aria2_rpc_unavailable(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    is_transient_network_error(error)
+        || lower.contains("aria2 did not become ready")
+        || lower.contains("connection refused")
+        || lower.contains("failed to connect")
+        || lower.contains("error trying to connect")
+        || lower.contains("connection closed")
+        || lower.contains("connection reset")
+}
+
 fn is_aria2_range_mode_error(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("invalid range header")
@@ -1123,8 +1113,7 @@ fn parse_content_range_bounds(value: &str) -> Option<(u64, u64)> {
     Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
 }
 
-/// Production spawner that delegates to the real aria2 RPC, yt-dlp, and
-/// native coordinator runners.
+/// Production spawner that delegates to the real aria2 RPC and yt-dlp runners.
 pub struct ProductionSpawner {
     app_handle: AppHandle<tauri::Wry>,
 }
@@ -1132,6 +1121,32 @@ pub struct ProductionSpawner {
 impl ProductionSpawner {
     pub fn new(app_handle: AppHandle<tauri::Wry>) -> Self {
         Self { app_handle }
+    }
+
+    async fn add_uri_rpc(
+        &self,
+        state: &crate::AppState,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            match crate::rpc_call(
+                state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+                &state.aria2_secret,
+                "aria2.addUri",
+                params.clone(),
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    if !is_aria2_rpc_unavailable(&error) || std::time::Instant::now() >= deadline {
+                        return Err(error);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+            }
+        }
     }
 }
 
@@ -1210,14 +1225,7 @@ impl SidecarSpawner for ProductionSpawner {
         let uris = crate::collect_download_uris(&payload.url, payload.mirrors.as_deref());
         let params = serde_json::json!([uris, options]);
 
-        match crate::rpc_call(
-            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
-            &state.aria2_secret,
-            "aria2.addUri",
-            params,
-        )
-        .await
-        {
+        match self.add_uri_rpc(&state, &params).await {
             Ok(result) => {
                 let gid = result.as_str().unwrap_or("").to_string();
                 if gid.is_empty() {
@@ -1228,35 +1236,8 @@ impl SidecarSpawner for ProductionSpawner {
                 }
             }
             Err(e) => {
-                // aria2 unavailable — fall back to native coordinator.
-                log::warn!("aria2 addUri failed, falling back to native: {}", e);
-                let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
-                let mt = automatic_retry_limit(payload.max_tries) as u32;
-                let safe_filename =
-                    crate::download_ownership::canonical_download_filename(&payload.filename);
-                state
-                    .download_coordinator
-                    .send(crate::download::DownloadCmd::Start(Box::new(
-                        crate::download::DownloadPayload {
-                            id: download_id,
-                            urls: crate::collect_download_uris(
-                                &payload.url,
-                                payload.mirrors.as_deref(),
-                            ),
-                            output_path: resolved_dest.join(safe_filename),
-                            speed_limit: payload.speed_limit.clone(),
-                            username: payload.username.clone(),
-                            password: payload.password.clone(),
-                            headers: payload.headers.clone(),
-                            cookies: payload.cookies.clone(),
-                            user_agent: payload.user_agent.clone(),
-                            max_tries: mt,
-                            proxy: payload.proxy.clone(),
-                        },
-                    )))
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok(format!("native:{id}"))
+                log::error!("aria2 addUri [{}] failed: {}", id, e);
+                Err(format!("aria2 addUri failed: {e}"))
             }
         }
     }
@@ -1319,36 +1300,6 @@ impl SidecarSpawner for ProductionSpawner {
             .finish_media(id.to_string())
             .await;
         outcome.map(|_| ())
-    }
-
-    async fn run_native(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {
-        let state = self.app_handle.state::<crate::AppState>();
-        let download_id = uuid::Uuid::parse_str(id).map_err(|e| e.to_string())?;
-        let mt = automatic_retry_limit(payload.max_tries) as u32;
-        let resolved_dest = crate::resolve_path(&payload.destination, &self.app_handle);
-        let safe_filename =
-            crate::download_ownership::canonical_download_filename(&payload.filename);
-        let output_path = resolved_dest.join(safe_filename);
-        let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, &output_path);
-        state
-            .download_coordinator
-            .send(crate::download::DownloadCmd::Start(Box::new(
-                crate::download::DownloadPayload {
-                    id: download_id,
-                    urls: crate::collect_download_uris(&payload.url, payload.mirrors.as_deref()),
-                    output_path,
-                    speed_limit: payload.speed_limit.clone(),
-                    username: payload.username.clone(),
-                    password: payload.password.clone(),
-                    headers: payload.headers.clone(),
-                    cookies: payload.cookies.clone(),
-                    user_agent: payload.user_agent.clone(),
-                    max_tries: mt,
-                    proxy: payload.proxy.clone(),
-                },
-            )))
-            .await?;
-        Ok(())
     }
 }
 
@@ -1463,5 +1414,18 @@ mod tests {
             "aria2 error code 8: No URI available."
         ));
         assert!(!is_retryable_aria2_error("No URI available."));
+    }
+
+    #[test]
+    fn aria2_startup_rpc_errors_are_retryable() {
+        assert!(is_aria2_rpc_unavailable(
+            "error trying to connect: tcp connect error: Connection refused"
+        ));
+        assert!(is_aria2_rpc_unavailable(
+            "aria2 did not become ready: connection refused"
+        ));
+        assert!(!is_aria2_rpc_unavailable(
+            "aria2 error code 3: Resource not found"
+        ));
     }
 }

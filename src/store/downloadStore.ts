@@ -69,8 +69,12 @@ export async function initDownloadListener() {
         const progress = useDownloadProgressStore.getState().progressMap[payload.id];
         const updates: Partial<DownloadItem> = {
           status,
-          ...(progress ? { fraction: progress.fraction } : {})
+          ...(progress ? { fraction: progress.fraction } : {}),
+          ...(payload.error ? { lastError: payload.error } : {})
         };
+        if (!payload.error && status !== 'failed' && status !== 'retrying') {
+          updates.lastError = undefined;
+        }
         if (payload.fileName && payload.fileName !== current.fileName) {
           updates.fileName = payload.fileName;
           updates.category = categoryForFileName(payload.fileName);

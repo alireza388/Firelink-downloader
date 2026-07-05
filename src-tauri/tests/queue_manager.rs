@@ -12,7 +12,6 @@ use tokio::time::timeout;
 struct CountingSpawner {
     add_uri_calls: AtomicUsize,
     media_calls: AtomicUsize,
-    native_calls: AtomicUsize,
 }
 
 struct DelayedAria2Spawner {
@@ -47,10 +46,6 @@ impl SidecarSpawner for DelayedAria2Spawner {
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         unreachable!("media is not used by delayed aria2 tests")
     }
-
-    async fn run_native(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
-        unreachable!("native is not used by delayed aria2 tests")
-    }
 }
 
 impl CountingSpawner {
@@ -58,7 +53,6 @@ impl CountingSpawner {
         Self {
             add_uri_calls: AtomicUsize::new(0),
             media_calls: AtomicUsize::new(0),
-            native_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -74,10 +68,6 @@ impl firelink_lib::queue::SidecarSpawner for CountingSpawner {
     }
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         self.media_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-    async fn run_native(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
-        self.native_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -97,7 +87,7 @@ fn sample_task(id: &str) -> QueuedTask {
     QueuedTask {
         id: id.to_string(),
         queue_id: "main".to_string(),
-        kind: TaskKind::Native,
+        kind: TaskKind::Aria2,
         payload: SpawnPayload::default(),
     }
 }
@@ -243,18 +233,18 @@ async fn grow_releases_immediately_and_dispatches_waiting_tasks() {
 
     // Give dispatcher time to dispatch 2 (capacity) of the 4.
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let native_after_initial = spawner.native_calls.load(Ordering::SeqCst);
+    let aria2_after_initial = spawner.add_uri_calls.load(Ordering::SeqCst);
     assert_eq!(
-        native_after_initial, 2,
+        aria2_after_initial, 2,
         "only capacity-many tasks dispatch initially"
     );
 
     // Grow to 4; the remaining 2 should dispatch.
     mgr_arc.set_capacity(4);
     tokio::time::sleep(Duration::from_millis(100)).await;
-    let native_after_grow = spawner.native_calls.load(Ordering::SeqCst);
+    let aria2_after_grow = spawner.add_uri_calls.load(Ordering::SeqCst);
     assert_eq!(
-        native_after_grow, 4,
+        aria2_after_grow, 4,
         "grow must allow the waiting tasks to dispatch"
     );
 
@@ -276,7 +266,7 @@ async fn shrink_converges_to_target_without_killing_active() {
 
     // Let 4 dispatch (capacity).
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(spawner.native_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 4);
 
     // Shrink to 2 while 4 are "active" (permits parked).
     mgr_arc.set_capacity(2);
@@ -288,7 +278,7 @@ async fn shrink_converges_to_target_without_killing_active() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(
-        spawner.native_calls.load(Ordering::SeqCst),
+        spawner.add_uri_calls.load(Ordering::SeqCst),
         4,
         "pending tasks must not dispatch while active count already meets the shrunken target"
     );
@@ -298,7 +288,7 @@ async fn shrink_converges_to_target_without_killing_active() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(
-        spawner.native_calls.load(Ordering::SeqCst),
+        spawner.add_uri_calls.load(Ordering::SeqCst),
         6,
         "pending tasks dispatch after active count falls below the shrunken target"
     );
@@ -371,10 +361,6 @@ impl SidecarSpawner for FixedMediaSpawner {
 
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         self.outcome.clone()
-    }
-
-    async fn run_native(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
-        unreachable!("native downloads are not used by media terminal-state tests")
     }
 }
 

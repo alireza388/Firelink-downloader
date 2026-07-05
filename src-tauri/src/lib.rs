@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use ts_rs::TS;
-use uuid::Uuid;
 
 fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
     static CACHE: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
@@ -2942,7 +2941,7 @@ async fn pause_download(
     let removed_pending = state.queue_manager.remove_from_pending(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
-    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+    if let Some(gid) = gid.as_deref() {
         let status = aria2_download_status(
             state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
             &state.aria2_secret,
@@ -3013,11 +3012,6 @@ async fn pause_download(
             .download_coordinator
             .pause_media_with_ack(id.clone(), tx)
             .await?;
-    } else if let Ok(download_id) = Uuid::parse_str(&id) {
-        state
-            .download_coordinator
-            .send(download::DownloadCmd::PauseWithAck(download_id, tx))
-            .await?;
     } else {
         let _ = tx.send(());
     }
@@ -3052,13 +3046,6 @@ async fn resume_download(
         state.queue_manager.release_registered_id(&id).await;
         return Ok(false);
     };
-    if gid.starts_with("native:") {
-        state.queue_manager.forget_aria2_gid(&id).await;
-        log::info!("aria2 resume [{}]: native fallback has no aria2 gid", id);
-        state.queue_manager.release_registered_id(&id).await;
-        return Ok(false);
-    }
-
     let status = aria2_download_status(
         state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
         &state.aria2_secret,
@@ -3212,7 +3199,7 @@ async fn remove_download(
     state.queue_manager.cancel_aria2_retries(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
-    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+    if let Some(gid) = gid.as_deref() {
         let removal_result = async {
             force_remove_aria2_gid(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
@@ -3243,13 +3230,6 @@ async fn remove_download(
                 .download_coordinator
                 .pause_media_with_ack(id.clone(), tx)
                 .await?;
-        } else if let Ok(download_id) = Uuid::parse_str(&id) {
-            let command = if delete_assets {
-                download::DownloadCmd::CancelWithAck(download_id, tx)
-            } else {
-                download::DownloadCmd::PauseWithAck(download_id, tx)
-            };
-            state.download_coordinator.send(command).await?;
         } else {
             let _ = tx.send(());
         }
@@ -3356,7 +3336,7 @@ async fn detach_download_for_reconfigure(
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
 
-    if let Some(gid) = gid.as_deref().filter(|gid| !gid.starts_with("native:")) {
+    if let Some(gid) = gid.as_deref() {
         let removal_result = async {
             let pause_res = rpc_call(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
@@ -3395,11 +3375,6 @@ async fn detach_download_for_reconfigure(
             state
                 .download_coordinator
                 .pause_media_with_ack(id.clone(), tx)
-                .await?;
-        } else if let Ok(download_id) = Uuid::parse_str(&id) {
-            state
-                .download_coordinator
-                .send(crate::download::DownloadCmd::PauseWithAck(download_id, tx))
                 .await?;
         } else {
             let _ = tx.send(()); // Fallback if no task exists
@@ -5007,7 +4982,6 @@ pub fn run() {
                 dispatcher_mgr.run_dispatcher().await;
             });
 
-            let queue_manager_clone = Arc::clone(&queue_manager);
             let queue_manager_poll = Arc::clone(&queue_manager);
 
             app.manage(AppState {
@@ -5022,39 +4996,6 @@ pub fn run() {
                 sleep_preventer: Arc::new(Mutex::new(None)),
                 scheduler_settings: Arc::clone(&scheduler_settings),
                 queue_manager,
-            });
-
-            // Backend listener: release permits + emit terminal state for
-            // native (and aria2-fallback) downloads. Idempotent for Media/aria2
-            // which already release via finish_runner/handle_aria2_event.
-            let completion_app = app.handle().clone();
-            let completion_mgr = Arc::clone(&queue_manager_clone);
-            tauri::async_runtime::spawn(async move {
-                use tauri::Listener;
-                let rx_complete = completion_app.listen("download-complete", move |event| {
-                    let raw_id = event.payload();
-                    let id: String = serde_json::from_str(raw_id)
-                        .unwrap_or_else(|_| raw_id.trim_matches('"').to_string());
-                    let mgr = Arc::clone(&completion_mgr);
-                    tauri::async_runtime::spawn(async move {
-                        mgr.apply_completion(&id, crate::queue::PendingOutcome::Complete).await;
-                    });
-                });
-                let completion_app2 = completion_app.clone();
-                let completion_mgr2 = Arc::clone(&queue_manager_clone);
-                let rx_failed = completion_app2.listen("download-failed", move |event| {
-                    let raw_id = event.payload();
-                    let id: String = serde_json::from_str(raw_id)
-                        .unwrap_or_else(|_| raw_id.trim_matches('"').to_string());
-                    let mgr = Arc::clone(&completion_mgr2);
-                    tauri::async_runtime::spawn(async move {
-                        mgr.apply_completion(&id, crate::queue::PendingOutcome::Error("download failed".to_string())).await;
-                    });
-                });
-                // Keep the task alive; the listeners are unregistered on drop.
-                std::future::pending::<()>().await;
-                let _ = rx_complete;
-                let _ = rx_failed;
             });
 
             let deep_link_app = app.handle().clone();

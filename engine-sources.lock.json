@@ -3,9 +3,9 @@
   "targets": {
     "x86_64-pc-windows-msvc": {
       "yt-dlp": {
-        "version": "2026.06.09",
-        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_win.zip",
-        "sha256": "9bb27530494092870b5330deacfc65a40d3e980c7e2c67e5f09b902c37a6903d"
+        "version": "2026.07.04",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_win.zip",
+        "sha256": "90254845be5282b1f4d843a873abff04f569f857f64250f833fe152b21eec152"
       },
       "deno": {
         "version": "2.9.1",
@@ -25,9 +25,9 @@
     },
     "x86_64-unknown-linux-gnu": {
       "yt-dlp": {
-        "version": "2026.06.09",
-        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.06.09/yt-dlp_linux.zip",
-        "sha256": "217bbc9c3ed19ea75a7f151a3e48dbfeac7f459a7dce2deeeecc2d6e2871bd5b"
+        "version": "2026.07.04",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux.zip",
+        "sha256": "d7d2d09e900b5ae11821b5784b18cf064984a2bd88b1ca5c798d744bcbe3658b"
       },
       "deno": {
         "version": "2.9.1",

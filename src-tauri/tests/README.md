@@ -1,4 +1,4 @@
-# Headless Download Engine Tests
+# Headless Download Tests
 
 Run the full Rust suite:
 
@@ -7,21 +7,19 @@ cd src-tauri
 cargo test --all-targets
 ```
 
-Run only the async download integration harness with deterministic serial
-performance measurements and visible test output:
+Run the queue-manager harness when changing aria2 scheduling, concurrency, and
+retry behavior:
 
 ```sh
 cd src-tauri
-RUST_BACKTRACE=1 cargo test --test download_engine -- --test-threads=1 --nocapture
+cargo test --test queue_manager -- --nocapture
 ```
 
-The harness binds an ephemeral loopback port and requires no GUI, external
-network access, or bundled media binaries. It validates:
+Run the media metadata smoke test with an explicit URL when changing yt-dlp
+integration:
 
-- aggregation of many streamed HTTP body chunks;
-- pause and ranged resume through `DownloadCoordinator`;
-- cancellation and partial-file cleanup;
-- SHA-256 integrity after resume;
-- retry recovery from transient HTTP failures;
-- terminal error reporting after the retry budget is exhausted;
-- a five-second local transfer performance budget for a 3 MiB fixture.
+```sh
+cd src-tauri
+FIRELINK_LIVE_YOUTUBE_URL='https://www.youtube.com/watch?v=dQw4w9WgXcQ' \
+  cargo test filters_live_youtube_metadata_from_env --lib -- --ignored --nocapture
+```

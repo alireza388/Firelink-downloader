@@ -7,7 +7,7 @@
 
   [![Version](https://img.shields.io/badge/version-1.0.1-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
   [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
-  [![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows11&logoColor=white)](#platforms)
+  [![Windows](.github/badges/windows.svg)](#platforms)
   [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
   [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app/)
   [![Rust](https://img.shields.io/badge/Rust-backend-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
@@ -66,10 +66,11 @@ Production bundles include the required media engines for the target platform. U
 
 ## Browser Extension
 
-<div align="center">
-  <a href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"><img src="https://img.shields.io/badge/Install%20Firelink%20Companion-Firefox-FF7139?style=for-the-badge&logo=firefox-browser&logoColor=white" alt="Install Firelink Companion on Firefox" /></a>
-  <a href="https://github.com/nimbold/Firelink-Extension#manual-chromium-installation"><img src="https://img.shields.io/badge/Manual%20Chrome%2FChromium%20Install-Chrome%2FEdge%2FBrave%2FVivaldi%2FOpera-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Read manual Chrome and Chromium install instructions" /></a>
-</div>
+<p align="center">
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"><img src="https://img.shields.io/badge/Install%20from-Firefox%20Add--ons-FF7139?style=for-the-badge&logo=firefox-browser&logoColor=white" alt="Install Firelink Companion from Firefox Add-ons" /></a>
+  &nbsp;&nbsp;
+  <a href="https://github.com/nimbold/Firelink-Extension#manual-chromium-installation"><img src="https://img.shields.io/badge/Manual%20install-Chromium-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Read manual Chromium install instructions" /></a>
+</p>
 
 Firelink Companion connects your browser to the desktop app so links and browser downloads can open in Firelink instead of disappearing into the browser's default download shelf.
 The Chrome extension is currently distributed as a manual Chromium package while Chrome Web Store publication is pending. Follow the [manual Chrome/Chromium installation instructions](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) and download `firelink-chromium.zip` from the [Firelink-Extension releases](https://github.com/nimbold/Firelink-Extension/releases).

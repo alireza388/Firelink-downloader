@@ -18,8 +18,90 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
                 Ok(None)
             }
         }
-        Err(error) => Err(format!("failed to read system proxy settings: {error}")),
+        Err(error) => {
+            #[cfg(target_os = "windows")]
+            if let Ok(Some(proxy)) = fallback_windows_proxy() {
+                return Ok(Some(proxy));
+            }
+
+            if let Ok(proxy) = std::env::var("HTTP_PROXY")
+                .or_else(|_| std::env::var("http_proxy"))
+                .or_else(|_| std::env::var("HTTPS_PROXY"))
+                .or_else(|_| std::env::var("https_proxy"))
+                .or_else(|_| std::env::var("ALL_PROXY"))
+                .or_else(|_| std::env::var("all_proxy"))
+            {
+                if !proxy.is_empty() {
+                    let protocol = if proxy.contains("://") {
+                        ""
+                    } else {
+                        "http://"
+                    };
+                    return Ok(Some(format!("{}{}", protocol, proxy)));
+                }
+            }
+
+            Err(format!("failed to read system proxy settings: {error}"))
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn fallback_windows_proxy() -> Result<Option<String>, ()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    
+    let output = Command::new("reg")
+        .args(&[
+            "query",
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "/v",
+            "ProxyEnable",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|_| ())?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("0x1") {
+        return Ok(None);
+    }
+
+    let output = Command::new("reg")
+        .args(&[
+            "query",
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "/v",
+            "ProxyServer",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|_| ())?;
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("ProxyServer") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let proxy_val = parts[2];
+                if proxy_val.contains('=') {
+                    for part in proxy_val.split(';') {
+                        if part.starts_with("http=") || part.starts_with("https=") || part.starts_with("socks=") {
+                            let addr = part.split('=').nth(1).unwrap_or("");
+                            if !addr.is_empty() {
+                                let protocol = if part.starts_with("socks") { "socks5://" } else { "http://" };
+                                return Ok(Some(format!("{}{}", protocol, addr)));
+                            }
+                        }
+                    }
+                } else {
+                    return Ok(Some(format!("http://{}", proxy_val)));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[tauri::command]

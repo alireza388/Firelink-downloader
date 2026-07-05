@@ -5303,6 +5303,30 @@ pub fn run() {
                 .max_file_size(10_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                .format({
+                    let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+                    let home_dir = if home_dir.len() > 3 { home_dir } else { String::new() };
+                    let escaped_home_dir = home_dir.replace("\\", "\\\\");
+                    move |out, message, record| {
+                        let msg = message.to_string();
+                        let redacted = if !home_dir.is_empty() {
+                            let mut s = msg.replace(&home_dir, "<HOME>");
+                            if !escaped_home_dir.is_empty() && escaped_home_dir != home_dir {
+                                s = s.replace(&escaped_home_dir, "<HOME>");
+                            }
+                            s
+                        } else {
+                            msg
+                        };
+                        out.finish(format_args!(
+                            "[{}][{}][{}] {}",
+                            chrono::Local::now().format("%Y-%m-%d][%H:%M:%S"),
+                            record.level(),
+                            record.target(),
+                            redacted
+                        ))
+                    }
+                })
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())

@@ -17,11 +17,11 @@ import type { PlatformInfo } from './bindings/PlatformInfo';
 
 type CommandMap = {
   fetch_metadata: {
-    args: { url: string; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null };
+    args: { url: string; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null; proxy: string | null };
     result: MetadataResponse;
   };
   fetch_media_metadata: {
-    args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null };
+    args: { url: string; cookieBrowser: string | null; username: string | null; password: string | null; proxy: string | null };
     result: MediaMetadata;
   };
  get_aria2_engine_status: { args: undefined; result: EngineStatusItem };

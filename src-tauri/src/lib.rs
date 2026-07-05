@@ -17,6 +17,10 @@ fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
+fn metadata_info_cache_key(url: &str, cookie_source: Option<&str>, proxy: Option<&str>) -> String {
+    serde_json::json!([url, cookie_source.unwrap_or(""), proxy.unwrap_or("")]).to_string()
+}
+
 fn sanitize_metadata_filename(filename: &str) -> Option<String> {
     let normalized = filename.trim().replace('\\', "/");
     let basename = std::path::Path::new(&normalized)
@@ -1057,6 +1061,7 @@ async fn fetch_metadata(
     password: Option<String>,
     headers: Option<String>,
     cookies: Option<String>,
+    proxy: Option<String>,
 ) -> Result<MetadataResponse, String> {
     let mut current_url = url.clone();
     let original_host = reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
@@ -1069,6 +1074,13 @@ async fn fetch_metadata(
         }
 
         let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+        if let Some(proxy) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if proxy.eq_ignore_ascii_case("none") {
+                builder = builder.no_proxy();
+            } else {
+                builder = builder.proxy(reqwest::Proxy::all(proxy).map_err(|e| e.to_string())?);
+            }
+        }
 
         if let Some(ref ua) = user_agent {
             let ua = ua.trim();
@@ -1244,12 +1256,14 @@ fn media_metadata_cache_key(
     cookie_browser: &Option<String>,
     username: &Option<String>,
     password: &Option<String>,
+    proxy: &Option<String>,
 ) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     url.hash(&mut hasher);
     cookie_browser.hash(&mut hasher);
     username.hash(&mut hasher);
     password.hash(&mut hasher);
+    proxy.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -1283,9 +1297,10 @@ async fn fetch_media_metadata(
     cookie_browser: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    proxy: Option<String>,
 ) -> Result<MediaMetadata, String> {
     validate_url_ssrf(&url).await?;
-    let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password);
+    let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password, &proxy);
 
     let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
     let mut cache_guard = cache.lock().await;
@@ -1316,8 +1331,15 @@ async fn fetch_media_metadata(
     }
     drop(cache_guard);
 
-    let result =
-        fetch_media_metadata_uncached(app_handle, url, cookie_browser, username, password).await;
+    let result = fetch_media_metadata_uncached(
+        app_handle,
+        url,
+        cookie_browser,
+        username,
+        password,
+        proxy,
+    )
+    .await;
 
     let result = match result {
         Ok(metadata) if metadata.formats.is_empty() => {
@@ -1354,7 +1376,10 @@ async fn fetch_media_metadata_uncached(
     cookie_browser: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    proxy: Option<String>,
 ) -> Result<MediaMetadata, String> {
+    let info_cache_key = metadata_info_cache_key(&url, cookie_browser.as_deref(), proxy.as_deref());
+
     // Pass bundled tools by absolute path so extraction never depends on
     // system Python, a user-managed PATH, or auto-detection heuristics.
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno")
@@ -1389,9 +1414,17 @@ async fn fetch_media_metadata_uncached(
         .arg("--print")
         .arg("%(.{title,duration,thumbnail,formats})j");
 
-    if let Some(browser) = cookie_browser {
+    if let Some(browser) = cookie_browser.as_deref() {
         if !browser.is_empty() {
-            cmd = cmd.arg("--cookies-from-browser").arg(&browser);
+            cmd = cmd.arg("--cookies-from-browser").arg(browser);
+        }
+    }
+
+    if let Some(proxy) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if proxy.eq_ignore_ascii_case("none") {
+            cmd = cmd.arg("--proxy").arg("");
+        } else {
+            cmd = cmd.arg("--proxy").arg(proxy);
         }
     }
 
@@ -1437,7 +1470,7 @@ async fn fetch_media_metadata_uncached(
 
         if let Ok(mut cache) = get_metadata_cache().lock() {
             if let Ok(json_str) = String::from_utf8(output.stdout.clone()) {
-                cache.insert(url.to_string(), json_str);
+                cache.insert(info_cache_key, json_str);
             }
         }
 
@@ -2720,7 +2753,9 @@ pub(crate) async fn start_media_download_internal(
 
         let mut temp_info_path = None;
         if let Ok(mut cache) = get_metadata_cache().lock() {
-            if let Some(json_str) = cache.remove(&url) {
+            let info_cache_key =
+                metadata_info_cache_key(&url, cookie_source.as_deref(), proxy.as_deref());
+            if let Some(json_str) = cache.remove(&info_cache_key) {
                 let temp_dir = std::env::temp_dir();
                 let path = temp_dir.join(format!("firelink_ytdlp_{}.info.json", id));
                 if std::fs::write(&path, json_str).is_ok() {

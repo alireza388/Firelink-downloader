@@ -8,12 +8,11 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
     match sysproxy::Sysproxy::get_system_proxy() {
         Ok(proxy) => {
             if proxy.enable {
-                let protocol = if proxy.host.contains("://") {
-                    ""
+                if proxy.host.contains('=') {
+                    Ok(parse_windows_proxy_server(&proxy.host))
                 } else {
-                    "http://"
-                };
-                Ok(Some(format!("{}{}:{}", protocol, proxy.host, proxy.port)))
+                    Ok(normalize_sysproxy_address(&proxy.host, proxy.port))
+                }
             } else {
                 Ok(None)
             }
@@ -24,21 +23,8 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
                 return Ok(Some(proxy));
             }
 
-            if let Ok(proxy) = std::env::var("HTTP_PROXY")
-                .or_else(|_| std::env::var("http_proxy"))
-                .or_else(|_| std::env::var("HTTPS_PROXY"))
-                .or_else(|_| std::env::var("https_proxy"))
-                .or_else(|_| std::env::var("ALL_PROXY"))
-                .or_else(|_| std::env::var("all_proxy"))
-            {
-                if !proxy.is_empty() {
-                    let protocol = if proxy.contains("://") {
-                        ""
-                    } else {
-                        "http://"
-                    };
-                    return Ok(Some(format!("{}{}", protocol, proxy)));
-                }
+            if let Some(proxy) = proxy_from_environment() {
+                return Ok(Some(proxy));
             }
 
             Err(format!("failed to read system proxy settings: {error}"))
@@ -46,12 +32,100 @@ pub async fn get_system_proxy() -> Result<Option<String>, String> {
     }
 }
 
+fn proxy_from_environment() -> Option<String> {
+    [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .into_iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| normalize_proxy_address(&value, "http"))
+    })
+}
+
+fn normalize_proxy_address(raw: &str, default_scheme: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches('"').trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let candidate = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("{default_scheme}://{trimmed}")
+    };
+    let parsed = url::Url::parse(&candidate).ok()?;
+    match parsed.scheme() {
+        "http" | "https" | "socks4" | "socks4a" | "socks5" | "socks5h" => {}
+        _ => return None,
+    }
+    parsed.host_str()?;
+    Some(candidate)
+}
+
+fn normalize_sysproxy_address(host: &str, port: u16) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+
+    if host.contains("://") {
+        let mut parsed = url::Url::parse(host).ok()?;
+        if parsed.port().is_none() && port != 0 {
+            parsed.set_port(Some(port)).ok()?;
+        }
+        return normalize_proxy_address(parsed.as_str(), "http");
+    }
+
+    if port == 0 {
+        normalize_proxy_address(host, "http")
+    } else {
+        normalize_proxy_address(&format!("{host}:{port}"), "http")
+    }
+}
+
+fn parse_windows_proxy_server(value: &str) -> Option<String> {
+    let value = value.trim().trim_matches('"');
+    if value.is_empty() {
+        return None;
+    }
+
+    if !value.contains('=') {
+        return normalize_proxy_address(value, "http");
+    }
+
+    let mut http = None;
+    let mut https = None;
+    let mut socks = None;
+    for entry in value.split(';') {
+        let Some((kind, address)) = entry.split_once('=') else {
+            continue;
+        };
+        let kind = kind.trim().to_ascii_lowercase();
+        let address = address.trim();
+        match kind.as_str() {
+            "http" => http = normalize_proxy_address(address, "http"),
+            "https" => https = normalize_proxy_address(address, "http"),
+            "socks" => socks = normalize_proxy_address(address, "socks5"),
+            _ => {}
+        }
+    }
+
+    https.or(http).or(socks)
+}
+
 #[cfg(target_os = "windows")]
 fn fallback_windows_proxy() -> Result<Option<String>, ()> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    
+
     let output = Command::new("reg")
         .args(&[
             "query",
@@ -62,9 +136,16 @@ fn fallback_windows_proxy() -> Result<Option<String>, ()> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|_| ())?;
-    
+
+    if !output.status.success() {
+        return Err(());
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.contains("0x1") {
+    let enabled = registry_value(&stdout, "ProxyEnable")
+        .as_deref()
+        .is_some_and(windows_proxy_enabled);
+    if !enabled {
         return Ok(None);
     }
 
@@ -78,30 +159,120 @@ fn fallback_windows_proxy() -> Result<Option<String>, ()> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|_| ())?;
-    
+
+    if !output.status.success() {
+        return Err(());
+    }
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.contains("ProxyServer") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 {
-                let proxy_val = parts[2];
-                if proxy_val.contains('=') {
-                    for part in proxy_val.split(';') {
-                        if part.starts_with("http=") || part.starts_with("https=") || part.starts_with("socks=") {
-                            let addr = part.split('=').nth(1).unwrap_or("");
-                            if !addr.is_empty() {
-                                let protocol = if part.starts_with("socks") { "socks5://" } else { "http://" };
-                                return Ok(Some(format!("{}{}", protocol, addr)));
-                            }
-                        }
-                    }
-                } else {
-                    return Ok(Some(format!("http://{}", proxy_val)));
-                }
-            }
+    Ok(registry_value(&stdout, "ProxyServer").and_then(|value| parse_windows_proxy_server(&value)))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_proxy_enabled(value: &str) -> bool {
+    let value = value.trim();
+    if value == "1" {
+        return true;
+    }
+    value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+        .is_some_and(|enabled| enabled == 1)
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn registry_value(output: &str, name: &str) -> Option<String> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let mut parts = trimmed.split_whitespace();
+        let Some(key) = parts.next() else {
+            continue;
+        };
+        if !key.eq_ignore_ascii_case(name) {
+            continue;
+        }
+        if parts.next().is_none() {
+            continue;
+        }
+        let data = parts.collect::<Vec<_>>().join(" ");
+        if !data.is_empty() {
+            return Some(data);
         }
     }
-    Ok(None)
+    None
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::{
+        normalize_proxy_address, normalize_sysproxy_address, parse_windows_proxy_server,
+        registry_value, windows_proxy_enabled,
+    };
+
+    #[test]
+    fn normalizes_bare_proxy_addresses() {
+        assert_eq!(
+            normalize_proxy_address("127.0.0.1:8080", "http").as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        assert_eq!(
+            normalize_proxy_address(" socks5://127.0.0.1:1080/ ", "http").as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+        assert_eq!(normalize_proxy_address("file:///tmp/proxy", "http"), None);
+    }
+
+    #[test]
+    fn parses_windows_protocol_proxy_server_values() {
+        assert_eq!(
+            parse_windows_proxy_server("http=127.0.0.1:8080;https=127.0.0.1:8081").as_deref(),
+            Some("http://127.0.0.1:8081")
+        );
+        assert_eq!(
+            parse_windows_proxy_server("socks=127.0.0.1:1080").as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+        assert_eq!(
+            parse_windows_proxy_server("proxy.local:9000").as_deref(),
+            Some("http://proxy.local:9000")
+        );
+    }
+
+    #[test]
+    fn normalizes_sysproxy_host_without_duplicating_ports() {
+        assert_eq!(
+            normalize_sysproxy_address("http://proxy.local", 8080).as_deref(),
+            Some("http://proxy.local:8080")
+        );
+        assert_eq!(
+            normalize_sysproxy_address("http://proxy.local:9000", 8080).as_deref(),
+            Some("http://proxy.local:9000")
+        );
+        assert_eq!(
+            normalize_sysproxy_address("proxy.local", 8080).as_deref(),
+            Some("http://proxy.local:8080")
+        );
+    }
+
+    #[test]
+    fn parses_reg_query_output_values() {
+        let output = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings
+    ProxyEnable    REG_DWORD    0x1
+    ProxyServer    REG_SZ       http=127.0.0.1:8080;https=127.0.0.1:8081
+"#;
+
+        assert!(registry_value(output, "ProxyEnable")
+            .as_deref()
+            .is_some_and(windows_proxy_enabled));
+        assert_eq!(
+            registry_value(output, "ProxyServer").as_deref(),
+            Some("http=127.0.0.1:8080;https=127.0.0.1:8081")
+        );
+        assert!(!windows_proxy_enabled("0X0"));
+        assert!(windows_proxy_enabled("0X1"));
+    }
 }
 
 #[tauri::command]

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   useDownloadStore,
   getSiteLogin,
+  getProxyArgs,
   type AddDownloadAction
 } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -186,8 +187,9 @@ export const AddDownloadsModal = () => {
 
       void (async () => {
         try {
+          const settingsStore = useSettingsStore.getState();
+          const proxy = await getProxyArgs(settingsStore);
           if (row.isMedia) {
-            const settingsStore = useSettingsStore.getState();
             const { mediaCookieSource } = settingsStore;
             const browserArg = mediaCookieSource !== 'none' ? mediaCookieSource : null;
             const login = getSiteLogin(row.sourceUrl, settingsStore);
@@ -204,7 +206,8 @@ export const AddDownloadsModal = () => {
               url: row.sourceUrl,
               cookieBrowser: browserArg,
               username: useAuth ? username.trim() || null : login?.username || null,
-              password: useAuth ? password || null : keychainPassword
+              password: useAuth ? password || null : keychainPassword,
+              proxy
             });
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
@@ -245,7 +248,6 @@ export const AddDownloadsModal = () => {
               throw new Error("Invalid media metadata or no formats found");
             }
           } else {
-            const settingsStore = useSettingsStore.getState();
             const login = getSiteLogin(row.sourceUrl, settingsStore);
             let keychainPassword = null;
             if (login) {
@@ -261,7 +263,8 @@ export const AddDownloadsModal = () => {
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
               headers: headers?.trim() || null,
-              cookies: cookies?.trim() || null
+              cookies: cookies?.trim() || null,
+              proxy
             });
             const nextDownloadUrl = meta.url || row.sourceUrl;
             if (cookiesFromExtensionRef.current && isCrossHostRedirect(row.sourceUrl, nextDownloadUrl)) {

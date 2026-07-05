@@ -6,12 +6,13 @@ type FetchMediaMetadataArgs = {
   cookieBrowser: string | null;
   username: string | null;
   password: string | null;
+  proxy: string | null;
 };
 
 const inFlightMediaMetadata = new Map<string, Promise<MediaMetadata>>();
 
 const metadataKey = (args: FetchMediaMetadataArgs) =>
-  JSON.stringify([args.url, args.cookieBrowser, args.username, args.password]);
+  JSON.stringify([args.url, args.cookieBrowser, args.username, args.password, args.proxy]);
 
 export const fetchMediaMetadataDeduped = (args: FetchMediaMetadataArgs): Promise<MediaMetadata> => {
   const key = metadataKey(args);

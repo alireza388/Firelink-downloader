@@ -1244,7 +1244,7 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                       <Globe size={16} className="text-orange-500" />
                     </div>
                     <h4 className="text-[13px] font-bold text-text-primary mb-1">Get Extension</h4>
-                    <p className="text-text-muted text-[11px] leading-relaxed">Install the Firelink Companion extension on your browser.</p>
+                    <p className="text-text-muted text-[11px] leading-relaxed">Install Firelink Companion for Firefox or Chromium browsers.</p>
                   </div>
                   <div className="space-y-2">
                     <button
@@ -1257,10 +1257,10 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                     </button>
                     <button
                       type="button"
-                      onClick={() => void openExternalUrl(FIRELINK_EXTENSION_RELEASES_URL, 'GitHub Releases')}
+                      onClick={() => void openExternalUrl(FIRELINK_EXTENSION_RELEASES_URL, 'Chromium release ZIP')}
                       className="w-full bg-item-hover hover:bg-item-hover/80 text-text-primary border border-border-modal font-medium py-1 px-2 rounded text-[11px] flex items-center justify-center gap-1 transition-colors"
                     >
-                      GitHub Releases
+                      Chromium ZIP
                       <ExternalLink size={11} />
                     </button>
                   </div>

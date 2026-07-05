@@ -68,20 +68,23 @@ Production bundles include the required media engines for the target platform. U
 
 <div align="center">
   <a href="https://addons.mozilla.org/en-US/firefox/addon/firelink-companion/"><img src="https://img.shields.io/badge/Install%20Firelink%20Companion-Firefox-FF7139?style=for-the-badge&logo=firefox-browser&logoColor=white" alt="Install Firelink Companion on Firefox" /></a>
+  <a href="https://github.com/nimbold/Firelink-Extension#manual-chromium-installation"><img src="https://img.shields.io/badge/Manual%20Chrome%2FChromium%20Install-Chrome%2FEdge%2FBrave%2FVivaldi%2FOpera-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Read manual Chrome and Chromium install instructions" /></a>
 </div>
 
 Firelink Companion connects your browser to the desktop app so links and browser downloads can open in Firelink instead of disappearing into the browser's default download shelf.
+The Chrome extension is currently distributed as a manual Chromium package while Chrome Web Store publication is pending. Follow the [manual Chrome/Chromium installation instructions](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) and download `firelink-chromium.zip` from the [Firelink-Extension releases](https://github.com/nimbold/Firelink-Extension/releases).
 
 What it adds:
 
 - **Automatic capture** for ordinary browser downloads, while still routing every captured link through Firelink's Add window.
+- **Firefox and Chromium support** for Firefox, Chrome, Edge, Brave, Vivaldi, Opera, and other compatible desktop Chromium browsers.
 - **Context-menu actions** for "Download with Firelink" and selected links.
 - **Signed local requests** using the pairing token from **Settings -> Integrations**.
 - **Server identity checks** so the extension only trusts the real local Firelink app.
 - **Offline-safe behavior** that resumes browser downloads when Firelink is closed or rejects a handoff.
 - **Protocol-aware compatibility** so older desktop builds are rejected before automatic capture can cancel a browser download.
 
-Install the extension, open Firelink, then pair it from **Settings -> Integrations**. The Firefox add-on is maintained in the [Firelink-Extension](https://github.com/nimbold/Firelink-Extension) repository and is also vendored here as the `Extensions/Firefox` submodule.
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chrome and Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation). The extension is maintained in the [Firelink-Extension](https://github.com/nimbold/Firelink-Extension) repository and is also vendored here as the `Extensions/Firefox` submodule.
 
 ## Platforms
 

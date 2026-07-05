@@ -23,7 +23,7 @@ fn sanitize_metadata_filename(filename: &str) -> Option<String> {
         .file_name()?
         .to_str()?
         .trim()
-        .trim_end_matches(|c| c == '.' || c == ' ');
+        .trim_end_matches(['.', ' ']);
 
     if basename.is_empty() || basename == "." || basename == ".." || basename.len() > 255 {
         return None;
@@ -1133,9 +1133,9 @@ async fn fetch_metadata(
         let mut current_res = head_req.send().await.map_err(|e| e.to_string())?;
 
         let mut needs_fallback = false;
-        if !current_res.status().is_success() && !current_res.status().is_redirection() {
-            needs_fallback = true;
-        } else if current_res.status().is_success() && current_res.headers().get(reqwest::header::CONTENT_LENGTH).is_none() {
+        if (!current_res.status().is_success() && !current_res.status().is_redirection())
+            || (current_res.status().is_success() && current_res.headers().get(reqwest::header::CONTENT_LENGTH).is_none())
+        {
             needs_fallback = true;
         }
 
@@ -3248,7 +3248,7 @@ async fn remove_download(
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
 
-    let cleanup_result = (|| async {
+    let cleanup_result = async {
         if delete_assets {
             if let Some(path) = primary_path.as_deref() {
                 remove_download_assets(path, &app_handle).await?;
@@ -3256,7 +3256,7 @@ async fn remove_download(
         }
         crate::download_ownership::remove(&app_handle, &id)?;
         Ok::<(), String>(())
-    })()
+    }
     .await;
 
     state.queue_manager.release_registered_id(&id).await;
@@ -3513,6 +3513,7 @@ fn get_platform_info() -> crate::ipc::PlatformInfo {
 #[cfg(target_os = "macos")]
 mod macos_sleep {
     use std::ffi::c_void;
+    #[allow(clippy::duplicated_attributes)]
     #[link(name = "IOKit", kind = "framework")]
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {

@@ -9,10 +9,8 @@ pub fn kill_process_tree(pid: u32) {
     while i < to_kill.len() {
         let current_pid = to_kill[i];
         for (p, process) in sys.processes() {
-            if process.parent() == Some(current_pid) {
-                if !to_kill.contains(p) {
-                    to_kill.push(*p);
-                }
+            if process.parent() == Some(current_pid) && !to_kill.contains(p) {
+                to_kill.push(*p);
             }
         }
         i += 1;

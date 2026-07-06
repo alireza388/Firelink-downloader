@@ -73,6 +73,30 @@ async function latestMartinRiedlMacArm64Release() {
   return match?.[1];
 }
 
+async function latestMartinRiedlMacArm64Snapshot() {
+  const html = await fetchText('https://ffmpeg.martin-riedl.de/');
+  const snapshotSection = html.split('Download Snapshot Build')[1]?.split('Download Release Build')[0] || '';
+  const match =
+    snapshotSection.match(/macOS \(Apple Silicon\/arm64\)[\s\S]*?<b>Release:\s*<\/b>\s*([A-Za-z0-9.-]+)/) ||
+    snapshotSection.match(/macOS \(Apple Silicon\/arm64\)[\s\S]*?Release:\s*([A-Za-z0-9.-]+)/);
+  return match?.[1];
+}
+
+async function latestBtbnFfmpegN81Build() {
+  const releases = await fetchJson('https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=10');
+  for (const release of releases) {
+    if (release.tag_name === 'latest') continue;
+    const versions = (release.assets || [])
+      .map(asset => asset.name.match(/^ffmpeg-n(8\.1\.\d+-\d+-g[0-9a-f]+)-(?:win64-gpl-8\.1\.zip|linux64-gpl-8\.1\.tar\.xz)$/)?.[1])
+      .filter(Boolean);
+    const unique = [...new Set(versions)];
+    if (unique.length === 1 && versions.length >= 2) {
+      return unique[0];
+    }
+  }
+  return undefined;
+}
+
 function printNpmReport(label, outdated) {
   const entries = Object.entries(outdated);
   if (!entries.length) {
@@ -129,12 +153,22 @@ async function main() {
     npmOutdated(path.join(repoRoot, 'Extensions', 'Firefox'))
   );
 
-  const [ytDlp, deno, aria2, ffmpeg, martinRiedlMacArm64Ffmpeg] = await Promise.all([
+  const [
+    ytDlp,
+    deno,
+    aria2,
+    ffmpeg,
+    martinRiedlMacArm64Ffmpeg,
+    martinRiedlMacArm64Snapshot,
+    btbnFfmpegN81Build,
+  ] = await Promise.all([
     githubLatest('yt-dlp/yt-dlp'),
     githubLatest('denoland/deno'),
     githubLatest('aria2/aria2'),
     latestFfmpegStable(),
     latestMartinRiedlMacArm64Release(),
+    latestMartinRiedlMacArm64Snapshot(),
+    latestBtbnFfmpegN81Build(),
   ]);
   const latestByEngine = {
     'yt-dlp': ytDlp.tag_name,
@@ -143,13 +177,18 @@ async function main() {
     ffmpeg,
   };
   const latestByTargetEngine = {
-    'aarch64-apple-darwin:ffmpeg': martinRiedlMacArm64Ffmpeg,
+    'x86_64-pc-windows-msvc:ffmpeg': btbnFfmpegN81Build || ffmpeg,
+    'x86_64-unknown-linux-gnu:ffmpeg': btbnFfmpegN81Build || ffmpeg,
+    'aarch64-apple-darwin:ffmpeg': martinRiedlMacArm64Snapshot || martinRiedlMacArm64Ffmpeg,
   };
 
   console.log('\nlatest engines:');
   for (const [engine, version] of Object.entries(latestByEngine)) {
     console.log(`  ${engine}: ${normalizeVersion(version)}`);
   }
+  console.log('\nlatest engine provider builds:');
+  console.log(`  BtbN FFmpeg n8.1 Windows/Linux: ${normalizeVersion(btbnFfmpegN81Build || ffmpeg)}`);
+  console.log(`  Martin Riedl FFmpeg macOS arm64 snapshot: ${normalizeVersion(martinRiedlMacArm64Snapshot || martinRiedlMacArm64Ffmpeg)}`);
 
   console.log('\nengine source lock:');
   outdatedCount += checkRows(

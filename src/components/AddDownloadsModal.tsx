@@ -207,6 +207,8 @@ export const AddDownloadsModal = () => {
               cookieBrowser: browserArg,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
+              headers: headers?.trim() || null,
+              cookies: cookies?.trim() || null,
               proxy
             });
             if (mediaData && mediaData.formats.length > 0) {

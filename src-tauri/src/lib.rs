@@ -17,8 +17,21 @@ fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-fn metadata_info_cache_key(url: &str, cookie_source: Option<&str>, proxy: Option<&str>) -> String {
-    serde_json::json!([url, cookie_source.unwrap_or(""), proxy.unwrap_or("")]).to_string()
+fn metadata_info_cache_key(
+    url: &str,
+    cookie_source: Option<&str>,
+    headers: Option<&str>,
+    cookies: Option<&str>,
+    proxy: Option<&str>,
+) -> String {
+    serde_json::json!([
+        url,
+        cookie_source.unwrap_or(""),
+        headers.unwrap_or(""),
+        cookies.unwrap_or(""),
+        proxy.unwrap_or("")
+    ])
+    .to_string()
 }
 
 fn sanitize_metadata_filename(filename: &str) -> Option<String> {
@@ -1264,6 +1277,8 @@ fn media_metadata_cache_key(
     cookie_browser: &Option<String>,
     username: &Option<String>,
     password: &Option<String>,
+    headers: &Option<String>,
+    cookies: &Option<String>,
     proxy: &Option<String>,
 ) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1271,6 +1286,8 @@ fn media_metadata_cache_key(
     cookie_browser.hash(&mut hasher);
     username.hash(&mut hasher);
     password.hash(&mut hasher);
+    headers.hash(&mut hasher);
+    cookies.hash(&mut hasher);
     proxy.hash(&mut hasher);
     hasher.finish()
 }
@@ -1305,10 +1322,20 @@ async fn fetch_media_metadata(
     cookie_browser: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    headers: Option<String>,
+    cookies: Option<String>,
     proxy: Option<String>,
 ) -> Result<MediaMetadata, String> {
     validate_url_ssrf(&url).await?;
-    let cache_key = media_metadata_cache_key(&url, &cookie_browser, &username, &password, &proxy);
+    let cache_key = media_metadata_cache_key(
+        &url,
+        &cookie_browser,
+        &username,
+        &password,
+        &headers,
+        &cookies,
+        &proxy,
+    );
 
     let cache = MEDIA_METADATA_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
     let mut cache_guard = cache.lock().await;
@@ -1345,6 +1372,8 @@ async fn fetch_media_metadata(
         cookie_browser.clone(),
         username.clone(),
         password.clone(),
+        headers.clone(),
+        cookies.clone(),
         proxy.clone(),
     )
     .await;
@@ -1357,7 +1386,10 @@ async fn fetch_media_metadata(
                 "yt-dlp could not read browser cookies from {}; retrying media metadata without browser cookies",
                 browser
             );
-            fetch_media_metadata_uncached(app_handle, url, None, username, password, proxy).await
+            fetch_media_metadata_uncached(
+                app_handle, url, None, username, password, headers, cookies, proxy,
+            )
+            .await
         }
         (result, _) => result,
     };
@@ -1397,9 +1429,17 @@ async fn fetch_media_metadata_uncached(
     cookie_browser: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    headers: Option<String>,
+    cookies: Option<String>,
     proxy: Option<String>,
 ) -> Result<MediaMetadata, String> {
-    let info_cache_key = metadata_info_cache_key(&url, cookie_browser.as_deref(), proxy.as_deref());
+    let info_cache_key = metadata_info_cache_key(
+        &url,
+        cookie_browser.as_deref(),
+        headers.as_deref(),
+        cookies.as_deref(),
+        proxy.as_deref(),
+    );
 
     // Pass bundled tools by absolute path so extraction never depends on
     // system Python, a user-managed PATH, or auto-detection heuristics.
@@ -1465,6 +1505,7 @@ async fn fetch_media_metadata_uncached(
             append_ytdlp_config_option(&mut config_content, "--password", &pass);
         }
     }
+    append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
     use std::io::Write;
     config_file
         .write_all(config_content.as_bytes())
@@ -2776,8 +2817,13 @@ pub(crate) async fn start_media_download_internal(
 
         let mut temp_info_path = None;
         if let Ok(mut cache) = get_metadata_cache().lock() {
-            let info_cache_key =
-                metadata_info_cache_key(&url, effective_cookie_source.as_deref(), proxy.as_deref());
+            let info_cache_key = metadata_info_cache_key(
+                &url,
+                effective_cookie_source.as_deref(),
+                headers.as_deref(),
+                cookies.as_deref(),
+                proxy.as_deref(),
+            );
             if let Some(json_str) = cache.remove(&info_cache_key) {
                 let temp_dir = std::env::temp_dir();
                 let path = temp_dir.join(format!("firelink_ytdlp_{}.info.json", id));
@@ -4461,11 +4507,12 @@ mod tests {
         aggregate_media_fraction, append_ytdlp_http_headers, build_media_format_options,
         collect_download_uris, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
-        is_browser_cookie_extraction_error, json_lower, media_output_template,
-        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_deep_link,
-        parse_ffmpeg_version, parse_media_progress_line, redact_log_line,
-        sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
-        FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
+        metadata_info_cache_key, media_output_template, media_progress_speed,
+        normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_ffmpeg_version,
+        parse_media_progress_line, redact_log_line, sanitize_ytdlp_config_value,
+        should_cleanup_media_artifacts_after_failure, FirelinkDeepLink, MediaProgress,
+        MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -4516,6 +4563,68 @@ mod tests {
             .expect_err("invalid header line should be rejected");
 
         assert!(error.contains("invalid HTTP header"));
+    }
+
+    #[test]
+    fn media_metadata_cache_key_includes_request_headers_and_cookies() {
+        let base = media_metadata_cache_key(
+            "https://example.com/watch?v=1",
+            &Some("firefox".to_string()),
+            &None,
+            &None,
+            &Some("User-Agent: Browser A".to_string()),
+            &Some("session=one".to_string()),
+            &None,
+        );
+        let changed_headers = media_metadata_cache_key(
+            "https://example.com/watch?v=1",
+            &Some("firefox".to_string()),
+            &None,
+            &None,
+            &Some("User-Agent: Browser B".to_string()),
+            &Some("session=one".to_string()),
+            &None,
+        );
+        let changed_cookies = media_metadata_cache_key(
+            "https://example.com/watch?v=1",
+            &Some("firefox".to_string()),
+            &None,
+            &None,
+            &Some("User-Agent: Browser A".to_string()),
+            &Some("session=two".to_string()),
+            &None,
+        );
+
+        assert_ne!(base, changed_headers);
+        assert_ne!(base, changed_cookies);
+    }
+
+    #[test]
+    fn metadata_info_cache_key_includes_request_headers_and_cookies() {
+        let base = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("User-Agent: Browser A"),
+            Some("session=one"),
+            None,
+        );
+        let changed_headers = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("User-Agent: Browser B"),
+            Some("session=one"),
+            None,
+        );
+        let changed_cookies = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("User-Agent: Browser A"),
+            Some("session=two"),
+            None,
+        );
+
+        assert_ne!(base, changed_headers);
+        assert_ne!(base, changed_cookies);
     }
 
     #[test]

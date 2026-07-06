@@ -168,6 +168,9 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
         }
 
         let category_destination = settings.as_ref().map(|settings| {
+            if !settings.category_subfolders_enabled {
+                return settings.base_download_folder.clone();
+            }
             settings
                 .category_directory_overrides
                 .get(&category)

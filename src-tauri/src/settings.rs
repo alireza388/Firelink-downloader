@@ -236,6 +236,9 @@ fn migrate_location_settings(state: &mut Value) -> Result<(), String> {
     }
 
     state.insert("baseDownloadFolder".to_string(), Value::String(base));
+    state
+        .entry("categorySubfoldersEnabled".to_string())
+        .or_insert(Value::Bool(true));
     state.insert(
         "categorySubfolders".to_string(),
         serde_json::to_value(subfolders)
@@ -268,6 +271,7 @@ fn default_settings() -> PersistedSettings {
     PersistedSettings {
         theme: Theme::System,
         base_download_folder: "~/Downloads".to_string(),
+        category_subfolders_enabled: true,
         category_subfolders: default_category_subfolders(),
         category_directory_overrides: HashMap::new(),
         approved_download_roots: Vec::new(),
@@ -378,6 +382,7 @@ mod tests {
             vec!["00000000-0000-0000-0000-000000000001"]
         );
         assert_eq!(settings.base_download_folder, "~/Downloads");
+        assert!(settings.category_subfolders_enabled);
     }
 
     #[test]
@@ -473,6 +478,25 @@ mod tests {
 
         assert_eq!(settings.category_subfolders["Movies"], "");
         assert_eq!(settings.category_subfolders["Documents"], "Documents");
+    }
+
+    #[test]
+    fn decodes_disabled_category_subfolders() {
+        let stored = json!({
+            "state": {
+                "baseDownloadFolder": "/Users/test/Downloads",
+                "categorySubfoldersEnabled": false,
+                "categorySubfolders": {
+                    "Movies": "Movies"
+                }
+            },
+            "version": 3
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert!(!settings.category_subfolders_enabled);
+        assert_eq!(settings.category_subfolders["Movies"], "Movies");
     }
 
     #[test]

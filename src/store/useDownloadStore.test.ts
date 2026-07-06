@@ -36,6 +36,7 @@ vi.mock('./useSettingsStore', () => ({
       maxAutomaticRetries: 3,
       mediaCookieSource: 'none',
       baseDownloadFolder: '~/Downloads',
+      categorySubfoldersEnabled: true,
       categorySubfolders: {
         Musics: 'Musics',
         Movies: 'Movies',

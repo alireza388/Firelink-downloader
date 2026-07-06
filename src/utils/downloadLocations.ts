@@ -34,12 +34,14 @@ export const DEFAULT_CATEGORY_SUBFOLDERS: Record<DownloadCategory, string> = {
 
 export interface DownloadLocationSettings {
   baseDownloadFolder: string;
+  categorySubfoldersEnabled: boolean;
   categorySubfolders: Record<string, string>;
   categoryDirectoryOverrides: Record<string, string>;
 }
 
 interface LegacyDownloadLocationSettings {
   baseDownloadFolder?: unknown;
+  categorySubfoldersEnabled?: unknown;
   categorySubfolders?: unknown;
   categoryDirectoryOverrides?: unknown;
   defaultDownloadPath?: unknown;
@@ -114,6 +116,7 @@ export const normalizeDownloadLocationSettings = (
     (typeof value.baseDownloadFolder === 'string' && value.baseDownloadFolder.trim()) ||
     (typeof value.defaultDownloadPath === 'string' && value.defaultDownloadPath.trim()) ||
     '~/Downloads';
+  const categorySubfoldersEnabled = value.categorySubfoldersEnabled !== false;
   const persistedSubfolders = stringRecord(value.categorySubfolders);
   const categorySubfolders = Object.fromEntries(
     DOWNLOAD_CATEGORIES.map(category => {
@@ -150,6 +153,7 @@ export const normalizeDownloadLocationSettings = (
 
   return {
     baseDownloadFolder,
+    categorySubfoldersEnabled,
     categorySubfolders,
     categoryDirectoryOverrides
   };
@@ -159,11 +163,13 @@ export const resolveCategoryDestination = async (
   settings: DownloadLocationSettings,
   category: DownloadCategory
 ): Promise<string> => {
+  const base = settings.baseDownloadFolder.trim() || '~/Downloads';
+  const expandedBase = await expandTilde(base);
+  if (!settings.categorySubfoldersEnabled) return expandedBase;
+
   const override = settings.categoryDirectoryOverrides[category]?.trim();
   if (override) return expandTilde(override);
 
-  const base = settings.baseDownloadFolder.trim() || '~/Downloads';
-  const expandedBase = await expandTilde(base);
   const persistedValue = hasOwn(settings.categorySubfolders, category)
     ? settings.categorySubfolders[category]
     : DEFAULT_CATEGORY_SUBFOLDERS[category];

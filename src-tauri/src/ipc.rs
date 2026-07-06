@@ -246,6 +246,7 @@ pub struct SchedulerSettings {
 pub struct PersistedSettings {
     pub theme: Theme,
     pub base_download_folder: String,
+    pub category_subfolders_enabled: bool,
     pub category_subfolders: HashMap<String, String>,
     pub category_directory_overrides: HashMap<String, String>,
     pub approved_download_roots: Vec<String>,

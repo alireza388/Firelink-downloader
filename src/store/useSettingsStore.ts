@@ -73,6 +73,7 @@ export type {
 export interface SettingsState {
   theme: Theme;
   baseDownloadFolder: string;
+  categorySubfoldersEnabled: boolean;
   categorySubfolders: Record<string, string>;
   categoryDirectoryOverrides: Record<string, string>;
   approvedDownloadRoots: string[];
@@ -145,6 +146,7 @@ export interface SettingsState {
   setAskWhereToSaveEachFile: (ask: boolean) => void;
   setPreventsSleepWhileDownloading: (prevent: boolean) => void;
   setMediaCookieSource: (source: MediaCookieSource) => void;
+  setCategorySubfoldersEnabled: (enabled: boolean) => void;
   setCategorySubfolder: (category: string, subfolder: string) => void;
   setCategoryDirectoryOverride: (category: string, path?: string) => void;
   resetCategoryLocations: () => void;
@@ -187,6 +189,7 @@ export const useSettingsStore = create<SettingsState>()(
     (set, _get) => ({
       theme: 'system',
       baseDownloadFolder: '~/Downloads',
+      categorySubfoldersEnabled: true,
       categorySubfolders: { ...DEFAULT_CATEGORY_SUBFOLDERS },
       categoryDirectoryOverrides: {},
       approvedDownloadRoots: [],
@@ -295,6 +298,10 @@ export const useSettingsStore = create<SettingsState>()(
         set({ preventsSleepWhileDownloading });
       },
       setMediaCookieSource: (mediaCookieSource) => { info('Settings updated: mediaCookieSource'); set({ mediaCookieSource }); },
+      setCategorySubfoldersEnabled: (categorySubfoldersEnabled) => {
+        info('Settings updated: categorySubfoldersEnabled');
+        set({ categorySubfoldersEnabled });
+      },
       setCategorySubfolder: (category, subfolder) => {
         info(`Settings updated: category subfolder ${category}`);
         set((state) => ({
@@ -385,6 +392,7 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (state): PersistedSettings => ({
         theme: state.theme,
         baseDownloadFolder: state.baseDownloadFolder,
+        categorySubfoldersEnabled: state.categorySubfoldersEnabled,
         categorySubfolders: state.categorySubfolders,
         categoryDirectoryOverrides: state.categoryDirectoryOverrides,
         approvedDownloadRoots: state.approvedDownloadRoots,

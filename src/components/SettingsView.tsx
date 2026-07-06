@@ -168,11 +168,13 @@ const runEngineStatusCheck = (check: EngineCheck, force: boolean) => {
 const CategoryFolderInput = ({
   category,
   settings,
-  onBrowse
+  onBrowse,
+  disabled = false
 }: {
   category: string;
   settings: SettingsState;
   onBrowse: () => void;
+  disabled?: boolean;
 }) => {
   const base = settings.baseDownloadFolder || '~/Downloads';
   const sub = Object.prototype.hasOwnProperty.call(settings.categorySubfolders, category)
@@ -190,6 +192,7 @@ const CategoryFolderInput = ({
       <input
         type="text"
         value={value}
+        disabled={disabled}
         onFocus={() => setLocalValue(displayPath)}
         onChange={(e) => setLocalValue(e.target.value)}
         onBlur={() => {
@@ -213,12 +216,13 @@ const CategoryFolderInput = ({
           }
           setLocalValue(null);
         }}
-        className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay"
+        className="app-control flex-1 max-w-[280px] text-[12px] px-3 py-1.5 bg-surface-overlay/50 border-border-color/50 focus:border-accent-color focus:bg-surface-overlay disabled:opacity-60 disabled:cursor-not-allowed"
         aria-label={`${category} subfolder`}
       />
       <button
         onClick={onBrowse}
-        className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
+        disabled={disabled}
+        className="app-button px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-overlay disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-text-secondary"
       >
         Custom folder
       </button>
@@ -478,21 +482,23 @@ runEngineChecks(false);
         const approvedBase = await settings.approveDownloadRoot(base);
         settings.setBaseDownloadFolder(approvedBase);
         try {
-          const safeSubfolders = Object.fromEntries(
-            DOWNLOAD_CATEGORIES.map(category => [
-              category,
-              normalizeCategorySubfolder(
-                Object.prototype.hasOwnProperty.call(settings.categorySubfolders, category)
-                  ? settings.categorySubfolders[category]
-                  : DEFAULT_CATEGORY_SUBFOLDERS[category],
-                DEFAULT_CATEGORY_SUBFOLDERS[category]
-              )
-            ])
-          );
-          await invoke('create_category_directories', {
-            baseFolder: approvedBase,
-            subfolders: safeSubfolders
-          });
+          if (settings.categorySubfoldersEnabled) {
+            const safeSubfolders = Object.fromEntries(
+              DOWNLOAD_CATEGORIES.map(category => [
+                category,
+                normalizeCategorySubfolder(
+                  Object.prototype.hasOwnProperty.call(settings.categorySubfolders, category)
+                    ? settings.categorySubfolders[category]
+                    : DEFAULT_CATEGORY_SUBFOLDERS[category],
+                  DEFAULT_CATEGORY_SUBFOLDERS[category]
+                )
+              ])
+            );
+            await invoke('create_category_directories', {
+              baseFolder: approvedBase,
+              subfolders: safeSubfolders
+            });
+          }
         } catch (e) {
           console.error("Failed to create directories on disk:", e);
           showToast(`Base folder saved, but category folders could not be created: ${String(e)}`, 'warning');
@@ -937,21 +943,49 @@ runEngineChecks(false);
               </div>
 
               <div className="mac-settings-group">
+                <label className="mac-settings-row cursor-default">
+                  <div>
+                    <span className="text-[13px] text-text-primary">Automatically save files to category subfolders</span>
+                    <p className="mt-0.5 text-[11px] text-text-muted">When off, automatic downloads use the base folder.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.categorySubfoldersEnabled}
+                    onChange={(e) => settings.setCategorySubfoldersEnabled(e.target.checked)}
+                    className="mac-switch"
+                  />
+                </label>
+              </div>
+
+              <div className="mac-settings-group">
                 <div className="mac-settings-row bg-item-hover/20">
                   <span className="text-[13px] font-semibold text-text-primary">Category Subfolders</span>
-                  <span className="text-[11px] text-text-muted">Relative to the base folder</span>
+                  <span className="text-[11px] text-text-muted">
+                    {settings.categorySubfoldersEnabled ? 'Relative to the base folder' : 'Disabled'}
+                  </span>
                 </div>
 
 
-                <div className="flex flex-col divide-y divide-border-color/30">
+                <div
+                  className={`flex flex-col divide-y divide-border-color/30 ${
+                    settings.categorySubfoldersEnabled ? '' : 'opacity-50'
+                  }`}
+                  aria-disabled={!settings.categorySubfoldersEnabled}
+                >
                   {DOWNLOAD_CATEGORIES.map((category) => (
-                    <div key={category} className="flex flex-col gap-2 px-4 py-3 hover:bg-item-hover/20 transition-colors">
+                    <div
+                      key={category}
+                      className={`flex flex-col gap-2 px-4 py-3 transition-colors ${
+                        settings.categorySubfoldersEnabled ? 'hover:bg-item-hover/20' : ''
+                      }`}
+                    >
                       <div className="flex justify-between items-center">
                         <span className="text-[13px] font-medium text-text-primary w-32 shrink-0">{category}</span>
                         <CategoryFolderInput
                           category={category}
                           settings={settings}
                           onBrowse={() => handleBrowseCategory(category)}
+                          disabled={!settings.categorySubfoldersEnabled}
                         />
                       </div>
                     </div>
@@ -964,7 +998,8 @@ runEngineChecks(false);
                       settings.resetCategoryLocations();
                       showToast("Reset category locations to default", 'success');
                     }}
-                    className="app-control hover:bg-item-hover text-text-secondary px-4 py-1"
+                    disabled={!settings.categorySubfoldersEnabled}
+                    className="app-control hover:bg-item-hover text-text-secondary px-4 py-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     Reset Defaults
                   </button>

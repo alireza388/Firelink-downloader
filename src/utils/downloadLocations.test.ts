@@ -65,6 +65,26 @@ describe('download locations', () => {
     expect(await resolveCategoryDestination(automatic, 'Movies')).toBe('/Volumes/Media');
   });
 
+  it('defaults category subfolders on and sends every category to the base folder when disabled', async () => {
+    const automatic = normalizeDownloadLocationSettings({
+      baseDownloadFolder: '/Users/test/Downloads'
+    });
+    expect(automatic.categorySubfoldersEnabled).toBe(true);
+
+    const disabled = normalizeDownloadLocationSettings({
+      baseDownloadFolder: '/Users/test/Downloads',
+      categorySubfoldersEnabled: false,
+      categorySubfolders: { Movies: 'Video Files' },
+      categoryDirectoryOverrides: { Movies: '/Volumes/Media' }
+    });
+
+    expect(disabled.categorySubfoldersEnabled).toBe(false);
+    expect(await resolveCategoryDestination(disabled, 'Movies'))
+      .toBe('/Users/test/Downloads');
+    expect(await resolveCategoryDestination(disabled, 'Documents'))
+      .toBe('/Users/test/Downloads');
+  });
+
   it('keeps an explicit empty category subfolder as the base folder', async () => {
     const settings = normalizeDownloadLocationSettings({
       baseDownloadFolder: '/Users/test/Downloads',

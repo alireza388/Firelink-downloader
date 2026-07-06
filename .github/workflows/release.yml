@@ -91,6 +91,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           APP="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Firelink.app"
+          DMG="$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -name '*.dmg' -print -quit)"
+          test -n "$DMG"
+          npm run verify:macos-signing -- --app "$APP" --dmg "$DMG"
           node scripts/verify-binaries.js --search-root "$APP" --target ${{ matrix.target }}
           node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
       - name: Verify Windows installer payload and launch

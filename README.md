@@ -9,9 +9,6 @@
   [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
   [![Windows](.github/badges/windows.svg)](#platforms)
   [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
-  [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app/)
-  [![Rust](https://img.shields.io/badge/Rust-backend-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-  [![React](https://img.shields.io/badge/React-TypeScript-61DAFB?style=flat-square&logo=react&logoColor=111111)](https://react.dev/)
   [![License](https://img.shields.io/github/license/nimbold/Firelink?style=flat-square)](LICENSE)
   [![CI](https://img.shields.io/github/actions/workflow/status/nimbold/Firelink/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/nimbold/Firelink/actions/workflows/ci.yml)
 
@@ -36,33 +33,33 @@
 
 ## Why Firelink
 
-Firelink is built for people who want a real desktop download manager again: fast segmented transfers, browser capture, media extraction, scheduling, recovery, and clear control over where files land. Version 1.0.0 completes the move from the earlier macOS-only Swift app to a modern Rust/Tauri application with a React and TypeScript interface.
+Firelink is a desktop download manager for fast transfers, browser capture, media extraction, scheduling, and clear file placement.
 
-The app keeps the heavy work native. Downloads are coordinated by a Rust backend, accelerated with aria2, enriched with yt-dlp and FFmpeg for media workflows, and persisted locally with SQLite so queues survive restarts and app updates.
+It is now a cross-platform Rust/Tauri app with a React and TypeScript interface. A native backend coordinates downloads with aria2, yt-dlp, FFmpeg, Deno, and SQLite.
 
 ## Features
 
-- **Fast segmented downloads** powered by aria2 with configurable connections, retries, and speed limits.
-- **Media extraction** with yt-dlp, FFmpeg, and Deno for video/audio links and richer format selection.
-- **A real Add window** for manual, extension-captured, and media downloads, including metadata, duplicate handling, and save-location choices before downloads start.
-- **Persistent queue management** with safe concurrency limits, pause/resume, retry, redownload, sorting, multi-select, and bulk controls.
-- **Download scheduling** with start/stop windows, speed-limiter tools, and optional post-queue actions.
-- **Smart organization** through categories, default folders, per-download overrides, and open/reveal/trash actions.
-- **Private browser handoff** through authenticated local pairing with replay protection and desktop-server proof checks.
-- **Native desktop integration** including tray controls, notifications, completion sounds, sleep prevention, and OS keychain support where available.
-- **Diagnostics built in** with engine health checks, structured logs, and packaged-engine verification.
+- **Segmented downloads** with aria2, retries, speed limits, and connection controls.
+- **Media downloads** with yt-dlp, FFmpeg, and Deno.
+- **Add window** for metadata, duplicates, location choices, and captured links.
+- **Persistent queues** with pause, resume, retry, redownload, sorting, multi-select, and bulk actions.
+- **Scheduling** with start/stop windows, speed rules, and post-queue actions.
+- **File organization** with categories, default folders, per-download overrides, and reveal/trash actions.
+- **Browser handoff** through local pairing, signed requests, replay protection, and server checks.
+- **Desktop integration** with tray controls, notifications, sounds, sleep prevention, and secure credential storage.
+- **Diagnostics** with engine health checks, structured logs, and package verification.
 
 ## Installation
 
-Download the latest desktop build from [GitHub Releases](https://github.com/nimbold/Firelink/releases).
+Download desktop builds from [GitHub Releases](https://github.com/nimbold/Firelink/releases).
 
 | Platform | Package | Notes |
 | --- | --- | --- |
-| **macOS Apple silicon** | `.dmg` | Unsigned and not notarized. Open through Finder or approve once in **System Settings -> Privacy & Security**. |
+| **macOS Apple silicon** | `.dmg` | Not notarized. If macOS blocks the first launch, approve Firelink in **System Settings -> Privacy & Security**. |
 | **Windows x64** | NSIS `.exe` installer | Unsigned. Windows SmartScreen may warn until code signing is added. |
 | **Linux x64** | `.AppImage` | Make executable before launching if your desktop environment does not do that automatically. |
 
-Production bundles include the required media engines for the target platform. Users do not need to install aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or a package manager for everyday app usage.
+Bundles include the required engines. Users do not need aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or another package manager.
 
 ## Browser Extension
 
@@ -72,28 +69,27 @@ Production bundles include the required media engines for the target platform. U
   <a href="https://github.com/nimbold/Firelink-Extension#manual-chromium-installation"><img src="https://img.shields.io/badge/Manual%20install-Chromium-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Read manual Chromium install instructions" /></a>
 </p>
 
-Firelink Companion connects your browser to the desktop app so links and browser downloads can open in Firelink instead of disappearing into the browser's default download shelf.
-The Chrome extension is currently distributed as a manual Chromium package while Chrome Web Store publication is pending. Follow the [manual Chrome/Chromium installation instructions](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) and download `firelink-chromium.zip` from the [Firelink-Extension releases](https://github.com/nimbold/Firelink-Extension/releases).
+Firelink Companion sends browser links and downloads to the desktop app.
 
 What it adds:
 
-- **Automatic capture** for ordinary browser downloads, while still routing every captured link through Firelink's Add window.
-- **Firefox and Chromium support** for Firefox, Chrome, Edge, Brave, Vivaldi, Opera, and other compatible desktop Chromium browsers.
-- **Context-menu actions** for "Download with Firelink" and selected links.
-- **Signed local requests** using the pairing token from **Settings -> Integrations**.
-- **Server identity checks** so the extension only trusts the real local Firelink app.
-- **Offline-safe behavior** that resumes browser downloads when Firelink is closed or rejects a handoff.
-- **Protocol-aware compatibility** so older desktop builds are rejected before automatic capture can cancel a browser download.
+- Automatic capture for regular browser downloads.
+- Context-menu actions for links and selected text.
+- Firefox and Chromium support.
+- Signed local requests using the token from **Settings -> Integrations**.
+- Fallback to the browser download when Firelink is closed or rejects a handoff.
 
-Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chrome and Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation). The extension is maintained in the [Firelink-Extension](https://github.com/nimbold/Firelink-Extension) repository and is also vendored here as the `Extensions/Firefox` submodule.
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases).
+
+The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Firefox` submodule.
 
 ## Platforms
 
 | Target | Status |
 | --- | --- |
-| **macOS arm64** | Supported. Automated native build, engine validation, packaged launch smoke test, and unsigned DMG packaging. |
-| **Windows x64** | Supported. Native GitHub Actions build, engine validation, silent installer smoke test, and NSIS packaging. |
-| **Linux x64** | Supported. Native GitHub Actions build, engine validation, AppImage repackaging, and xvfb launch smoke test. |
+| **macOS arm64** | Supported. Native build, engine checks, launch smoke test, ad-hoc-signed DMG workflow. |
+| **Windows x64** | Supported. Native build, engine checks, silent installer smoke test, NSIS installer. |
+| **Linux x64** | Supported. Native build, engine checks, xvfb launch smoke test, AppImage. |
 
 ## Development
 
@@ -134,7 +130,7 @@ Create a production bundle:
 npm run tauri build
 ```
 
-macOS development uses locked payloads in `src-tauri/binaries`. Windows and Linux payloads are provisioned from checksum-pinned archives:
+macOS uses locked payloads in `src-tauri/binaries`. Provision Windows and Linux payloads from checksum-pinned archives:
 
 ```sh
 node scripts/provision-engines.js --target x86_64-pc-windows-msvc

@@ -32,6 +32,7 @@
     "bindings": "cd src-tauri && cargo test export_bindings --lib",
     "build": "tsc && vite build",
     "check:updates": "node scripts/check-updates.js",
+    "verify:macos-signing": "node scripts/verify-macos-signing.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest"

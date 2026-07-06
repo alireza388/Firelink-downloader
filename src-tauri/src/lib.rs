@@ -1007,6 +1007,14 @@ fn append_ytdlp_http_headers(
     Ok(())
 }
 
+fn is_browser_cookie_extraction_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("could not copy") && lower.contains("cookie database")
+        || lower.contains("could not access browser cookie database")
+        || lower.contains("failed to read browser cookie")
+        || lower.contains("failed to decrypt with dpapi")
+}
+
 fn should_cleanup_media_artifacts_after_failure(
     failure_reason: &str,
     strike: usize,
@@ -1332,14 +1340,27 @@ async fn fetch_media_metadata(
     drop(cache_guard);
 
     let result = fetch_media_metadata_uncached(
-        app_handle,
-        url,
-        cookie_browser,
-        username,
-        password,
-        proxy,
+        app_handle.clone(),
+        url.clone(),
+        cookie_browser.clone(),
+        username.clone(),
+        password.clone(),
+        proxy.clone(),
     )
     .await;
+
+    let result = match (result, cookie_browser.as_deref()) {
+        (Err(error), Some(browser))
+            if !browser.trim().is_empty() && is_browser_cookie_extraction_error(&error) =>
+        {
+            log::warn!(
+                "yt-dlp could not read browser cookies from {}; retrying media metadata without browser cookies",
+                browser
+            );
+            fetch_media_metadata_uncached(app_handle, url, None, username, password, proxy).await
+        }
+        (result, _) => result,
+    };
 
     let result = match result {
         Ok(metadata) if metadata.formats.is_empty() => {
@@ -2667,6 +2688,8 @@ pub(crate) async fn start_media_download_internal(
     let max_retries = max_tries.unwrap_or(0).max(0) as usize;
     let mut strike = 0_usize;
     let mut processing_started = false;
+    let mut effective_cookie_source = cookie_source.clone();
+    let mut browser_cookie_fallback_used = false;
 
     while strike <= max_retries {
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
@@ -2714,7 +2737,7 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
-        if let Some(cs) = cookie_source.as_ref() {
+        if let Some(cs) = effective_cookie_source.as_ref() {
             let mut cs = cs.clone();
             if !cs.is_empty() && cs != "none" {
                 if cs == "safari" {
@@ -2754,7 +2777,7 @@ pub(crate) async fn start_media_download_internal(
         let mut temp_info_path = None;
         if let Ok(mut cache) = get_metadata_cache().lock() {
             let info_cache_key =
-                metadata_info_cache_key(&url, cookie_source.as_deref(), proxy.as_deref());
+                metadata_info_cache_key(&url, effective_cookie_source.as_deref(), proxy.as_deref());
             if let Some(json_str) = cache.remove(&info_cache_key) {
                 let temp_dir = std::env::temp_dir();
                 let path = temp_dir.join(format!("firelink_ytdlp_{}.info.json", id));
@@ -2940,6 +2963,21 @@ pub(crate) async fn start_media_download_internal(
         let strikes_left = strike < max_retries;
         if should_cleanup_media_artifacts_after_failure(&failure_reason, strike, max_retries) {
             cleanup_media_artifacts(&out_path, false).await;
+        }
+        if !browser_cookie_fallback_used
+            && effective_cookie_source
+                .as_deref()
+                .is_some_and(|source| !source.trim().is_empty() && source != "none")
+            && is_browser_cookie_extraction_error(&failure_reason)
+        {
+            let source = effective_cookie_source.clone().unwrap_or_default();
+            log::warn!(
+                "yt-dlp could not read browser cookies from {}; retrying media download without browser cookies",
+                source
+            );
+            effective_cookie_source = None;
+            browser_cookie_fallback_used = true;
+            continue;
         }
         if !(transient && strikes_left) {
             return Err(failure_reason);
@@ -4423,8 +4461,9 @@ mod tests {
         aggregate_media_fraction, append_ytdlp_http_headers, build_media_format_options,
         collect_download_uris, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
-        json_lower, media_output_template, media_progress_speed, normalize_speed_limit_for_aria2,
-        parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line, redact_log_line,
+        is_browser_cookie_extraction_error, json_lower, media_output_template,
+        media_progress_speed, normalize_speed_limit_for_aria2, parse_firelink_deep_link,
+        parse_ffmpeg_version, parse_media_progress_line, redact_log_line,
         sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
         FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
@@ -4712,6 +4751,22 @@ mod tests {
         assert_eq!(option.format_id, "301+251");
         assert_eq!(option.filesize, None);
         assert_eq!(option.filesize_approx, Some(1_468_000_000));
+    }
+
+    #[test]
+    fn classifies_browser_cookie_database_errors_for_fallback() {
+        assert!(is_browser_cookie_extraction_error(
+            "ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271"
+        ));
+        assert!(is_browser_cookie_extraction_error(
+            "failed to read browser cookie data"
+        ));
+        assert!(!is_browser_cookie_extraction_error(
+            "ERROR: Sign in to confirm you are not a bot"
+        ));
+        assert!(!is_browser_cookie_extraction_error(
+            "ERROR: requested format is not available"
+        ));
     }
 
     #[test]

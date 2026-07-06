@@ -65,6 +65,18 @@ describe('download locations', () => {
     expect(await resolveCategoryDestination(automatic, 'Movies')).toBe('/Volumes/Media');
   });
 
+  it('keeps an explicit empty category subfolder as the base folder', async () => {
+    const settings = normalizeDownloadLocationSettings({
+      baseDownloadFolder: '/Users/test/Downloads',
+      categorySubfolders: { Movies: '' }
+    });
+
+    expect(settings.categorySubfolders.Movies).toBe('');
+    expect(settings.categorySubfolders.Documents).toBe('Documents');
+    expect(formatDerivedCategoryPath('/Users/test/Downloads', '')).toBe('/Users/test/Downloads');
+    expect(await resolveCategoryDestination(settings, 'Movies')).toBe('/Users/test/Downloads');
+  });
+
   it('keeps category subfolders relative and permits nested folders', () => {
     expect(normalizeCategorySubfolder('../Media/./Movies', 'Movies')).toBe('Media/Movies');
     expect(normalizeCategorySubfolder('C:\\Media\\Movies', 'Movies')).toBe('Media/Movies');

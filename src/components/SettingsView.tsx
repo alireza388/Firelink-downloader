@@ -175,7 +175,9 @@ const CategoryFolderInput = ({
   onBrowse: () => void;
 }) => {
   const base = settings.baseDownloadFolder || '~/Downloads';
-  const sub = settings.categorySubfolders[category] || DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS];
+  const sub = Object.prototype.hasOwnProperty.call(settings.categorySubfolders, category)
+    ? settings.categorySubfolders[category]
+    : DEFAULT_CATEGORY_SUBFOLDERS[category as keyof typeof DEFAULT_CATEGORY_SUBFOLDERS];
   const override = settings.categoryDirectoryOverrides[category];
   const displayPath = override ?? formatDerivedCategoryPath(base, sub);
 
@@ -480,7 +482,9 @@ runEngineChecks(false);
             DOWNLOAD_CATEGORIES.map(category => [
               category,
               normalizeCategorySubfolder(
-                settings.categorySubfolders[category] || '',
+                Object.prototype.hasOwnProperty.call(settings.categorySubfolders, category)
+                  ? settings.categorySubfolders[category]
+                  : DEFAULT_CATEGORY_SUBFOLDERS[category],
                 DEFAULT_CATEGORY_SUBFOLDERS[category]
               )
             ])

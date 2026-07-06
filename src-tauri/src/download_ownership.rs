@@ -178,10 +178,13 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
                         .get(&category)
                         .cloned()
                         .unwrap_or_else(|| category.clone());
-                    std::path::PathBuf::from(&settings.base_download_folder)
-                        .join(subfolder)
-                        .to_string_lossy()
-                        .to_string()
+                    let base = std::path::PathBuf::from(&settings.base_download_folder);
+                    let destination = if subfolder.is_empty() {
+                        base
+                    } else {
+                        base.join(subfolder)
+                    };
+                    destination.to_string_lossy().to_string()
                 })
         });
         let default_destination = settings

@@ -55,11 +55,16 @@ const stringRecord = (value: unknown): Record<string, string> => {
   );
 };
 
+const hasOwn = (value: Record<string, string>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
 const normalizedForComparison = (value: string): string =>
   value.replace(/\\/g, '/').replace(/\/+$/, '');
 
 const legacyDerivedPath = (base: string, subfolder: string): string =>
-  `${normalizedForComparison(base)}/${subfolder.replace(/^[\\/]+|[\\/]+$/g, '')}`;
+  [normalizedForComparison(base), subfolder.replace(/^[\\/]+|[\\/]+$/g, '')]
+    .filter(Boolean)
+    .join('/');
 
 const isWindowsLikePath = (value: string): boolean =>
   /^[a-z]:[\\/]/i.test(value) || value.startsWith('\\\\') || value.includes('\\');
@@ -67,6 +72,7 @@ const isWindowsLikePath = (value: string): boolean =>
 export const formatDerivedCategoryPath = (base: string, subfolder: string): string => {
   const trimmedBase = base.trim() || '~/Downloads';
   const relative = subfolder.replace(/^[\\/]+|[\\/]+$/g, '');
+  if (!relative) return trimmedBase.replace(/[\\/]+$/, '');
   const separator = isWindowsLikePath(trimmedBase) ? '\\' : '/';
   return `${trimmedBase.replace(/[\\/]+$/, '')}${separator}${relative}`;
 };
@@ -90,6 +96,9 @@ export const normalizeCategorySubfolder = (
   value: string,
   fallback: string
 ): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
   const parts = value
     .trim()
     .replace(/\\/g, '/')
@@ -107,13 +116,15 @@ export const normalizeDownloadLocationSettings = (
     '~/Downloads';
   const persistedSubfolders = stringRecord(value.categorySubfolders);
   const categorySubfolders = Object.fromEntries(
-    DOWNLOAD_CATEGORIES.map(category => [
-      category,
-      normalizeCategorySubfolder(
-        persistedSubfolders[category] || '',
-        DEFAULT_CATEGORY_SUBFOLDERS[category]
-      )
-    ])
+    DOWNLOAD_CATEGORIES.map(category => {
+      const persistedValue = hasOwn(persistedSubfolders, category)
+        ? persistedSubfolders[category]
+        : DEFAULT_CATEGORY_SUBFOLDERS[category];
+      return [
+        category,
+        normalizeCategorySubfolder(persistedValue, DEFAULT_CATEGORY_SUBFOLDERS[category])
+      ];
+    })
   );
   const categoryDirectoryOverrides = stringRecord(value.categoryDirectoryOverrides);
   const legacyDirectories = stringRecord(value.downloadDirectories);
@@ -153,11 +164,14 @@ export const resolveCategoryDestination = async (
 
   const base = settings.baseDownloadFolder.trim() || '~/Downloads';
   const expandedBase = await expandTilde(base);
-  const subfolder =
-    normalizeCategorySubfolder(
-      settings.categorySubfolders[category] || '',
-      DEFAULT_CATEGORY_SUBFOLDERS[category]
-    );
+  const persistedValue = hasOwn(settings.categorySubfolders, category)
+    ? settings.categorySubfolders[category]
+    : DEFAULT_CATEGORY_SUBFOLDERS[category];
+  const subfolder = normalizeCategorySubfolder(
+    persistedValue,
+    DEFAULT_CATEGORY_SUBFOLDERS[category]
+  );
+  if (!subfolder) return expandedBase;
   return join(expandedBase, subfolder);
 };
 

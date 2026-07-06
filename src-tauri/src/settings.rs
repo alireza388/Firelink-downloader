@@ -150,6 +150,10 @@ fn default_category_subfolders() -> HashMap<String, String> {
 }
 
 fn normalize_category_subfolder(value: &str, fallback: &str) -> String {
+    if value.trim().is_empty() {
+        return String::new();
+    }
+
     let parts = value
         .split(['/', '\\'])
         .filter(|part| !part.is_empty() && *part != "." && *part != ".." && !part.ends_with(':'))
@@ -181,7 +185,7 @@ fn migrate_location_settings(state: &mut Value) -> Result<(), String> {
     let mut subfolders = default_category_subfolders();
     if let Some(persisted) = state.get("categorySubfolders").and_then(Value::as_object) {
         for (category, value) in persisted {
-            if let Some(folder) = value.as_str().filter(|folder| !folder.trim().is_empty()) {
+            if let Some(folder) = value.as_str() {
                 let fallback = subfolders
                     .get(category)
                     .cloned()
@@ -251,11 +255,13 @@ fn normalize_location_path(path: &str) -> String {
 }
 
 fn derived_location_path(base: &str, subfolder: &str) -> String {
-    format!(
-        "{}/{}",
-        normalize_location_path(base),
-        subfolder.trim_matches(|character| character == '/' || character == '\\')
-    )
+    let base = normalize_location_path(base);
+    let subfolder = subfolder.trim_matches(|character| character == '/' || character == '\\');
+    if subfolder.is_empty() {
+        base
+    } else {
+        format!("{base}/{subfolder}")
+    }
 }
 
 fn default_settings() -> PersistedSettings {
@@ -448,6 +454,24 @@ mod tests {
         let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
 
         assert_eq!(settings.category_subfolders["Movies"], "Media/Movies");
+        assert_eq!(settings.category_subfolders["Documents"], "Documents");
+    }
+
+    #[test]
+    fn preserves_empty_category_subfolder_as_base_folder() {
+        let stored = json!({
+            "state": {
+                "baseDownloadFolder": "/Users/test/Downloads",
+                "categorySubfolders": {
+                    "Movies": ""
+                }
+            },
+            "version": 3
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert_eq!(settings.category_subfolders["Movies"], "");
         assert_eq!(settings.category_subfolders["Documents"], "Documents");
     }
 

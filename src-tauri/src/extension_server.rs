@@ -31,7 +31,7 @@ const CLIENT_NONCE_HEADER: &str = "x-firelink-client-nonce";
 const SERVER_PROOF_HEADER: &str = "x-firelink-server-proof";
 const SERVER_PORT_HEADER: &str = "x-firelink-server-port";
 const SERVER_PROOF_PREFIX: &[u8] = b"firelink-server-proof\n";
-const PROTOCOL_VERSION: &str = "3";
+const PROTOCOL_VERSION: &str = "4";
 
 type HmacSha256 = Hmac<Sha256>;
 pub type SharedExtensionToken = Arc<RwLock<String>>;
@@ -61,6 +61,8 @@ struct ExtensionRequest {
     headers: Option<String>,
     #[serde(default)]
     cookies: Option<String>,
+    #[serde(default)]
+    media: bool,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -72,6 +74,7 @@ pub struct ExtensionDownload {
     filename: Option<String>,
     headers: Option<String>,
     cookies: Option<String>,
+    media: bool,
 }
 
 pub async fn start_server(
@@ -318,6 +321,7 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         filename,
         headers: payload.headers.filter(|value| !value.trim().is_empty()),
         cookies: payload.cookies.filter(|value| !value.trim().is_empty()),
+        media: payload.media,
     })
 }
 
@@ -478,7 +482,7 @@ mod tests {
         assert_eq!(response.headers().get(SERVER_HEADER).unwrap(), "1");
         assert_eq!(
             response.headers().get(PROTOCOL_VERSION_HEADER).unwrap(),
-            "3"
+            "4"
         );
 
         server.abort();

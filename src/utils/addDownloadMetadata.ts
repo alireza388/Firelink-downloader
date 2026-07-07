@@ -71,6 +71,7 @@ export const reconcileDownloadRows = (
   rawText: string,
   currentRows: AddDownloadDraftRow[],
   pendingFilename?: string,
+  forceMediaUrls: ReadonlySet<string> = new Set(),
   createId: () => string = () => crypto.randomUUID()
 ): AddDownloadDraftRow[] => {
   const inputs = parseInputLines(rawText);
@@ -78,7 +79,19 @@ export const reconcileDownloadRows = (
 
   return inputs.map(input => {
     const preserved = existing.get(input.sourceUrl);
-    if (preserved) return preserved;
+    if (preserved) {
+      if (input.valid && forceMediaUrls.has(input.sourceUrl) && !preserved.isMedia) {
+        return {
+          ...preserved,
+          status: 'loading',
+          generation: preserved.generation + 1,
+          isMedia: true,
+          formats: undefined,
+          selectedFormat: undefined
+        };
+      }
+      return preserved;
+    }
 
     const fallback = canonicalizeDownloadFileName(
       inputs.length === 1 && pendingFilename
@@ -93,7 +106,7 @@ export const reconcileDownloadRows = (
       file: fallback,
       status: input.valid ? 'loading' : 'invalid',
       generation: input.valid ? 1 : 0,
-      isMedia: input.valid && isMediaUrl(input.sourceUrl)
+      isMedia: input.valid && (forceMediaUrls.has(input.sourceUrl) || isMediaUrl(input.sourceUrl))
     };
   });
 };

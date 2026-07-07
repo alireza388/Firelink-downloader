@@ -252,6 +252,7 @@ interface DownloadState {
   pendingAddFilename: string;
   pendingAddHeaders: string;
   pendingAddCookies: string;
+  pendingAddMediaUrls: string[];
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
   openAddModalWithUrls: (
@@ -259,7 +260,8 @@ interface DownloadState {
     referer?: string | null,
     filename?: string | null,
     headers?: string | null,
-    cookies?: string | null
+    cookies?: string | null,
+    media?: boolean
   ) => void;
   handleExtensionDownload: (request: ExtensionDownloadRequest) => Promise<void>;
   deleteModalState: DeleteModalState;
@@ -383,6 +385,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddFilename: '',
   pendingAddHeaders: '',
   pendingAddCookies: '',
+  pendingAddMediaUrls: [],
   selectedPropertiesDownloadId: null,
   deleteModalState: { isOpen: false },
   openDeleteModal: (downloadIds) => set({ 
@@ -398,18 +401,27 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     pendingAddReferer: '',
     pendingAddFilename: '',
     pendingAddHeaders: '',
-    pendingAddCookies: ''
+    pendingAddCookies: '',
+    pendingAddMediaUrls: []
   }),
-  openAddModalWithUrls: (urls, referer, filename, headers, cookies) => set((state) => {
+  openAddModalWithUrls: (urls, referer, filename, headers, cookies, media = false) => set((state) => {
     const existingUrls = state.isAddModalOpen && state.pendingAddUrls ? state.pendingAddUrls : '';
     const mergedUrls = existingUrls ? `${existingUrls}\n${urls}` : urls;
+    const existingMediaUrls = state.isAddModalOpen ? state.pendingAddMediaUrls : [];
+    const pendingAddMediaUrls = media
+      ? [...new Set([
+          ...existingMediaUrls,
+          ...urls.split('\n').map(url => url.trim()).filter(Boolean)
+        ])]
+      : existingMediaUrls;
     return {
       isAddModalOpen: true,
       pendingAddUrls: mergedUrls,
       pendingAddReferer: referer?.trim() || '',
       pendingAddFilename: filename?.trim() || '',
       pendingAddHeaders: headers?.trim() || '',
-      pendingAddCookies: cookies?.trim() || ''
+      pendingAddCookies: cookies?.trim() || '',
+      pendingAddMediaUrls
     };
   }),
   handleExtensionDownload: async (request) => {
@@ -421,7 +433,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       request.referer,
       urls.length === 1 ? request.filename : null,
       request.headers,
-      request.cookies
+      request.cookies,
+      request.media === true
     );
   },
   setSelectedPropertiesDownloadId: (id) => set({ selectedPropertiesDownloadId: id }),

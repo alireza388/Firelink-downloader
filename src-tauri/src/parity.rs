@@ -478,6 +478,11 @@ pub static SUPPORTED_DOMAINS: &[&str] = &[
     "reddit.com",
     "v.redd.it",
     "soundcloud.com",
+    "pornhub.com",
+    "redtube.com",
+    "xhamster.com",
+    "xnxx.com",
+    "xvideos.com",
 ];
 
 #[tauri::command]

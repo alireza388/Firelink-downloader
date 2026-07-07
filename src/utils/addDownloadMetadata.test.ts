@@ -30,6 +30,7 @@ describe('add download metadata workflow', () => {
       'https://example.com/file.zip\nhttps://example.com/new.zip',
       [existing],
       undefined,
+      new Set(),
       () => `new-${nextId++}`
     );
 
@@ -47,10 +48,53 @@ describe('add download metadata workflow', () => {
       'https://example.com/a\nhttps://example.com/a\nfile:///tmp/private\nnot-a-url',
       [],
       undefined,
+      new Set(),
       () => `row-${nextId++}`
     );
 
     expect(rows.map(item => item.status)).toEqual(['loading', 'invalid', 'invalid']);
+  });
+
+  it('forces explicit extension media fetches through media metadata for any http page', () => {
+    const rows = reconcileDownloadRows(
+      'https://adult.example/watch/123',
+      [],
+      undefined,
+      new Set(['https://adult.example/watch/123'])
+    );
+
+    expect(rows[0]).toMatchObject({
+      sourceUrl: 'https://adult.example/watch/123',
+      isMedia: true,
+      status: 'loading'
+    });
+  });
+
+  it('upgrades an existing normal row when the user explicitly fetches it as media', () => {
+    const existing = row({
+      sourceUrl: 'https://adult.example/watch/123',
+      downloadUrl: 'https://adult.example/watch/123',
+      file: '123',
+      status: 'ready',
+      generation: 2,
+      isMedia: false
+    });
+
+    const rows = reconcileDownloadRows(
+      'https://adult.example/watch/123',
+      [existing],
+      undefined,
+      new Set(['https://adult.example/watch/123'])
+    );
+
+    expect(rows[0]).toMatchObject({
+      sourceUrl: 'https://adult.example/watch/123',
+      isMedia: true,
+      status: 'loading',
+      generation: 3,
+      formats: undefined,
+      selectedFormat: undefined
+    });
   });
 
   it('refreshes only failed metadata and preserves successful format selection', () => {

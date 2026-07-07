@@ -18,7 +18,12 @@ let MEDIA_DOMAINS = [
   'v.redd.it',
   'soundcloud.com',
   'facebook.com',
-  'fb.watch'
+  'fb.watch',
+  'pornhub.com',
+  'redtube.com',
+  'xhamster.com',
+  'xnxx.com',
+  'xvideos.com'
 ];
 
 const ACTIVE_DOWNLOAD_STATUSES: ReadonlySet<DownloadStatus> = new Set([

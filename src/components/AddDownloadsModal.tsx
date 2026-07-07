@@ -57,6 +57,7 @@ export const AddDownloadsModal = () => {
     pendingAddFilename,
     pendingAddHeaders,
     pendingAddCookies,
+    pendingAddMediaUrls,
     toggleAddModal,
     addDownload,
     queues
@@ -136,6 +137,7 @@ export const AddDownloadsModal = () => {
     pendingAddReferer,
     pendingAddHeaders,
     pendingAddCookies,
+    pendingAddMediaUrls,
     baseDownloadFolder,
     perServerConnections
   ]);
@@ -173,10 +175,17 @@ export const AddDownloadsModal = () => {
   }, [saveLocation, isAddModalOpen]);
 
   useEffect(() => {
+    const forcedMediaUrls = new Set(pendingAddMediaUrls.map(url => {
+      try {
+        return new URL(url).href;
+      } catch {
+        return url;
+      }
+    }));
     setParsedItems(current =>
-      reconcileDownloadRows(urls, current, pendingAddFilename || undefined)
+      reconcileDownloadRows(urls, current, pendingAddFilename || undefined, forcedMediaUrls)
     );
-  }, [urls, pendingAddFilename]);
+  }, [urls, pendingAddFilename, pendingAddMediaUrls]);
 
   useEffect(() => {
     for (const row of parsedItems) {
@@ -205,6 +214,7 @@ export const AddDownloadsModal = () => {
             const mediaData = await fetchMediaMetadataDeduped({
               url: row.sourceUrl,
               cookieBrowser: browserArg,
+              userAgent: settingsStore.customUserAgent.trim() || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
               headers: headers?.trim() || null,

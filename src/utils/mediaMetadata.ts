@@ -4,6 +4,7 @@ import type { MediaMetadata } from '../bindings/MediaMetadata';
 type FetchMediaMetadataArgs = {
   url: string;
   cookieBrowser: string | null;
+  userAgent: string | null;
   username: string | null;
   password: string | null;
   headers: string | null;
@@ -17,6 +18,7 @@ const metadataKey = (args: FetchMediaMetadataArgs) =>
   JSON.stringify([
     args.url,
     args.cookieBrowser,
+    args.userAgent,
     args.username,
     args.password,
     args.headers,

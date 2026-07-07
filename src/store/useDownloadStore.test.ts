@@ -64,6 +64,7 @@ describe('useDownloadStore', () => {
       pendingAddFilename: '',
       pendingAddHeaders: '',
       pendingAddCookies: '',
+      pendingAddMediaUrls: [],
     });
   });
 
@@ -487,7 +488,8 @@ describe('useDownloadStore', () => {
       silent: false,
       filename: 'file.bin',
       headers: 'X-Test: value',
-      cookies: 'session=secret'
+      cookies: 'session=secret',
+      media: false
     });
 
     const state = useDownloadStore.getState();
@@ -495,53 +497,115 @@ describe('useDownloadStore', () => {
     expect(state.pendingAddUrls).toBe('https://example.com/file.bin');
     expect(state.pendingAddReferer).toBe('https://example.com/page');
     expect(state.pendingAddFilename).toBe('file.bin');
-  expect(state.pendingAddHeaders).toBe('X-Test: value');
-  expect(state.pendingAddCookies).toBe('session=secret');
- });
+	  expect(state.pendingAddHeaders).toBe('X-Test: value');
+	  expect(state.pendingAddCookies).toBe('session=secret');
+    expect(state.pendingAddMediaUrls).toEqual([]);
+	 });
 
  it('does not reuse stale extension metadata for a later single-link handoff', async () => {
   useDownloadStore.setState({
    isAddModalOpen: true,
    pendingAddUrls: '',
    pendingAddReferer: 'https://old.example/page',
-   pendingAddFilename: '7aae36e6-00ec-4e7d-8dec-f14ace170bdb',
-   pendingAddHeaders: 'X-Old: value',
-   pendingAddCookies: 'old=session'
-  });
+	   pendingAddFilename: '7aae36e6-00ec-4e7d-8dec-f14ace170bdb',
+	   pendingAddHeaders: 'X-Old: value',
+	   pendingAddCookies: 'old=session',
+      pendingAddMediaUrls: []
+	  });
 
   await useDownloadStore.getState().handleExtensionDownload({
    urls: ['https://github.com/center2055/OnionHop/releases/download/v3.5/OnionHop-3.5-macOS-arm64.dmg'],
    referer: 'https://github.com/center2055/OnionHop/releases/tag/v3.5',
    silent: false,
-   filename: null,
-   headers: 'User-Agent: Firefox Test',
-   cookies: null
-  });
+	   filename: null,
+	   headers: 'User-Agent: Firefox Test',
+	   cookies: null,
+      media: false
+	  });
 
   const state = useDownloadStore.getState();
   expect(state.pendingAddUrls).toBe('https://github.com/center2055/OnionHop/releases/download/v3.5/OnionHop-3.5-macOS-arm64.dmg');
   expect(state.pendingAddReferer).toBe('https://github.com/center2055/OnionHop/releases/tag/v3.5');
   expect(state.pendingAddFilename).toBe('');
-  expect(state.pendingAddHeaders).toBe('User-Agent: Firefox Test');
-  expect(state.pendingAddCookies).toBe('');
- });
+	  expect(state.pendingAddHeaders).toBe('User-Agent: Firefox Test');
+	  expect(state.pendingAddCookies).toBe('');
+    expect(state.pendingAddMediaUrls).toEqual([]);
+	 });
 
  it('routes silent extension captures to the Add Modal instead of queuing immediately', async () => {
   await useDownloadStore.getState().handleExtensionDownload({
    urls: ['https://example.com/downloads/report.pdf'],
    referer: 'https://example.com/page',
    silent: true,
-   filename: 'report.pdf',
-   headers: 'User-Agent: Test',
-   cookies: 'session=secret'
-  });
+	   filename: 'report.pdf',
+	   headers: 'User-Agent: Test',
+	   cookies: 'session=secret',
+      media: false
+	  });
 
   const state = useDownloadStore.getState();
   expect(state.isAddModalOpen).toBe(true);
   expect(state.pendingAddUrls).toBe('https://example.com/downloads/report.pdf');
   expect(state.pendingAddReferer).toBe('https://example.com/page');
   expect(state.pendingAddFilename).toBe('report.pdf');
-  expect(state.pendingAddHeaders).toBe('User-Agent: Test');
-  expect(state.pendingAddCookies).toBe('session=secret');
- });
+	  expect(state.pendingAddHeaders).toBe('User-Agent: Test');
+	  expect(state.pendingAddCookies).toBe('session=secret');
+    expect(state.pendingAddMediaUrls).toEqual([]);
+	 });
+
+  it('preserves explicit extension media intent for non-allow-listed pages', async () => {
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://adult.example/watch/123'],
+      referer: 'https://adult.example/watch/123',
+      silent: false,
+      filename: null,
+      headers: 'User-Agent: Firefox Test',
+      cookies: 'session=secret',
+      media: true
+    });
+
+    const state = useDownloadStore.getState();
+    expect(state.isAddModalOpen).toBe(true);
+    expect(state.pendingAddUrls).toBe('https://adult.example/watch/123');
+    expect(state.pendingAddMediaUrls).toEqual(['https://adult.example/watch/123']);
+  });
+
+  it('deduplicates forced media URLs and drops stale media intent when opening fresh', async () => {
+    useDownloadStore.setState({
+      isAddModalOpen: true,
+      pendingAddUrls: 'https://adult.example/watch/123',
+      pendingAddMediaUrls: ['https://adult.example/watch/123']
+    });
+
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://adult.example/watch/123'],
+      referer: 'https://adult.example/watch/123',
+      silent: false,
+      filename: null,
+      headers: 'User-Agent: Firefox Test',
+      cookies: 'session=secret',
+      media: true
+    });
+
+    expect(useDownloadStore.getState().pendingAddMediaUrls).toEqual([
+      'https://adult.example/watch/123'
+    ]);
+
+    useDownloadStore.setState({
+      isAddModalOpen: false,
+      pendingAddMediaUrls: ['https://stale.example/watch']
+    });
+
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://example.com/file.bin'],
+      referer: 'https://example.com/page',
+      silent: false,
+      filename: 'file.bin',
+      headers: 'User-Agent: Firefox Test',
+      cookies: null,
+      media: false
+    });
+
+    expect(useDownloadStore.getState().pendingAddMediaUrls).toEqual([]);
+  });
 });

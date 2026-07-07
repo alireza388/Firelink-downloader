@@ -20,16 +20,22 @@ fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
 fn metadata_info_cache_key(
     url: &str,
     cookie_source: Option<&str>,
+    username: Option<&str>,
+    password: Option<&str>,
     headers: Option<&str>,
     cookies: Option<&str>,
     proxy: Option<&str>,
+    user_agent: Option<&str>,
 ) -> String {
     serde_json::json!([
         url,
         cookie_source.unwrap_or(""),
+        username.unwrap_or(""),
+        password.unwrap_or(""),
         headers.unwrap_or(""),
         cookies.unwrap_or(""),
-        proxy.unwrap_or("")
+        proxy.unwrap_or(""),
+        user_agent.unwrap_or("")
     ])
     .to_string()
 }
@@ -1320,6 +1326,7 @@ async fn fetch_media_metadata(
     app_handle: tauri::AppHandle,
     url: String,
     cookie_browser: Option<String>,
+    user_agent: Option<String>,
     username: Option<String>,
     password: Option<String>,
     headers: Option<String>,
@@ -1370,6 +1377,7 @@ async fn fetch_media_metadata(
         app_handle.clone(),
         url.clone(),
         cookie_browser.clone(),
+        user_agent.clone(),
         username.clone(),
         password.clone(),
         headers.clone(),
@@ -1387,7 +1395,7 @@ async fn fetch_media_metadata(
                 browser
             );
             fetch_media_metadata_uncached(
-                app_handle, url, None, username, password, headers, cookies, proxy,
+                app_handle, url, None, user_agent, username, password, headers, cookies, proxy,
             )
             .await
         }
@@ -1427,6 +1435,7 @@ async fn fetch_media_metadata_uncached(
     app_handle: tauri::AppHandle,
     url: String,
     cookie_browser: Option<String>,
+    user_agent: Option<String>,
     username: Option<String>,
     password: Option<String>,
     headers: Option<String>,
@@ -1436,9 +1445,12 @@ async fn fetch_media_metadata_uncached(
     let info_cache_key = metadata_info_cache_key(
         &url,
         cookie_browser.as_deref(),
+        username.as_deref(),
+        password.as_deref(),
         headers.as_deref(),
         cookies.as_deref(),
         proxy.as_deref(),
+        user_agent.as_deref(),
     );
 
     // Pass bundled tools by absolute path so extraction never depends on
@@ -1489,20 +1501,24 @@ async fn fetch_media_metadata_uncached(
         }
     }
 
+    if let Some(ua) = user_agent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        cmd = cmd.arg("--user-agent").arg(ua);
+    }
+
     let mut config_file = tempfile::Builder::new()
         .prefix("ytdlp-")
         .suffix(".conf")
         .tempfile()
         .map_err(|e| e.to_string())?;
     let mut config_content = String::new();
-    if let Some(user) = username {
+    if let Some(user) = username.as_deref() {
         if !user.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--username", &user);
+            append_ytdlp_config_option(&mut config_content, "--username", user);
         }
     }
-    if let Some(pass) = password {
+    if let Some(pass) = password.as_deref() {
         if !pass.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--password", &pass);
+            append_ytdlp_config_option(&mut config_content, "--password", pass);
         }
     }
     append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
@@ -2678,14 +2694,14 @@ pub(crate) async fn start_media_download_internal(
         .tempfile()
         .map_err(|e| e.to_string())?;
     let mut config_content = String::new();
-    if let Some(user) = username {
+    if let Some(user) = username.as_deref() {
         if !user.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--username", &user);
+            append_ytdlp_config_option(&mut config_content, "--username", user);
         }
     }
-    if let Some(pass) = password {
+    if let Some(pass) = password.as_deref() {
         if !pass.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--password", &pass);
+            append_ytdlp_config_option(&mut config_content, "--password", pass);
         }
     }
     append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
@@ -2820,9 +2836,12 @@ pub(crate) async fn start_media_download_internal(
             let info_cache_key = metadata_info_cache_key(
                 &url,
                 effective_cookie_source.as_deref(),
+                username.as_deref(),
+                password.as_deref(),
                 headers.as_deref(),
                 cookies.as_deref(),
                 proxy.as_deref(),
+                user_agent.as_deref(),
             );
             if let Some(json_str) = cache.remove(&info_cache_key) {
                 let temp_dir = std::env::temp_dir();
@@ -4604,27 +4623,69 @@ mod tests {
         let base = metadata_info_cache_key(
             "https://example.com/watch?v=1",
             Some("firefox"),
+            Some("user-one"),
+            Some("pass-one"),
             Some("User-Agent: Browser A"),
             Some("session=one"),
             None,
+            Some("Custom UA A"),
         );
         let changed_headers = metadata_info_cache_key(
             "https://example.com/watch?v=1",
             Some("firefox"),
+            Some("user-one"),
+            Some("pass-one"),
             Some("User-Agent: Browser B"),
             Some("session=one"),
             None,
+            Some("Custom UA A"),
         );
         let changed_cookies = metadata_info_cache_key(
             "https://example.com/watch?v=1",
             Some("firefox"),
+            Some("user-one"),
+            Some("pass-one"),
             Some("User-Agent: Browser A"),
             Some("session=two"),
             None,
+            Some("Custom UA A"),
+        );
+        let changed_username = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("user-two"),
+            Some("pass-one"),
+            Some("User-Agent: Browser A"),
+            Some("session=one"),
+            None,
+            Some("Custom UA A"),
+        );
+        let changed_password = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("user-one"),
+            Some("pass-two"),
+            Some("User-Agent: Browser A"),
+            Some("session=one"),
+            None,
+            Some("Custom UA A"),
+        );
+        let changed_user_agent = metadata_info_cache_key(
+            "https://example.com/watch?v=1",
+            Some("firefox"),
+            Some("user-one"),
+            Some("pass-one"),
+            Some("User-Agent: Browser A"),
+            Some("session=one"),
+            None,
+            Some("Custom UA B"),
         );
 
         assert_ne!(base, changed_headers);
         assert_ne!(base, changed_cookies);
+        assert_ne!(base, changed_username);
+        assert_ne!(base, changed_password);
+        assert_ne!(base, changed_user_agent);
     }
 
     #[test]

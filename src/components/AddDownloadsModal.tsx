@@ -48,6 +48,14 @@ const isCrossHostRedirect = (sourceUrl: string, downloadUrl: string) => {
   }
 };
 
+const normalizeComparableUrl = (rawUrl: string) => {
+  try {
+    return new URL(rawUrl).href;
+  } catch {
+    return rawUrl.trim();
+  }
+};
+
 export const AddDownloadsModal = () => {
   const { addToast } = useToast();
   const {
@@ -97,6 +105,7 @@ export const AddDownloadsModal = () => {
   const [checksumValue, setChecksumValue] = useState('');
   const [headers, setHeaders] = useState('');
   const [cookies, setCookies] = useState('');
+  const headersFromExtensionRef = useRef(false);
   const cookiesFromExtensionRef = useRef(false);
   const [mirrors, setMirrors] = useState('');
 
@@ -119,10 +128,12 @@ export const AddDownloadsModal = () => {
       setChecksumEnabled(false);
       setChecksumAlgo('SHA-256');
       setChecksumValue('');
-      setHeaders([
+      const extensionHeaders = [
         pendingAddReferer ? `Referer: ${pendingAddReferer.replace(/[\r\n]/g, '')}` : '',
         pendingAddHeaders
-      ].filter(Boolean).join('\n'));
+      ].filter(Boolean).join('\n');
+      setHeaders(extensionHeaders);
+      headersFromExtensionRef.current = Boolean(extensionHeaders.trim());
       setCookies(pendingAddCookies);
       cookiesFromExtensionRef.current = Boolean(pendingAddCookies?.trim());
       setMirrors('');
@@ -211,7 +222,7 @@ export const AddDownloadsModal = () => {
               }
             }
 
-            const mediaData = await fetchMediaMetadataDeduped({
+            const mediaMetadataArgs = {
               url: row.sourceUrl,
               cookieBrowser: browserArg,
               userAgent: settingsStore.customUserAgent.trim() || null,
@@ -220,7 +231,58 @@ export const AddDownloadsModal = () => {
               headers: headers?.trim() || null,
               cookies: cookies?.trim() || null,
               proxy
-            });
+            };
+            const cleanMediaMetadataArgs = {
+              ...mediaMetadataArgs,
+              headers: null,
+              cookies: null
+            };
+            const isExtensionMediaRow = pendingAddMediaUrls
+              .map(normalizeComparableUrl)
+              .includes(normalizeComparableUrl(row.sourceUrl));
+            const hasExtensionContext =
+              headersFromExtensionRef.current || cookiesFromExtensionRef.current;
+            let mediaData;
+            if (isExtensionMediaRow && hasExtensionContext) {
+              try {
+                mediaData = await fetchMediaMetadataDeduped(cleanMediaMetadataArgs);
+                if (headersFromExtensionRef.current) {
+                  setHeaders('');
+                  headersFromExtensionRef.current = false;
+                }
+                if (cookiesFromExtensionRef.current) {
+                  setCookies('');
+                  cookiesFromExtensionRef.current = false;
+                }
+              } catch (cleanError) {
+                console.warn(
+                  'Media metadata failed without extension browser context; retrying with extension headers/cookies',
+                  cleanError
+                );
+                mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
+              }
+            } else {
+              try {
+                mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
+              } catch (error) {
+                if (!hasExtensionContext) {
+                  throw error;
+                }
+                console.warn(
+                  'Media metadata failed with extension browser context; retrying without extension headers/cookies',
+                  error
+                );
+                mediaData = await fetchMediaMetadataDeduped(cleanMediaMetadataArgs);
+                if (headersFromExtensionRef.current) {
+                  setHeaders('');
+                  headersFromExtensionRef.current = false;
+                }
+                if (cookiesFromExtensionRef.current) {
+                  setCookies('');
+                  cookiesFromExtensionRef.current = false;
+                }
+              }
+            }
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
                 const quality = f.resolution || 'Video';
@@ -1036,7 +1098,15 @@ export const AddDownloadsModal = () => {
 
                     <div>
                       <label className="block text-[10px] uppercase font-bold tracking-wider text-text-muted mb-1">Headers</label>
-                      <textarea value={headers} onChange={e=>setHeaders(e.target.value)} className="add-download-control w-full h-12 px-3 py-1.5 text-xs font-mono resize-none" aria-label="Request headers" />
+                      <textarea
+                        value={headers}
+                        onChange={e => {
+                          headersFromExtensionRef.current = false;
+                          setHeaders(e.target.value);
+                        }}
+                        className="add-download-control w-full h-12 px-3 py-1.5 text-xs font-mono resize-none"
+                        aria-label="Request headers"
+                      />
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold tracking-wider text-text-muted mb-1">Cookies</label>

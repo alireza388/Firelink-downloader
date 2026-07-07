@@ -1,35 +1,69 @@
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 use ts_rs::TS;
 
 use crate::ipc::DownloadCategory;
 
 #[tauri::command]
 pub async fn get_system_proxy() -> Result<Option<String>, String> {
-    match sysproxy::Sysproxy::get_system_proxy() {
-        Ok(proxy) => {
-            if proxy.enable {
+    match native_system_proxy() {
+        Ok(Some(proxy)) => Ok(Some(proxy)),
+        Ok(None) => Ok(proxy_from_environment()),
+        Err(native_error) => match sysproxy::Sysproxy::get_system_proxy() {
+            Ok(proxy) if proxy.enable => {
                 if proxy.host.contains('=') {
-                    Ok(parse_windows_proxy_server(&proxy.host))
+                    Ok(parse_windows_proxy_server(&proxy.host).or_else(proxy_from_environment))
                 } else {
-                    Ok(normalize_sysproxy_address(&proxy.host, proxy.port))
+                    Ok(normalize_sysproxy_address(&proxy.host, proxy.port)
+                        .or_else(proxy_from_environment))
                 }
-            } else {
-                Ok(None)
             }
-        }
-        Err(error) => {
-            #[cfg(target_os = "windows")]
-            if let Ok(Some(proxy)) = fallback_windows_proxy() {
-                return Ok(Some(proxy));
-            }
-
-            if let Some(proxy) = proxy_from_environment() {
-                return Ok(Some(proxy));
-            }
-
-            Err(format!("failed to read system proxy settings: {error}"))
-        }
+            Ok(_) => Ok(proxy_from_environment()),
+            Err(error) => proxy_from_environment().map(Some).ok_or_else(|| {
+                format!(
+                    "failed to read system proxy settings: {native_error}; sysproxy fallback: {error}"
+                )
+            }),
+        },
     }
+}
+
+#[cfg(target_os = "windows")]
+fn native_system_proxy() -> Result<Option<String>, String> {
+    fallback_windows_proxy().map_err(|_| "failed to read Windows proxy registry".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn native_system_proxy() -> Result<Option<String>, String> {
+    let proxy = sysproxy::Sysproxy::get_system_proxy().map_err(|error| error.to_string())?;
+    if !proxy.enable {
+        return Ok(None);
+    }
+    Ok(macos_proxy_for_host_port(&proxy.host, proxy.port)
+        .unwrap_or_else(|| {
+            normalize_sysproxy_address(&proxy.host, proxy.port)
+                .unwrap_or_else(|| format!("http://{}:{}", proxy.host, proxy.port))
+        })
+        .into())
+}
+
+#[cfg(target_os = "linux")]
+fn native_system_proxy() -> Result<Option<String>, String> {
+    let mode =
+        command_stdout(Command::new("gsettings").args(["get", "org.gnome.system.proxy", "mode"]))
+            .map_err(|error| error.to_string())?;
+    if strip_gsettings_string(&mode) != "manual" {
+        return Ok(None);
+    }
+
+    Ok(linux_gsettings_proxy("https", "http")
+        .or_else(|| linux_gsettings_proxy("http", "http"))
+        .or_else(|| linux_gsettings_proxy("socks", "socks5")))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn native_system_proxy() -> Result<Option<String>, String> {
+    Ok(None)
 }
 
 fn proxy_from_environment() -> Option<String> {
@@ -47,6 +81,17 @@ fn proxy_from_environment() -> Option<String> {
             .ok()
             .and_then(|value| normalize_proxy_address(&value, "http"))
     })
+}
+
+fn command_stdout(command: &mut Command) -> std::io::Result<String> {
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("command exited with {}", output.status),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn normalize_proxy_address(raw: &str, default_scheme: &str) -> Option<String> {
@@ -118,6 +163,93 @@ fn parse_windows_proxy_server(value: &str) -> Option<String> {
     }
 
     https.or(http).or(socks)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_proxy_for_host_port(host: &str, port: u16) -> Option<String> {
+    let services_output =
+        command_stdout(Command::new("networksetup").arg("-listallnetworkservices")).ok()?;
+    for service in parse_macos_network_services(&services_output) {
+        for (target, scheme) in [
+            ("securewebproxy", "http"),
+            ("webproxy", "http"),
+            ("socksfirewallproxy", "socks5"),
+        ] {
+            let output = command_stdout(
+                Command::new("networksetup").args([format!("-get{target}"), service.clone()]),
+            )
+            .ok()?;
+            if let Some(proxy) = parse_macos_networksetup_proxy(&output, scheme)
+                .filter(|proxy| proxy_matches_host_port(proxy, host, port))
+            {
+                return Some(proxy);
+            }
+        }
+    }
+    None
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_macos_network_services(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with("An asterisk"))
+        .filter(|line| !line.starts_with('*'))
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn parse_macos_networksetup_proxy(output: &str, scheme: &str) -> Option<String> {
+    let enabled = macos_networksetup_value(output, "Enabled:")
+        .is_some_and(|value| value.eq_ignore_ascii_case("yes"));
+    if !enabled {
+        return None;
+    }
+    let server = macos_networksetup_value(output, "Server:")?;
+    let port = macos_networksetup_value(output, "Port:")?;
+    normalize_proxy_address(&format!("{scheme}://{server}:{port}"), scheme)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn proxy_matches_host_port(proxy: &str, host: &str, port: u16) -> bool {
+    let Ok(parsed) = url::Url::parse(proxy) else {
+        return false;
+    };
+    parsed.host_str() == Some(host) && parsed.port() == Some(port)
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_networksetup_value<'a>(output: &'a str, key: &str) -> Option<&'a str> {
+    output
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(key).map(str::trim))
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_gsettings_proxy(service: &str, scheme: &str) -> Option<String> {
+    let schema = format!("org.gnome.system.proxy.{service}");
+    let host = command_stdout(Command::new("gsettings").args(["get", &schema, "host"])).ok()?;
+    let host = strip_gsettings_string(&host);
+    if host.is_empty() {
+        return None;
+    }
+    let port = command_stdout(Command::new("gsettings").args(["get", &schema, "port"])).ok()?;
+    let port = port.trim();
+    normalize_proxy_address(&format!("{scheme}://{host}:{port}"), scheme)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn strip_gsettings_string(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('\'')
+        .trim_matches('"')
+        .to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -206,8 +338,9 @@ fn registry_value(output: &str, name: &str) -> Option<String> {
 #[cfg(test)]
 mod proxy_tests {
     use super::{
-        normalize_proxy_address, normalize_sysproxy_address, parse_windows_proxy_server,
-        registry_value, windows_proxy_enabled,
+        normalize_proxy_address, normalize_sysproxy_address, parse_macos_network_services,
+        parse_macos_networksetup_proxy, parse_windows_proxy_server, proxy_matches_host_port,
+        registry_value, strip_gsettings_string, windows_proxy_enabled,
     };
 
     #[test]
@@ -253,6 +386,50 @@ mod proxy_tests {
             normalize_sysproxy_address("proxy.local", 8080).as_deref(),
             Some("http://proxy.local:8080")
         );
+    }
+
+    #[test]
+    fn parses_macos_proxy_outputs_with_scheme() {
+        let services = r#"
+An asterisk (*) denotes that a network service is disabled.
+Wi-Fi
+*USB 10/100/1000 LAN
+Thunderbolt Bridge
+"#;
+        assert_eq!(
+            parse_macos_network_services(services),
+            vec!["Wi-Fi".to_string(), "Thunderbolt Bridge".to_string()]
+        );
+
+        let proxy = r#"
+Enabled: Yes
+Server: 127.0.0.1
+Port: 1080
+Authenticated Proxy Enabled: 0
+"#;
+        assert_eq!(
+            parse_macos_networksetup_proxy(proxy, "socks5").as_deref(),
+            Some("socks5://127.0.0.1:1080")
+        );
+        assert!(proxy_matches_host_port(
+            "socks5://127.0.0.1:1080",
+            "127.0.0.1",
+            1080
+        ));
+        assert!(!proxy_matches_host_port(
+            "socks5://127.0.0.1:1080",
+            "127.0.0.1",
+            1081
+        ));
+
+        let disabled = proxy.replace("Enabled: Yes", "Enabled: No");
+        assert_eq!(parse_macos_networksetup_proxy(&disabled, "socks5"), None);
+    }
+
+    #[test]
+    fn strips_gsettings_string_quotes() {
+        assert_eq!(strip_gsettings_string("'manual'\n"), "manual");
+        assert_eq!(strip_gsettings_string("\"127.0.0.1\"\n"), "127.0.0.1");
     }
 
     #[test]

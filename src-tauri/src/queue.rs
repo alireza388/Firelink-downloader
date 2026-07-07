@@ -998,6 +998,28 @@ fn uri_host_for_log(uri: &str) -> String {
         .unwrap_or_else(|| "<unknown host>".to_string())
 }
 
+fn proxy_scheme(proxy: &str) -> Option<String> {
+    proxy
+        .split_once("://")
+        .map(|(scheme, _)| scheme.trim().to_ascii_lowercase())
+}
+
+fn aria2_all_proxy_value(proxy: &str) -> Result<Option<String>, String> {
+    let proxy = proxy.trim();
+    if proxy.is_empty() {
+        return Ok(None);
+    }
+    if proxy.eq_ignore_ascii_case("none") {
+        return Ok(Some(String::new()));
+    }
+    if proxy_scheme(proxy).is_some_and(|scheme| scheme.starts_with("socks")) {
+        return Err(
+            "SOCKS system proxies are not supported for normal file downloads because aria2 only accepts HTTP/HTTPS/FTP proxy URLs. Use an HTTP proxy endpoint for normal downloads, or use media downloads where yt-dlp supports SOCKS.".to_string(),
+        );
+    }
+    Ok(Some(proxy.to_string()))
+}
+
 async fn probe_bounded_range_support(
     uri: &str,
     payload: &SpawnPayload,
@@ -1159,6 +1181,12 @@ impl SidecarSpawner for ProductionSpawner {
         if !crate::is_safe_path(&resolved_dest, &self.app_handle) {
             return Err("Path traversal blocked".to_string());
         }
+        let proxy_value = payload
+            .proxy
+            .as_deref()
+            .map(aria2_all_proxy_value)
+            .transpose()?
+            .flatten();
         options.insert(
             "dir".to_string(),
             serde_json::json!(resolved_dest.to_string_lossy().to_string()),
@@ -1210,17 +1238,8 @@ impl SidecarSpawner for ProductionSpawner {
         if !header_list.is_empty() {
             options.insert("header".to_string(), serde_json::json!(header_list));
         }
-        if let Some(prox) = payload
-            .proxy
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            if prox.eq_ignore_ascii_case("none") {
-                options.insert("all-proxy".to_string(), serde_json::json!(""));
-            } else {
-                options.insert("all-proxy".to_string(), serde_json::json!(prox));
-            }
+        if let Some(prox) = proxy_value {
+            options.insert("all-proxy".to_string(), serde_json::json!(prox));
         }
         let uris = crate::collect_download_uris(&payload.url, payload.mirrors.as_deref());
         let params = serde_json::json!([uris, options]);
@@ -1387,6 +1406,20 @@ mod tests {
             ),
             BoundedRangeSupport::Supported
         );
+    }
+
+    #[test]
+    fn aria2_proxy_value_rejects_socks_proxies() {
+        assert_eq!(aria2_all_proxy_value("none").unwrap().as_deref(), Some(""));
+        assert_eq!(
+            aria2_all_proxy_value("http://127.0.0.1:8080")
+                .unwrap()
+                .as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        assert!(aria2_all_proxy_value("socks5://127.0.0.1:1080")
+            .unwrap_err()
+            .contains("SOCKS system proxies are not supported"));
     }
 
     #[test]

@@ -838,7 +838,7 @@ runEngineChecks(false);
                 )}
                 <p className="settings-group-footer">
                   {settings.proxyMode === 'none' && 'Downloads ignore configured proxies.'}
-                  {settings.proxyMode === 'system' && `Downloads use the detected ${platform.os === 'macos' ? 'macOS' : platform.os === 'windows' ? 'Windows' : 'desktop'} system proxy when available, otherwise no proxy.`}
+                  {settings.proxyMode === 'system' && `Downloads use the detected ${platform.os === 'macos' ? 'macOS' : platform.os === 'windows' ? 'Windows' : 'desktop'} system proxy. Normal file downloads require an HTTP or HTTPS proxy endpoint; media downloads can use SOCKS.`}
                   {settings.proxyMode === 'custom' && (settings.proxyHost
                     ? 'Downloads use the configured proxy URL for HTTP, HTTPS, and media engines.'
                     : 'Enter a proxy host and port to enable the custom proxy.')}

@@ -927,6 +927,44 @@ async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
     cleanup_media_artifacts(out_path, true).await;
 }
 
+async fn remove_file_best_effort_with_retry(path: &std::path::Path) {
+    for attempt in 0..=5 {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if attempt == 5 => {
+                log::warn!(
+                    "failed to remove media artifact '{}' after retries: {}",
+                    path.display(),
+                    error
+                );
+            }
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+}
+
+fn remove_file_best_effort_with_retry_blocking(path: &std::path::Path) {
+    for attempt in 0..=5 {
+        match std::fs::remove_file(path) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if attempt == 5 => {
+                log::warn!(
+                    "failed to remove temporary media metadata '{}' after retries: {}",
+                    path.display(),
+                    error
+                );
+            }
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        }
+    }
+}
+
 async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: bool) {
     let Some(parent) = out_path.parent() else {
         return;
@@ -940,7 +978,7 @@ async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: boo
         .unwrap_or(base_name);
 
     if remove_primary {
-        let _ = tokio::fs::remove_file(out_path).await;
+        remove_file_best_effort_with_retry(out_path).await;
     }
 
     let Ok(mut entries) = tokio::fs::read_dir(parent).await else {
@@ -968,7 +1006,7 @@ async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: boo
             || name.contains(".tmp")
             || yt_dlp_format_fragment;
         if looks_like_media_temp {
-            let _ = tokio::fs::remove_file(path).await;
+            remove_file_best_effort_with_retry(&path).await;
         }
     }
 }
@@ -2856,7 +2894,7 @@ pub(crate) async fn start_media_download_internal(
         impl Drop for CleanupPath {
             fn drop(&mut self) {
                 if let Some(path) = self.0.take() {
-                    let _ = std::fs::remove_file(path);
+                    remove_file_best_effort_with_retry_blocking(&path);
                 }
             }
         }

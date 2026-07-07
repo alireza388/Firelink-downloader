@@ -21,7 +21,7 @@
   --surface-overlay: 0 0% 100% / 0.95;
   --shadow-color: 220 10% 20% / 0.1;
   --sidebar-shell-bg: 0 0% 92%;
-  --sidebar-panel-bg: 0 0% 95%;
+  --sidebar-panel-bg: 0 0% 93%;
   --workspace-bg: 0 0% 98%;
   --statusbar-bg: 0 0% 96%;
   --status-completed: 136 62% 48%;
@@ -30,7 +30,7 @@
   --status-failed: 0 62% 58%;
   --status-queued: 38 92% 50%;
   --status-retrying: 50 100% 50%;
-  --sidebar-border: 0 0% 0% / 0.12;
+  --sidebar-border: 0 0% 0% / 0.18;
   --sidebar-hover: 0 0% 0% / 0.06;
   --download-header-height: 32px;
   --download-row-height: 32px;
@@ -63,10 +63,10 @@
   --surface-overlay: 0 0% 100% / 0.95;
   --shadow-color: 220 10% 20% / 0.1;
   --sidebar-shell-bg: 0 0% 92%;
-  --sidebar-panel-bg: 0 0% 95%;
+  --sidebar-panel-bg: 0 0% 93%;
   --workspace-bg: 0 0% 98%;
   --statusbar-bg: 0 0% 96%;
-  --sidebar-border: 0 0% 0% / 0.12;
+  --sidebar-border: 0 0% 0% / 0.18;
   --sidebar-hover: 0 0% 0% / 0.06;
 }
 

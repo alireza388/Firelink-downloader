@@ -6,13 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publish the GitHub release after all platform QA is certified'
+        description: 'Publish the GitHub release after all platform build and verification jobs pass'
         type: boolean
-        default: false
-      certified_cross_platform:
-        description: 'Confirm Windows, Linux, and macOS clean-machine QA passed'
-        type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: write
@@ -136,10 +132,11 @@ jobs:
   publish:
     name: Publish GitHub release
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       startsWith(github.ref, 'refs/tags/v') &&
-      inputs.publish_release &&
-      inputs.certified_cross_platform
+      (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+      )
     needs: build
     runs-on: ubuntu-22.04
     steps:

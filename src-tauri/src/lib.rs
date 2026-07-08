@@ -178,6 +178,17 @@ fn media_output_template(
     }
 }
 
+fn media_progress_args() -> Vec<String> {
+    vec![
+        "--newline".to_string(),
+        "--progress".to_string(),
+        "--progress-delta".to_string(),
+        "0.2".to_string(),
+        "--progress-template".to_string(),
+        format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"),
+    ]
+}
+
 fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     value
         .get(key)
@@ -2820,14 +2831,11 @@ pub(crate) async fn start_media_download_internal(
 
     while strike <= max_retries {
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
-        let mut cmd = app_handle
-            .shell()
-            .command(&ytdlp_path)
-            .arg("--newline")
-            .arg("--progress-delta")
-            .arg("0.2")
-            .arg("--progress-template")
-            .arg(format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j"))
+        let mut cmd = app_handle.shell().command(&ytdlp_path);
+        for arg in media_progress_args() {
+            cmd = cmd.arg(arg);
+        }
+        cmd = cmd
             .arg("--socket-timeout")
             .arg("20")
             .arg("--retries")
@@ -4588,7 +4596,7 @@ mod tests {
         collect_download_uris, drain_media_output_lines, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
-        media_output_template, media_progress_speed, normalize_speed_limit_for_aria2,
+        media_output_template, media_progress_args, media_progress_speed, normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
         FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
@@ -4611,6 +4619,17 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn ytdlp_progress_args_force_progress_in_quiet_print_mode() {
+        let args = media_progress_args();
+
+        assert!(args.iter().any(|arg| arg == "--progress"));
+        assert!(args.windows(2).any(|pair| {
+            pair[0] == "--progress-template"
+                && pair[1] == format!("download:{MEDIA_PROGRESS_PREFIX}%(progress)j")
+        }));
     }
 
     #[test]

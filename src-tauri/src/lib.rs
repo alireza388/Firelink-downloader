@@ -700,6 +700,40 @@ fn progress_json_string(progress: &serde_json::Value, key: &str) -> Option<Strin
         .map(ToOwned::to_owned)
 }
 
+fn drain_media_output_lines(buffer: &mut String, chunk: &str) -> Vec<String> {
+    buffer.push_str(chunk);
+
+    let mut lines = Vec::new();
+    while let Some(index) = match (buffer.find('\n'), buffer.find('\r')) {
+        (Some(line_feed), Some(carriage_return)) => Some(line_feed.min(carriage_return)),
+        (Some(line_feed), None) => Some(line_feed),
+        (None, Some(carriage_return)) => Some(carriage_return),
+        (None, None) => None,
+    } {
+        let mut line: String = buffer.drain(..=index).collect();
+        while line.ends_with('\n') || line.ends_with('\r') {
+            line.pop();
+        }
+        if !line.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+
+    if lines.is_empty()
+        && buffer.contains(MEDIA_PROGRESS_PREFIX)
+        && parse_media_progress_line(buffer).is_some()
+    {
+        lines.push(std::mem::take(buffer));
+    }
+
+    lines
+}
+
+fn flush_media_output_line(buffer: &mut String) -> Option<String> {
+    let line = std::mem::take(buffer);
+    (!line.trim().is_empty()).then_some(line)
+}
+
 fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
     if let Some(prefix_index) = line.find(MEDIA_PROGRESS_PREFIX) {
         let progress: serde_json::Value =
@@ -723,8 +757,12 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         } else if total > 0.0 {
             downloaded / total
         } else {
-            progress_json_string(&progress, "_percent_str")
-                .and_then(|percent| percent.trim_end_matches('%').trim().parse::<f64>().ok())
+            progress_json_number(&progress, "_percent")
+                .or_else(|| {
+                    progress_json_string(&progress, "_percent_str").and_then(|percent| {
+                        percent.trim_end_matches('%').trim().parse::<f64>().ok()
+                    })
+                })
                 .unwrap_or(0.0)
                 / 100.0
         };
@@ -893,6 +931,45 @@ fn aggregate_media_fraction(
     }
 
     ((*current_track + *last_fraction) / total_tracks).clamp(0.0, 1.0)
+}
+
+fn emit_media_progress(
+    app_handle: &tauri::AppHandle,
+    id: &str,
+    progress: MediaProgress,
+    total_tracks: f64,
+    current_track: &mut f64,
+    last_fraction: &mut f64,
+    last_speed_sample: &mut Option<(Instant, f64)>,
+    last_progress_at: &mut Instant,
+) {
+    let previous_track = *current_track;
+    let overall_fraction = aggregate_media_fraction(
+        total_tracks,
+        current_track,
+        last_fraction,
+        progress.fraction,
+    );
+    if *current_track != previous_track {
+        *last_speed_sample = None;
+    }
+    let (speed, eta) = media_progress_speed(&progress, Instant::now(), last_speed_sample);
+
+    let now = Instant::now();
+    if now.duration_since(*last_progress_at) >= Duration::from_millis(200) {
+        let _ = app_handle.emit(
+            "download-progress",
+            DownloadProgressEvent {
+                id: id.to_string(),
+                fraction: overall_fraction,
+                speed,
+                eta,
+                size: progress.size,
+                size_is_final: false,
+            },
+        );
+        *last_progress_at = now;
+    }
 }
 
 async fn cleanup_media_processing_artifacts(out_path: &std::path::Path) {
@@ -1230,7 +1307,7 @@ async fn fetch_metadata(
             }
         }
     }
-    
+
     if size_bytes == 0 {
         if let Some(len) = res.headers().get(reqwest::header::CONTENT_LENGTH) {
             if let Ok(len_str) = len.to_str() {
@@ -2834,6 +2911,8 @@ pub(crate) async fn start_media_download_internal(
 
         let mut stderr_tail = String::new();
         let mut final_output_path: Option<std::path::PathBuf> = None;
+        let mut stdout_buffer = String::new();
+        let mut stderr_buffer = String::new();
         let failure_reason = loop {
             tokio::select! {
                 _ = cancel_rx.changed() => {
@@ -2847,94 +2926,71 @@ pub(crate) async fn start_media_download_internal(
                 event = rx.recv() => {
                     match event {
                         Some(tauri_plugin_shell::process::CommandEvent::Stdout(line_bytes)) => {
-                            let line = String::from_utf8_lossy(&line_bytes);
-                            if let Some(progress) = parse_media_progress_line(&line) {
-                                let previous_track = current_track;
-                                let overall_fraction = aggregate_media_fraction(
-                                    total_tracks,
-                                    &mut current_track,
-                                    &mut last_fraction,
-                                    progress.fraction,
-                                );
-                                if current_track != previous_track {
-                                    last_speed_sample = None;
-                                }
-                                let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
-
-                                let now = std::time::Instant::now();
-                                if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
-                                    let _ = app_handle.emit("download-progress", DownloadProgressEvent {
-                                        id: id.to_string(),
-                                        fraction: overall_fraction,
-                                        speed,
-                                        eta,
-                                        size: progress.size,
-                                        size_is_final: false,
-                                    });
-                                    last_progress_at = now;
-                                }
-                            } else {
-                                let candidate = line.trim();
-                                if !candidate.is_empty() {
-                                    let candidate_path = std::path::PathBuf::from(candidate);
-                                    if candidate_path.is_absolute() {
-                                        final_output_path = Some(candidate_path);
+                            let chunk = String::from_utf8_lossy(&line_bytes);
+                            for line in drain_media_output_lines(&mut stdout_buffer, &chunk) {
+                                if let Some(progress) = parse_media_progress_line(&line) {
+                                    emit_media_progress(
+                                        &app_handle,
+                                        id,
+                                        progress,
+                                        total_tracks,
+                                        &mut current_track,
+                                        &mut last_fraction,
+                                        &mut last_speed_sample,
+                                        &mut last_progress_at,
+                                    );
+                                } else {
+                                    let candidate = line.trim();
+                                    if !candidate.is_empty() {
+                                        let candidate_path = std::path::PathBuf::from(candidate);
+                                        if candidate_path.is_absolute() {
+                                            final_output_path = Some(candidate_path);
+                                        }
                                     }
                                 }
                             }
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Stderr(line_bytes)) => {
-                            let line = String::from_utf8_lossy(&line_bytes);
-                            if let Some(progress) = parse_media_progress_line(&line) {
-                                let previous_track = current_track;
-                                let overall_fraction = aggregate_media_fraction(
-                                    total_tracks,
-                                    &mut current_track,
-                                    &mut last_fraction,
-                                    progress.fraction,
-                                );
-                                if current_track != previous_track {
-                                    last_speed_sample = None;
-                                }
-                                let (speed, eta) = media_progress_speed(&progress, std::time::Instant::now(), &mut last_speed_sample);
-                                let now = std::time::Instant::now();
-                                if now.duration_since(last_progress_at) >= std::time::Duration::from_millis(200) {
-                                    let _ = app_handle.emit("download-progress", DownloadProgressEvent {
-                                            id: id.to_string(),
-                                            fraction: overall_fraction,
-                                    speed,
-                                    eta,
-                                    size: progress.size,
-                                    size_is_final: false,
-                                });
-                                    last_progress_at = now;
-                                }
-                            }
-                            if !processing_started && is_media_processing_line(&line) {
-                                processing_started = true;
-                                let _ = app_handle.emit(
-                                    "download-state",
-                                    DownloadStateEvent::new(
-                                        id,
-                                        crate::ipc::DownloadStatus::Processing,
-                                    ),
-                                );
-                                let _ = app_handle.emit("download-progress", DownloadProgressEvent {
-                                    id: id.to_string(),
-                                    fraction: 1.0,
-                                    speed: "Processing".to_string(),
-                                    eta: "-".to_string(),
-                                    size: None,
-                                    size_is_final: false,
-                                });
-                            }
-                            let lower = line.to_lowercase();
-                            if lower.contains("error") || lower.contains("critical") {
-                                log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
-                            }
-                            stderr_tail.push_str(&line);
+                            let chunk = String::from_utf8_lossy(&line_bytes);
+                            stderr_tail.push_str(&chunk);
                             if stderr_tail.len() > STDERR_TAIL {
                                 stderr_tail = stderr_tail.split_off(stderr_tail.len() - STDERR_TAIL);
+                            }
+                            for line in drain_media_output_lines(&mut stderr_buffer, &chunk) {
+                                if let Some(progress) = parse_media_progress_line(&line) {
+                                    emit_media_progress(
+                                        &app_handle,
+                                        id,
+                                        progress,
+                                        total_tracks,
+                                        &mut current_track,
+                                        &mut last_fraction,
+                                        &mut last_speed_sample,
+                                        &mut last_progress_at,
+                                    );
+                                }
+                                if !processing_started && is_media_processing_line(&line) {
+                                    processing_started = true;
+                                    let _ = app_handle.emit(
+                                        "download-state",
+                                        DownloadStateEvent::new(
+                                            id,
+                                            crate::ipc::DownloadStatus::Processing,
+                                        ),
+                                    );
+                                    let _ = app_handle.emit("download-progress", DownloadProgressEvent {
+                                        id: id.to_string(),
+                                        fraction: 1.0,
+                                        speed: "Processing".to_string(),
+                                        eta: "-".to_string(),
+                                        size: None,
+                                        size_is_final: false,
+                                    });
+                                }
+                                let lower = line.to_lowercase();
+                                if lower.contains("error") || lower.contains("critical") {
+                                    log::error!("yt-dlp stderr [{}]: {}", id, line.trim());
+                                }
                             }
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Error(err)) => {
@@ -2942,6 +2998,52 @@ pub(crate) async fn start_media_download_internal(
                             break err;
                         }
                         Some(tauri_plugin_shell::process::CommandEvent::Terminated(payload)) => {
+                            if let Some(line) = flush_media_output_line(&mut stdout_buffer) {
+                                if let Some(progress) = parse_media_progress_line(&line) {
+                                    emit_media_progress(
+                                        &app_handle,
+                                        id,
+                                        progress,
+                                        total_tracks,
+                                        &mut current_track,
+                                        &mut last_fraction,
+                                        &mut last_speed_sample,
+                                        &mut last_progress_at,
+                                    );
+                                } else {
+                                    let candidate = line.trim();
+                                    if !candidate.is_empty() {
+                                        let candidate_path = std::path::PathBuf::from(candidate);
+                                        if candidate_path.is_absolute() {
+                                            final_output_path = Some(candidate_path);
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(line) = flush_media_output_line(&mut stderr_buffer) {
+                                if let Some(progress) = parse_media_progress_line(&line) {
+                                    emit_media_progress(
+                                        &app_handle,
+                                        id,
+                                        progress,
+                                        total_tracks,
+                                        &mut current_track,
+                                        &mut last_fraction,
+                                        &mut last_speed_sample,
+                                        &mut last_progress_at,
+                                    );
+                                }
+                                if !processing_started && is_media_processing_line(&line) {
+                                    processing_started = true;
+                                    let _ = app_handle.emit(
+                                        "download-state",
+                                        DownloadStateEvent::new(
+                                            id,
+                                            crate::ipc::DownloadStatus::Processing,
+                                        ),
+                                    );
+                                }
+                            }
                             if payload.code == Some(0) {
                                 log::info!("yt-dlp completed successfully id: {}", id);
                                 let completed_path = final_output_path
@@ -3442,7 +3544,7 @@ async fn detach_download_for_reconfigure(
                 serde_json::json!([gid]),
             )
             .await;
-            
+
             if let Err(e) = pause_res {
                 if !e.contains("cannot be paused now") {
                     return Err(e);
@@ -3579,20 +3681,20 @@ fn update_dock_badge(app_handle: tauri::AppHandle, count: i32) {
 
         let _ = app_handle.run_on_main_thread(move || {
             unsafe {
-                let app_class = class!(NSApplication);
-                let app: *mut Object = msg_send![app_class, sharedApplication];
-                let dock_tile: *mut Object = msg_send![app, dockTile];
-                let label = if count > 0 {
-                    count.to_string()
-                } else {
-                    "".to_string()
-                };
-                let c_label = CString::new(label).unwrap();
-                let ns_string_class = class!(NSString);
-                let ns_label: *mut Object = msg_send![ns_string_class, alloc];
-                let ns_label: *mut Object = msg_send![ns_label, initWithUTF8String: c_label.as_ptr()];
-                let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
-                let _: () = msg_send![ns_label, release];
+            let app_class = class!(NSApplication);
+            let app: *mut Object = msg_send![app_class, sharedApplication];
+            let dock_tile: *mut Object = msg_send![app, dockTile];
+            let label = if count > 0 {
+                count.to_string()
+            } else {
+                "".to_string()
+            };
+            let c_label = CString::new(label).unwrap();
+            let ns_string_class = class!(NSString);
+            let ns_label: *mut Object = msg_send![ns_string_class, alloc];
+            let ns_label: *mut Object = msg_send![ns_label, initWithUTF8String: c_label.as_ptr()];
+            let _: () = msg_send![dock_tile, setBadgeLabel: ns_label];
+            let _: () = msg_send![ns_label, release];
             }
         });
     }
@@ -3663,25 +3765,25 @@ fn create_sleep_preventer() -> Result<SleepPreventer, String> {
             let cstr = CString::new(s).unwrap();
             macos_sleep::CFStringCreateWithCString(null(), cstr.as_ptr(), 0x08000100)
         };
-        
+
         let type_sys = create_cf_string("PreventSystemSleep");
         let type_net = create_cf_string("NetworkClientActive");
         let name = create_cf_string("Firelink active download");
-        
+
         let mut sys_id: u32 = 0;
         let mut net_id: u32 = 0;
-        
+
         let res1 = macos_sleep::IOPMAssertionCreateWithDescription(
             type_sys, name, null(), null(), null(), 0.0, null(), &mut sys_id
         );
         let res2 = macos_sleep::IOPMAssertionCreateWithDescription(
             type_net, name, null(), null(), null(), 0.0, null(), &mut net_id
         );
-        
+
         macos_sleep::CFRelease(type_sys);
         macos_sleep::CFRelease(type_net);
         macos_sleep::CFRelease(name);
-        
+
         if res1 == 0 && res2 == 0 {
             Ok(SleepPreventer::Mac { system_sleep_id: sys_id, network_client_id: net_id })
         } else {
@@ -3935,16 +4037,16 @@ fn check_automation_permission() -> Result<(), String> {
                 let ns_string_class = class!(NSString);
                 let script_str: *mut Object = msg_send![ns_string_class, alloc];
                 let script_str: *mut Object = msg_send![script_str, initWithUTF8String: c_script.as_ptr()];
-                
+
                 let ns_apple_script: *mut Object = msg_send![class!(NSAppleScript), alloc];
                 let ns_apple_script: *mut Object = msg_send![ns_apple_script, initWithSource: script_str];
-                
+
                 let mut error_dict: *mut Object = null_mut();
                 let result: *mut Object = msg_send![ns_apple_script, executeAndReturnError: &mut error_dict];
-                
+
                 let _: () = msg_send![script_str, release];
                 let _: () = msg_send![ns_apple_script, release];
-                
+
                 if result.is_null() {
                     return Err("Automation permission was not granted".to_string());
                 }
@@ -4483,7 +4585,7 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 mod tests {
     use super::{
         aggregate_media_fraction, append_ytdlp_http_headers, build_media_format_options,
-        collect_download_uris, filename_from_content_disposition,
+        collect_download_uris, drain_media_output_lines, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
         media_output_template, media_progress_speed, normalize_speed_limit_for_aria2,
@@ -4926,6 +5028,35 @@ mod tests {
                 size: Some("10.00MiB".to_string()),
                 downloaded_bytes: Some(5242880.0),
             })
+        );
+    }
+
+    #[test]
+    fn parses_chunked_structured_ytdlp_progress() {
+        let mut buffer = String::new();
+        let first = format!("{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":5242880,");
+        let second = "\"total_bytes\":10485760,\"_percent\":50.0,\"_speed_str\":\"1.00MiB/s\"}\n";
+
+        assert!(drain_media_output_lines(&mut buffer, &first).is_empty());
+        let lines = drain_media_output_lines(&mut buffer, second);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            parse_media_progress_line(&lines[0]).map(|progress| progress.fraction),
+            Some(0.5)
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn parses_structured_ytdlp_numeric_percent_without_total() {
+        let line = format!(
+            "{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":5242880,\"_percent\":37.5,\"_speed_str\":\"1.00MiB/s\"}}"
+        );
+
+        assert_eq!(
+            parse_media_progress_line(&line).map(|progress| progress.fraction),
+            Some(0.375)
         );
     }
 

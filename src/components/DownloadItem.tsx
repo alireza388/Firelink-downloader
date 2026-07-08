@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useDownloadStore } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadStore';
@@ -45,46 +45,25 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       .map(candidate => candidate.id);
   }));
   const moveInQueue = useDownloadStore(state => state.moveInQueue);
+  const liveProgress = useDownloadProgressStore(state => state.progressMap[downloadId]);
   const queueIndex = queueItems.indexOf(downloadId);
 
-  const progressBarRef = useRef<HTMLDivElement>(null);
-  const statusTextRef = useRef<HTMLSpanElement>(null);
-  const speedTextRef = useRef<HTMLSpanElement>(null);
-  const etaTextRef = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (!download || download.status !== 'downloading') return;
-
-    const applyProgress = (progress: any) => {
-      if (!progress) return;
-      if (progressBarRef.current) {
-        progressBarRef.current.style.width = `${progress.fraction * 100}%`;
-      }
-      if (statusTextRef.current) {
-        statusTextRef.current.innerText = `${(progress.fraction * 100).toFixed(0)}%`;
-        statusTextRef.current.title = `${(progress.fraction * 100).toFixed(0)}%`;
-      }
-      if (speedTextRef.current) {
-        speedTextRef.current.innerText = progress.speed;
-        speedTextRef.current.title = progress.speed;
-      }
-      if (etaTextRef.current) {
-        etaTextRef.current.innerText = progress.eta;
-        etaTextRef.current.title = progress.eta;
-      }
-    };
-
-    // Apply immediate state on mount
-    applyProgress(useDownloadProgressStore.getState().progressMap[downloadId]);
-
-    const unsubscribe = useDownloadProgressStore.subscribe((state) => {
-      applyProgress(state.progressMap[downloadId]);
-    });
-
-    return () => unsubscribe();
-  }, [downloadId, download?.status]);
-
   if (!download) return null;
+
+  const displayFraction = download.status === 'downloading'
+    ? liveProgress?.fraction ?? download.fraction ?? 0
+    : download.fraction ?? 0;
+  const displayPercent = `${(displayFraction * 100).toFixed(0)}%`;
+  const displaySpeed = download.status === 'downloading'
+    ? liveProgress?.speed ?? download.speed
+    : download.status === 'processing'
+      ? 'Processing...'
+      : '-';
+  const displayEta = download.status === 'downloading'
+    ? liveProgress?.eta ?? download.eta
+    : download.status === 'processing'
+      ? 'Muxing...'
+      : '-';
 
   return (
     <div
@@ -118,26 +97,24 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           <>
             <div className="download-progress-track">
               <div
-                ref={progressBarRef}
                 className={`download-progress-fill ${
                   download.status === 'paused' ? 'paused' : 
                   download.status === 'processing' ? 'processing' :
                   download.status === 'queued' || download.status === 'staged' ? 'queued' :
                   download.status === 'retrying' ? 'retrying' : ''
                 }`}
-                style={{ width: `${(download.fraction || 0) * 100}%` }}
+                style={{ width: `${displayFraction * 100}%` }}
               />
             </div>
             <span 
             key={`status-${download.status}`}
-            ref={statusTextRef}
             title={
               download.lastError && (download.status === 'failed' || download.status === 'retrying')
                 ? download.lastError
                 : (download.status === 'queued' || download.status === 'staged') && queueIndex !== -1
                 ? `${download.status === 'staged' ? 'In queue' : 'Queued'} #${queueIndex + 1}`
                 : download.status === 'downloading'
-                  ? `${((download.fraction || 0) * 100).toFixed(0)}%`
+                  ? displayPercent
                   : download.status === 'processing'
                     ? 'Processing'
                     : download.status.charAt(0).toUpperCase() + download.status.slice(1)
@@ -159,7 +136,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                   </span>
                 </>
               ) : download.status === 'downloading' ? (
-                `${((download.fraction || 0) * 100).toFixed(0)}%`
+                displayPercent
               ) : download.status === 'processing' ? (
                 'Processing'
               ) : (
@@ -173,22 +150,20 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       <div className="download-cell-truncate">
         <span
           key={`speed-${download.status}`}
-          ref={speedTextRef}
           className="tabular-nums"
-          title={download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
+          title={displaySpeed}
         >
-          {download.status === 'downloading' ? download.speed : download.status === 'processing' ? 'Processing…' : '-'}
+          {displaySpeed}
         </span>
       </div>
 
       <div className="download-cell-truncate">
         <span
           key={`eta-${download.status}`}
-          ref={etaTextRef}
           className="tabular-nums"
-          title={download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
+          title={displayEta}
         >
-          {download.status === 'downloading' ? download.eta : download.status === 'processing' ? 'Muxing…' : '-'}
+          {displayEta}
         </span>
       </div>
 

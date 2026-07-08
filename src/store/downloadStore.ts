@@ -46,8 +46,17 @@ export async function initDownloadListener() {
     const current = mainStore.downloads.find(d => d.id === payload.id);
     if (current) {
       const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
+      const updates: Partial<DownloadItem> = {};
+      if (current.status === 'downloading' || current.status === 'processing') {
+        updates.fraction = payload.fraction;
+        updates.speed = payload.speed;
+        updates.eta = payload.eta;
+      }
       if (shouldUpdateSize && current.size !== payload.size) {
-        mainStore.updateDownload(payload.id, { size: payload.size! });
+        updates.size = payload.size!;
+      }
+      if (Object.keys(updates).length > 0) {
+        mainStore.updateDownload(payload.id, updates);
       }
     }
   });

@@ -22,6 +22,7 @@ import { useToast } from "./contexts/ToastContext";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { usePlatformInfo } from './utils/platform';
 import type { PostQueueAction } from './bindings/PostQueueAction';
+import { PanelLeft } from 'lucide-react';
 
 let automaticUpdateCheckStarted = false;
 const processingScheduleKeys = new Set<string>();
@@ -86,6 +87,7 @@ function App() {
 
   const theme = useSettingsStore(state => state.theme);
   const isSidebarVisible = useSettingsStore(state => state.isSidebarVisible);
+  const toggleSidebar = useSettingsStore(state => state.toggleSidebar);
   const activeView = useSettingsStore(state => state.activeView);
   const appFontSize = useSettingsStore(state => state.appFontSize);
   const listRowDensity = useSettingsStore(state => state.listRowDensity);
@@ -114,6 +116,8 @@ function App() {
     download.status === 'retrying'
   ).length;
   const { addToast } = useToast();
+  const isMacUserAgent = navigator.userAgent.includes('Mac');
+  const usesCustomWindowControls = !isMacUserAgent && platform.os !== 'macos';
 
   const acknowledgePairingTokenChange = () => {
     invoke('acknowledge_pairing_token_change').catch(error => {
@@ -666,7 +670,22 @@ function App() {
         />
       </div>
 
-      <div className="app-workspace relative z-0 flex-1 flex flex-col h-full overflow-hidden">
+      <div
+        className={`app-workspace relative z-0 flex-1 flex flex-col h-full overflow-hidden ${
+          !isSidebarVisible ? 'app-workspace--sidebar-collapsed' : ''
+        } ${usesCustomWindowControls ? 'app-workspace--custom-window-controls' : ''}`}
+      >
+        {!isSidebarVisible && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="app-icon-button app-sidebar-reveal-button h-7 w-7"
+            title="Show Sidebar"
+            aria-label="Show Sidebar"
+          >
+            <PanelLeft size={16} strokeWidth={2} />
+          </button>
+        )}
         <div className="flex-1 flex flex-col overflow-hidden relative">
           {activeView === 'downloads' && <DownloadTable filter={filter} />}
           {activeView === 'settings' && <SettingsView />}

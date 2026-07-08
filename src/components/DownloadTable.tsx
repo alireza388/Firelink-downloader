@@ -4,7 +4,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
 import { useAutoAnimate } from '@formkit/auto-animate/react';
-import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, PanelLeft, ArrowDownCircle, Command, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { Play, Pause, Plus, FileText, Image as ImageIcon, Music, Film, Box, Archive, FileQuestion, ArrowDownCircle, Command, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { DownloadItem as DownloadItemComponent } from './DownloadItem';
 import { invokeCommand as invoke } from '../ipc';
 import {
@@ -18,7 +18,6 @@ import {
   startActionLabel
 } from '../utils/downloadActions';
 import { isActiveDownloadStatus } from '../utils/downloads';
-import { usePlatformInfo } from '../utils/platform';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -29,12 +28,8 @@ const COLUMN_WIDTHS_STORAGE_KEY = 'firelink-download-column-widths';
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const { downloads, queues, assignToQueue, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
-  const { isSidebarVisible, toggleSidebar } = useSettingsStore();
   const { addToast } = useToast();
-  const platform = usePlatformInfo();
-
   const isMac = navigator.userAgent.includes('Mac');
-  const usesCustomWindowControls = !isMac && platform.os !== 'macos';
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [animationParent] = useAutoAnimate<HTMLDivElement>();
@@ -377,18 +372,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   return (
     <div className="downloads-view flex-1 flex flex-col h-full min-w-0">
       <div
-        className={`main-titlebar ${!isSidebarVisible ? (usesCustomWindowControls ? 'main-titlebar--custom-controls-collapsed' : 'pl-[88px]') : ''}`}
+        className="main-titlebar"
         data-tauri-drag-region
       >
-        {!isSidebarVisible && (
-          <button
-            onClick={toggleSidebar}
-            className="app-icon-button relative z-50 h-7 w-7 mr-2"
-            title="Show Sidebar"
-          >
-            <PanelLeft size={16} strokeWidth={2} />
-          </button>
-        )}
         <div className="main-titlebar-title cursor-default" data-tauri-drag-region>Firelink</div>
 
         <div className="main-control-group">

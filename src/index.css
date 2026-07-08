@@ -1037,6 +1037,18 @@ html[data-list-density="relaxed"] {
     background: hsl(var(--workspace-bg));
   }
 
+  .app-sidebar-reveal-button {
+    position: absolute;
+    top: 12px;
+    left: 88px;
+    z-index: 80;
+    -webkit-app-region: no-drag;
+  }
+
+  .app-workspace--custom-window-controls .app-sidebar-reveal-button {
+    left: 124px;
+  }
+
   .app-statusbar {
     height: 26px;
     font-size: 10px;
@@ -1535,8 +1547,12 @@ html[data-list-density="relaxed"] {
   background: hsl(var(--statusbar-bg));
 }
 
-.main-titlebar--custom-controls-collapsed {
+.app-workspace--sidebar-collapsed .main-titlebar {
   padding-left: 124px;
+}
+
+.app-workspace--sidebar-collapsed.app-workspace--custom-window-controls .main-titlebar {
+  padding-left: 160px;
 }
 
 .main-titlebar-title {

@@ -5,7 +5,7 @@
 
   **A fast, focused desktop download manager for macOS, Windows, and Linux.**
 
-  [![Version](https://img.shields.io/badge/version-1.0.1-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
+  [![Version](https://img.shields.io/badge/version-1.0.2-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
   [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
   [![Windows](.github/badges/windows.svg)](#platforms)
   [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
@@ -45,7 +45,7 @@ It is now a cross-platform Rust/Tauri app with a React and TypeScript interface.
 - **Persistent queues** with pause, resume, retry, redownload, sorting, multi-select, and bulk actions.
 - **Scheduling** with start/stop windows, speed rules, and post-queue actions.
 - **File organization** with categories, default folders, per-download overrides, and reveal/trash actions.
-- **Browser handoff** through local pairing, signed requests, replay protection, and server checks.
+- **Browser handoff** through local pairing, signed requests, Add window review, replay protection, and server checks.
 - **Desktop integration** with tray controls, notifications, sounds, sleep prevention, and secure credential storage.
 - **Diagnostics** with engine health checks, structured logs, and package verification.
 
@@ -74,12 +74,14 @@ Firelink Companion sends browser links and downloads to the desktop app.
 What it adds:
 
 - Automatic capture for regular browser downloads.
+- Explicit Fetch media actions from the popup and page context menu.
 - Context-menu actions for links and selected text.
 - Firefox and Chromium support.
 - Signed local requests using the token from **Settings -> Integrations**.
 - Fallback to the browser download when Firelink is closed or rejects a handoff.
+- Captured links always open Firelink's Add window before anything is added to the download list.
 
-Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases).
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.2 is the matching extension release for Firelink 1.0.2.
 
 The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Firefox` submodule.
 

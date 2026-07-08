@@ -12,34 +12,6 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use ts_rs::TS;
 
-fn get_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
-    static CACHE: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
-}
-
-fn metadata_info_cache_key(
-    url: &str,
-    cookie_source: Option<&str>,
-    username: Option<&str>,
-    password: Option<&str>,
-    headers: Option<&str>,
-    cookies: Option<&str>,
-    proxy: Option<&str>,
-    user_agent: Option<&str>,
-) -> String {
-    serde_json::json!([
-        url,
-        cookie_source.unwrap_or(""),
-        username.unwrap_or(""),
-        password.unwrap_or(""),
-        headers.unwrap_or(""),
-        cookies.unwrap_or(""),
-        proxy.unwrap_or(""),
-        user_agent.unwrap_or("")
-    ])
-    .to_string()
-}
-
 fn sanitize_metadata_filename(filename: &str) -> Option<String> {
     let normalized = filename.trim().replace('\\', "/");
     let basename = std::path::Path::new(&normalized)
@@ -946,25 +918,6 @@ async fn remove_file_best_effort_with_retry(path: &std::path::Path) {
     }
 }
 
-fn remove_file_best_effort_with_retry_blocking(path: &std::path::Path) {
-    for attempt in 0..=5 {
-        match std::fs::remove_file(path) {
-            Ok(()) => return,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-            Err(error) if attempt == 5 => {
-                log::warn!(
-                    "failed to remove temporary media metadata '{}' after retries: {}",
-                    path.display(),
-                    error
-                );
-            }
-            Err(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-        }
-    }
-}
-
 async fn cleanup_media_artifacts(out_path: &std::path::Path, remove_primary: bool) {
     let Some(parent) = out_path.parent() else {
         return;
@@ -1499,17 +1452,6 @@ async fn fetch_media_metadata_uncached(
     cookies: Option<String>,
     proxy: Option<String>,
 ) -> Result<MediaMetadata, String> {
-    let info_cache_key = metadata_info_cache_key(
-        &url,
-        cookie_browser.as_deref(),
-        username.as_deref(),
-        password.as_deref(),
-        headers.as_deref(),
-        cookies.as_deref(),
-        proxy.as_deref(),
-        user_agent.as_deref(),
-    );
-
     // Pass bundled tools by absolute path so extraction never depends on
     // system Python, a user-managed PATH, or auto-detection heuristics.
     let deno_path = resolve_bundled_binary_path(&app_handle, "deno")
@@ -1602,12 +1544,6 @@ async fn fetch_media_metadata_uncached(
     if output.status.success() {
         let value: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-        if let Ok(mut cache) = get_metadata_cache().lock() {
-            if let Ok(json_str) = String::from_utf8(output.stdout.clone()) {
-                cache.insert(info_cache_key, json_str);
-            }
-        }
 
         let title = value
             .get("title")
@@ -2889,42 +2825,7 @@ pub(crate) async fn start_media_download_internal(
             }
         }
 
-        let mut temp_info_path = None;
-        if let Ok(mut cache) = get_metadata_cache().lock() {
-            let info_cache_key = metadata_info_cache_key(
-                &url,
-                effective_cookie_source.as_deref(),
-                username.as_deref(),
-                password.as_deref(),
-                headers.as_deref(),
-                cookies.as_deref(),
-                proxy.as_deref(),
-                user_agent.as_deref(),
-            );
-            if let Some(json_str) = cache.remove(&info_cache_key) {
-                let temp_dir = std::env::temp_dir();
-                let path = temp_dir.join(format!("firelink_ytdlp_{}.info.json", id));
-                if std::fs::write(&path, json_str).is_ok() {
-                    temp_info_path = Some(path);
-                }
-            }
-        }
-
-        struct CleanupPath(Option<std::path::PathBuf>);
-        impl Drop for CleanupPath {
-            fn drop(&mut self) {
-                if let Some(path) = self.0.take() {
-                    remove_file_best_effort_with_retry_blocking(&path);
-                }
-            }
-        }
-        let _cleanup = CleanupPath(temp_info_path.clone());
-
-        if let Some(path) = temp_info_path.as_ref() {
-            cmd = cmd.arg("--load-info-json").arg(path);
-        } else {
-            cmd = cmd.arg("--").arg(&url);
-        }
+        cmd = cmd.arg("--").arg(&url);
 
         let (mut rx, child) = cmd
             .spawn()
@@ -4585,11 +4486,10 @@ mod tests {
         collect_download_uris, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
-        metadata_info_cache_key, media_output_template, media_progress_speed,
-        normalize_speed_limit_for_aria2, parse_firelink_deep_link, parse_ffmpeg_version,
-        parse_media_progress_line, redact_log_line, sanitize_ytdlp_config_value,
-        should_cleanup_media_artifacts_after_failure, FirelinkDeepLink, MediaProgress,
-        MEDIA_PROGRESS_PREFIX,
+        media_output_template, media_progress_speed, normalize_speed_limit_for_aria2,
+        parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
+        redact_log_line, sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
+        FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -4687,76 +4587,6 @@ mod tests {
 
         assert_ne!(base, changed_headers);
         assert_ne!(base, changed_cookies);
-        assert_ne!(base, changed_user_agent);
-    }
-
-    #[test]
-    fn metadata_info_cache_key_includes_request_headers_and_cookies() {
-        let base = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-one"),
-            Some("pass-one"),
-            Some("User-Agent: Browser A"),
-            Some("session=one"),
-            None,
-            Some("Custom UA A"),
-        );
-        let changed_headers = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-one"),
-            Some("pass-one"),
-            Some("User-Agent: Browser B"),
-            Some("session=one"),
-            None,
-            Some("Custom UA A"),
-        );
-        let changed_cookies = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-one"),
-            Some("pass-one"),
-            Some("User-Agent: Browser A"),
-            Some("session=two"),
-            None,
-            Some("Custom UA A"),
-        );
-        let changed_username = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-two"),
-            Some("pass-one"),
-            Some("User-Agent: Browser A"),
-            Some("session=one"),
-            None,
-            Some("Custom UA A"),
-        );
-        let changed_password = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-one"),
-            Some("pass-two"),
-            Some("User-Agent: Browser A"),
-            Some("session=one"),
-            None,
-            Some("Custom UA A"),
-        );
-        let changed_user_agent = metadata_info_cache_key(
-            "https://example.com/watch?v=1",
-            Some("firefox"),
-            Some("user-one"),
-            Some("pass-one"),
-            Some("User-Agent: Browser A"),
-            Some("session=one"),
-            None,
-            Some("Custom UA B"),
-        );
-
-        assert_ne!(base, changed_headers);
-        assert_ne!(base, changed_cookies);
-        assert_ne!(base, changed_username);
-        assert_ne!(base, changed_password);
         assert_ne!(base, changed_user_agent);
     }
 
@@ -4993,6 +4823,20 @@ mod tests {
         assert_eq!(option.format_id, "301+251");
         assert_eq!(option.filesize, None);
         assert_eq!(option.filesize_approx, Some(1_468_000_000));
+    }
+
+    #[test]
+    fn returns_no_media_options_for_webpage_only_metadata() {
+        let formats = vec![json!({
+            "format_id": "0",
+            "ext": "html",
+            "protocol": "https",
+            "format": "default webpage",
+            "vcodec": "none",
+            "acodec": "none"
+        })];
+
+        assert!(build_media_format_options(&formats, Some(30.0)).is_empty());
     }
 
     #[test]

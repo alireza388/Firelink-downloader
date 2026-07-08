@@ -5,6 +5,26 @@ All notable changes to Firelink will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-07-08
+
+### New
+- Add explicit **Fetch media** actions for Firelink Companion so video and audio pages can be sent to Firelink from the extension popup or page context menu.
+- Add a Chromium extension install path in Firelink's Integrations settings and release documentation, addressing the Chromium support request in [#4](https://github.com/nimbold/Firelink/issues/4).
+
+### Improved
+- Improve YouTube and social-media download handling with better proxy support, cleaner diagnostics, safer log redaction, and more reliable metadata fetching based on reports in [#5](https://github.com/nimbold/Firelink/issues/5) and [#8](https://github.com/nimbold/Firelink/issues/8).
+- Let category subfolders be disabled so files can save directly into a base download folder, addressing [#6](https://github.com/nimbold/Firelink/issues/6).
+- Refresh bundled media engines and release tooling for the current cross-platform desktop builds.
+- Strengthen release packaging checks for macOS, Windows, and Linux, including macOS ad-hoc signing verification and Windows installer icon handling.
+
+### Fixed
+- Fix YouTube downloads that failed when Chrome's cookie database could not be copied by retrying public media without browser cookies, addressing [#7](https://github.com/nimbold/Firelink/issues/7).
+- Fix the hidden-sidebar trap on Settings and other pages so the sidebar can always be shown again, addressing [#9](https://github.com/nimbold/Firelink/issues/9).
+- Fix Windows proxy detection so system proxy schemes are preserved for metadata and media requests, addressing [#5](https://github.com/nimbold/Firelink/issues/5).
+- Fix captured and auto-captured browser links so they always route through Firelink's Add window before reaching the download list.
+- Fix media downloads after a metadata fallback so pages without selectable preview formats can still let yt-dlp choose the best downloadable file instead of crashing.
+- Fix media cleanup and retry paths so failed, canceled, or retried media downloads leave fewer stale temporary files behind.
+
 ## [1.0.1] - 2026-07-04
 
 ### Fixed

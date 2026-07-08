@@ -1138,7 +1138,9 @@ async fn fetch_metadata(
             return Err("Too many redirects".to_string());
         }
 
-        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(FILE_METADATA_TIMEOUT);
         if let Some(proxy) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             if proxy.eq_ignore_ascii_case("none") {
                 builder = builder.no_proxy();
@@ -1199,6 +1201,20 @@ async fn fetch_metadata(
 
         let client = builder.build().map_err(|e| e.to_string())?;
 
+        let build_get_range = || {
+            let mut get_req = client
+                .get(&current_url)
+                .header(reqwest::header::RANGE, "bytes=0-0");
+            if should_send_auth {
+                if let Some(ref user) = username {
+                    if !user.is_empty() {
+                        get_req = get_req.basic_auth(user, password.as_deref());
+                    }
+                }
+            }
+            get_req
+        };
+
         let mut head_req = client.head(&current_url);
         if should_send_auth {
             if let Some(ref user) = username {
@@ -1207,7 +1223,14 @@ async fn fetch_metadata(
                 }
             }
         }
-        let mut current_res = head_req.send().await.map_err(|e| e.to_string())?;
+        let mut current_res = match head_req.send().await {
+            Ok(response) => response,
+            Err(head_error) => build_get_range().send().await.map_err(|get_error| {
+                format!(
+                    "HEAD metadata request failed ({head_error}); ranged GET fallback failed ({get_error})"
+                )
+            })?,
+        };
 
         let mut needs_fallback = false;
         if (!current_res.status().is_success() && !current_res.status().is_redirection())
@@ -1217,15 +1240,7 @@ async fn fetch_metadata(
         }
 
         if needs_fallback {
-            let mut get_req = client.get(&current_url).header(reqwest::header::RANGE, "bytes=0-0");
-            if should_send_auth {
-                if let Some(ref user) = username {
-                    if !user.is_empty() {
-                        get_req = get_req.basic_auth(user, password.as_deref());
-                    }
-                }
-            }
-            current_res = get_req.send().await.map_err(|e| e.to_string())?;
+            current_res = build_get_range().send().await.map_err(|e| e.to_string())?;
         }
 
         if current_res.status().is_redirection() {
@@ -1309,6 +1324,7 @@ async fn fetch_metadata(
 const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);
 const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
 const MEDIA_METADATA_CACHE_MAX_ENTRIES: usize = 128;
+const FILE_METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 
 static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> =
     OnceLock::new();
@@ -1319,6 +1335,7 @@ static MEDIA_METADATA_LOCKS: OnceLock<
 fn media_metadata_cache_key(
     url: &str,
     cookie_browser: &Option<String>,
+    user_agent: &Option<String>,
     username: &Option<String>,
     password: &Option<String>,
     headers: &Option<String>,
@@ -1328,6 +1345,7 @@ fn media_metadata_cache_key(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     url.hash(&mut hasher);
     cookie_browser.hash(&mut hasher);
+    user_agent.hash(&mut hasher);
     username.hash(&mut hasher);
     password.hash(&mut hasher);
     headers.hash(&mut hasher);
@@ -1375,6 +1393,7 @@ async fn fetch_media_metadata(
     let cache_key = media_metadata_cache_key(
         &url,
         &cookie_browser,
+        &user_agent,
         &username,
         &password,
         &headers,
@@ -4627,6 +4646,7 @@ mod tests {
         let base = media_metadata_cache_key(
             "https://example.com/watch?v=1",
             &Some("firefox".to_string()),
+            &Some("Custom UA A".to_string()),
             &None,
             &None,
             &Some("User-Agent: Browser A".to_string()),
@@ -4636,6 +4656,7 @@ mod tests {
         let changed_headers = media_metadata_cache_key(
             "https://example.com/watch?v=1",
             &Some("firefox".to_string()),
+            &Some("Custom UA A".to_string()),
             &None,
             &None,
             &Some("User-Agent: Browser B".to_string()),
@@ -4645,15 +4666,27 @@ mod tests {
         let changed_cookies = media_metadata_cache_key(
             "https://example.com/watch?v=1",
             &Some("firefox".to_string()),
+            &Some("Custom UA A".to_string()),
             &None,
             &None,
             &Some("User-Agent: Browser A".to_string()),
             &Some("session=two".to_string()),
             &None,
         );
+        let changed_user_agent = media_metadata_cache_key(
+            "https://example.com/watch?v=1",
+            &Some("firefox".to_string()),
+            &Some("Custom UA B".to_string()),
+            &None,
+            &None,
+            &Some("User-Agent: Browser A".to_string()),
+            &Some("session=one".to_string()),
+            &None,
+        );
 
         assert_ne!(base, changed_headers);
         assert_ne!(base, changed_cookies);
+        assert_ne!(base, changed_user_agent);
     }
 
     #[test]

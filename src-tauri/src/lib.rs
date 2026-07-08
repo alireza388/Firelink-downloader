@@ -2837,10 +2837,11 @@ pub(crate) async fn start_media_download_internal(
             .arg(output_template.to_string_lossy().to_string())
             .env("PATH", &trusted_path);
 
-        if let Some(limit) = speed_limit.as_ref() {
-            if !limit.is_empty() {
-                cmd = cmd.arg("--limit-rate").arg(limit);
-            }
+        if let Some(limit) = speed_limit
+            .as_deref()
+            .and_then(normalize_speed_limit_for_aria2)
+        {
+            cmd = cmd.arg("--limit-rate").arg(limit);
         }
 
         if let Some(p) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -3280,6 +3281,13 @@ async fn resume_download(
                     queue_manager.release_permit(&id_clone).await;
                     return;
                 }
+                let _ = app_handle_clone.emit(
+                    "download-state",
+                    crate::ipc::DownloadStateEvent::new(
+                        &id_clone,
+                        crate::ipc::DownloadStatus::Downloading,
+                    ),
+                );
                 let result = match rpc_call(
                     aria2_port,
                     &aria2_secret,
@@ -3332,13 +3340,6 @@ async fn resume_download(
                     return;
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
-                let _ = app_handle_clone.emit(
-                    "download-state",
-                    crate::ipc::DownloadStateEvent::new(
-                        &id_clone,
-                        crate::ipc::DownloadStatus::Downloading,
-                    ),
-                );
             });
             return Ok(true);
         }
@@ -3970,7 +3971,7 @@ async fn set_concurrent_limit(
     Ok(())
 }
 
-fn normalize_speed_limit_for_aria2(limit: &str) -> Option<String> {
+pub(crate) fn normalize_speed_limit_for_aria2(limit: &str) -> Option<String> {
     let trimmed = limit.trim();
     if trimmed.is_empty() {
         return None;

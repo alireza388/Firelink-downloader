@@ -20,6 +20,14 @@ const backendDispatchPromises = new Map<string, Promise<boolean>>();
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const speedLimitForDispatch = (itemSpeedLimit: string | undefined, globalSpeedLimit: string): string | null => {
+  const explicitLimit = itemSpeedLimit?.trim();
+  if (explicitLimit) {
+    return normalizeSpeedLimitForBackend(explicitLimit) || (explicitLimit === '0' ? '0' : null);
+  }
+  return normalizeSpeedLimitForBackend(globalSpeedLimit);
+};
+
 export async function dispatchItem(id: string): Promise<boolean> {
   if (backendDispatchPromises.has(id)) return backendDispatchPromises.get(id)!;
 
@@ -50,7 +58,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
         destination,
         filename: item.fileName,
         connections: item.connections || settings.perServerConnections || null,
-        speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
+        speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
         username: item.username || (login ? login.username : null),
         password: item.password || keychainPassword,
         headers: item.headers || null,
@@ -860,7 +868,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               destination: destPath,
               filename: item.fileName,
               connections: item.connections || settings.perServerConnections || null,
-            speed_limit: item.speedLimit || normalizeSpeedLimitForBackend(settings.globalSpeedLimit),
+              speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
               username: item.username || (login ? login.username : null),
               password: item.password || keychainPassword,
               headers: item.headers || null,

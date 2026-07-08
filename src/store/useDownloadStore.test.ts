@@ -54,6 +54,29 @@ vi.mock('./useSettingsStore', () => ({
 describe('useDownloadStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      proxyMode: 'none',
+      siteLogins: [],
+      globalSpeedLimit: '',
+      speedLimitPresetValues: [1, 5, 10],
+      logsEnabled: false,
+      perServerConnections: 16,
+      customUserAgent: '',
+      maxAutomaticRetries: 3,
+      mediaCookieSource: 'none',
+      baseDownloadFolder: '~/Downloads',
+      categorySubfoldersEnabled: true,
+      categorySubfolders: {
+        Musics: 'Musics',
+        Movies: 'Movies',
+        Compressed: 'Compressed',
+        Documents: 'Documents',
+        Pictures: 'Pictures',
+        Applications: 'Applications',
+        Other: 'Other',
+      },
+      categoryDirectoryOverrides: {},
+    } as unknown as ReturnType<typeof useSettingsStore.getState>);
     useDownloadStore.setState({
       downloads: [],
       backendRegisteredIds: new Set(),
@@ -249,6 +272,67 @@ describe('useDownloadStore', () => {
       'enqueue_download',
       expect.objectContaining({
         item: expect.objectContaining({ id: 'start-1' })
+      })
+    );
+  });
+
+  it('does not replace an explicit no-limit item speed with the global speed limit', async () => {
+    const defaultSettings = useSettingsStore.getState();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...defaultSettings,
+      globalSpeedLimit: '2M'
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['uncapped'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().addDownload({
+      id: 'uncapped',
+      url: 'https://example.com/uncapped.bin',
+      fileName: 'uncapped.bin',
+      category: 'Other',
+      dateAdded: '',
+      speedLimit: '0'
+    }, { type: 'start-now' });
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({
+          id: 'uncapped',
+          speed_limit: '0'
+        })
+      })
+    );
+  });
+
+  it('uses the global speed limit only when an item has no explicit speed override', async () => {
+    const defaultSettings = useSettingsStore.getState();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...defaultSettings,
+      globalSpeedLimit: '2M'
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['inherits-global'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().addDownload({
+      id: 'inherits-global',
+      url: 'https://example.com/inherits-global.bin',
+      fileName: 'inherits-global.bin',
+      category: 'Other',
+      dateAdded: ''
+    }, { type: 'start-now' });
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({
+          id: 'inherits-global',
+          speed_limit: '2M'
+        })
       })
     );
   });

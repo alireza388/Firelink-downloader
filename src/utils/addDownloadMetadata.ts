@@ -148,6 +148,38 @@ export const mediaFormatSelectorForRow = (
   return row.formats?.[row.selectedFormat]?.selector;
 };
 
+export const mediaFileNameForSelectedFormat = (
+  fileName: string,
+  row: Pick<AddDownloadDraftRow, 'formats' | 'selectedFormat'>
+): string => {
+  const selectedFormat = row.selectedFormat === undefined
+    ? undefined
+    : row.formats?.[row.selectedFormat];
+  if (!selectedFormat) return canonicalizeDownloadFileName(fileName);
+
+  const cleanFileName = canonicalizeDownloadFileName(fileName);
+  const selectedExt = selectedFormat.ext.replace(/^\.+/, '');
+  if (!selectedExt) return cleanFileName;
+
+  const lowerFileName = cleanFileName.toLowerCase();
+  if (lowerFileName.endsWith(`.${selectedExt.toLowerCase()}`)) {
+    return cleanFileName;
+  }
+
+  const lastDot = cleanFileName.lastIndexOf('.');
+  const currentExt = lastDot > 0 ? cleanFileName.slice(lastDot + 1).toLowerCase() : '';
+  const knownFormatExts = new Set(
+    (row.formats || [])
+      .map(format => format.ext.replace(/^\.+/, '').toLowerCase())
+      .filter(Boolean)
+  );
+  const baseName = currentExt && knownFormatExts.has(currentExt)
+    ? cleanFileName.slice(0, lastDot)
+    : cleanFileName;
+
+  return canonicalizeDownloadFileName(`${baseName}.${selectedExt}`);
+};
+
 export const metadataSummaryMessage = (rows: AddDownloadDraftRow[]): string => {
   if (rows.length === 0) return 'Paste one or more links.';
 

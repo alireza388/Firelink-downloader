@@ -22,6 +22,7 @@ import { isTransferLocked } from '../utils/downloadActions';
 import { useToast } from '../contexts/ToastContext';
 import {
   canSubmitMetadataRows,
+  mediaFileNameForSelectedFormat,
   mediaFormatSelectorForRow,
   metadataSummaryMessage,
   reconcileDownloadRows,
@@ -387,7 +388,7 @@ export const AddDownloadsModal = () => {
         }
       })();
     }
-  }, [parsedItems, pendingAddFilename, password, useAuth, username, headers, cookies]);
+  }, [parsedItems, pendingAddFilename, pendingAddMediaUrls]);
 
   useEffect(() => {
     if (parsedItems.length === 0) {
@@ -481,12 +482,9 @@ export const AddDownloadsModal = () => {
 
     for (let i = 0; i < parsedItems.length; i++) {
       const item = parsedItems[i];
-      let finalFile = canonicalizeDownloadFileName(item.file);
-      if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-        const selectedFormat = item.formats[item.selectedFormat];
-        const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-        finalFile = `${baseName}.${selectedFormat.ext}`;
-      }
+      let finalFile = item.isMedia
+        ? mediaFileNameForSelectedFormat(item.file, item)
+        : canonicalizeDownloadFileName(item.file);
       const itemLocation = useSharedDestination
         ? finalLocation
         : destinationOverrides[i] || await categoryLocationForFile(finalFile);
@@ -577,12 +575,9 @@ export const AddDownloadsModal = () => {
              if (res.resolution === 'skip') {
                  itemsToAdd[idx] = null;
              } else if (res.resolution === 'rename') {
-                 let finalFile = canonicalizeDownloadFileName(item.file);
-        if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-          const selectedFormat = item.formats[item.selectedFormat];
-          const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-          finalFile = `${baseName}.${selectedFormat.ext}`;
-        }
+                 let finalFile = item.isMedia
+                   ? mediaFileNameForSelectedFormat(item.file, item)
+                   : canonicalizeDownloadFileName(item.file);
         const itemLocation = useSharedDestination
           ? finalLocation
           : destinationOverrides[idx] || await categoryLocationForFile(finalFile);
@@ -633,12 +628,9 @@ export const AddDownloadsModal = () => {
                 itemsToAdd[idx] = null;
                 continue;
               }
-              let finalFile = canonicalizeDownloadFileName(item.file);
-        if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-          const selectedFormat = item.formats[item.selectedFormat];
-          const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-          finalFile = `${baseName}.${selectedFormat.ext}`;
-        }
+              let finalFile = item.isMedia
+                ? mediaFileNameForSelectedFormat(item.file, item)
+                : canonicalizeDownloadFileName(item.file);
         const itemLocation = useSharedDestination
           ? finalLocation
           : destinationOverrides[idx] || await categoryLocationForFile(finalFile);
@@ -682,16 +674,10 @@ export const AddDownloadsModal = () => {
         if (!item) continue;
         try {
           const id = crypto.randomUUID();
-          let finalFile = canonicalizeDownloadFileName(item.file);
+          let finalFile = item.isMedia
+            ? mediaFileNameForSelectedFormat(item.file, item)
+            : canonicalizeDownloadFileName(item.file);
           let formatSelector = mediaFormatSelectorForRow(item);
-
-          if (item.isMedia && item.formats && item.selectedFormat !== undefined) {
-            const selectedFormat = item.formats[item.selectedFormat];
-            if (!finalFile.endsWith(`.${selectedFormat.ext}`)) {
-                const baseName = finalFile.substring(0, finalFile.lastIndexOf('.')) || finalFile;
-                finalFile = `${baseName}.${selectedFormat.ext}`;
-            }
-        }
 
         const category = categoryForFileName(finalFile);
         const added = await addDownload({
@@ -701,7 +687,7 @@ export const AddDownloadsModal = () => {
           category,
           dateAdded: new Date().toISOString(),
           connections: Number(connections),
-          speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
+          speedLimit: speedLimitEnabled ? `${speedLimit}K` : '0',
           username: useAuth ? username.trim() : undefined,
           password: useAuth ? password.trim() : undefined,
           headers: headers.trim() || undefined,
@@ -763,7 +749,6 @@ export const AddDownloadsModal = () => {
     const format = selectedItem?.formats?.[index];
     if (!selectedItem || !format) return;
 
-    const baseName = selectedItem.file.substring(0, selectedItem.file.lastIndexOf('.')) || selectedItem.file;
     setParsedItems(items => items.map((item, itemIndex) =>
       itemIndex === selectedItemIndex
         ? {
@@ -771,7 +756,10 @@ export const AddDownloadsModal = () => {
             selectedFormat: index,
             size: format.bytes ? format.detail : undefined,
             sizeBytes: format.bytes || undefined,
-            file: canonicalizeDownloadFileName(`${baseName}.${format.ext}`)
+            file: mediaFileNameForSelectedFormat(item.file, {
+              formats: item.formats,
+              selectedFormat: index
+            })
           }
         : item
     ));

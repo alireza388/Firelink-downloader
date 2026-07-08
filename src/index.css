@@ -1801,6 +1801,7 @@ body.is-resizing .column-resize-handle:hover::after {
   border-radius: 6px;
   color: hsl(var(--text-primary));
   font-size: var(--download-row-font-size);
+  overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
 }

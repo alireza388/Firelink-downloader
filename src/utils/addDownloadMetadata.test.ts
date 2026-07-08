@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canSubmitMetadataRows,
   mediaFormatSelectorForRow,
+  mediaFileNameForSelectedFormat,
   metadataSummaryMessage,
   reconcileDownloadRows,
   refreshFailedMetadataRows,
@@ -152,6 +153,36 @@ describe('add download metadata workflow', () => {
 
     expect(failedMedia.isMedia).toBe(true);
     expect(mediaFormatSelectorForRow(failedMedia)).toBeUndefined();
+  });
+
+  it('replaces only known media container suffixes when selecting formats', () => {
+    const mediaRow = row({
+      isMedia: true,
+      formats: [
+        {
+          name: '1080p MP4',
+          selector: 'mp4',
+          ext: 'mp4',
+          formatLabel: '1080p',
+          detail: '10 MB',
+          type: 'Video',
+          bytes: 10
+        },
+        {
+          name: '1080p MKV',
+          selector: 'mkv',
+          ext: 'mkv',
+          formatLabel: '1080p',
+          detail: '11 MB',
+          type: 'Video',
+          bytes: 11
+        }
+      ],
+      selectedFormat: 1
+    });
+
+    expect(mediaFileNameForSelectedFormat('Version 1.5', mediaRow)).toBe('Version 1.5.mkv');
+    expect(mediaFileNameForSelectedFormat('Version 1.5.mp4', mediaRow)).toBe('Version 1.5.mkv');
   });
 
   it('reports fallback and invalid states accurately', () => {

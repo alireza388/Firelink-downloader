@@ -18,15 +18,14 @@
 //! ### aria2 GID-rotation contract (CRITICAL)
 //!
 //! When aria2 retries via a fresh `aria2.addUri`, it mints a **brand-new GID**.
-//! The caller MUST overwrite the stale GID → download-id mapping in
-//! `QueueManager::aria2_gids` with the new GID on every successful re-add.
-//! Failing to do so detaches subsequent `onDownloadComplete` /
-//! `onDownloadError` WebSocket events from the original id, which leaks the
-//! semaphore permit permanently. Concretely, after every retry-driven
-//! `addUri` that returns `new_gid`:
+//! The caller MUST store the new GID through `QueueManager::remember_gid` on
+//! every successful re-add. Failing to do so detaches subsequent
+//! `onDownloadComplete` / `onDownloadError` WebSocket events from the original
+//! id, or strands a terminal event that arrived before the fresh GID was stored.
+//! Concretely, after every retry-driven `addUri` that returns `new_gid`:
 //!
 //! ```ignore
-//! queue_manager.rotate_aria2_gid(&id, &stale_gid, &new_gid);
+//! queue_manager.remember_gid(id.clone(), new_gid).await;
 //! ```
 
 use std::time::Duration;

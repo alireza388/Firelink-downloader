@@ -596,20 +596,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
         removed.last().cloned()
     }
 
-    /// Overwrite a stale aria2 gid with the fresh gid minted by a retry
-    /// `addUri`. Failing to call this after re-add leaks the semaphore permit.
-    pub fn rotate_aria2_gid(&self, id: &str, stale_gid: &str, new_gid: &str) {
-        let mut gids = self.aria2_gids.write().unwrap();
-        gids.remove(stale_gid);
-        gids.insert(new_gid.to_string(), id.to_string());
-        log::info!(
-            "aria2 gid transition [{}]: rotated {} -> {}",
-            id,
-            stale_gid,
-            new_gid
-        );
-    }
-
     async fn wait_permit_released(self: &Arc<Self>, id: &str) {
         loop {
             if !self.active_permits.lock().await.contains_key(id) {
@@ -695,7 +681,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
         }
 
         let this = Arc::clone(self);
-        let stale_gid = gid.to_string();
         let id_for_task = id.clone();
         let error_for_emit = error.clone();
         tauri::async_runtime::spawn(async move {
@@ -752,11 +737,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
                             );
                             return;
                         }
-                        this.rotate_aria2_gid(&id_for_task, &stale_gid, &new_gid);
+                        let retained_gid = new_gid.clone();
+                        this.remember_gid(id_for_task.clone(), new_gid).await;
                         log::warn!(
                             "aria2 retry cancellation [{}]: retained late gid {} mapping for remove retry",
                             id_for_task,
-                            new_gid
+                            retained_gid
                         );
                         return;
                     }
@@ -764,8 +750,8 @@ impl<R: tauri::Runtime> QueueManager<R> {
                         .lock()
                         .await
                         .insert(id_for_task.clone(), strike + 1);
-                    this.rotate_aria2_gid(&id_for_task, &stale_gid, &new_gid);
                     this.emit_state(&id_for_task, DownloadStatus::Downloading);
+                    this.remember_gid(id_for_task.clone(), new_gid).await;
                 }
                 Err(retry_error) => {
                     this.apply_completion(&id_for_task, PendingOutcome::Error(retry_error))
@@ -1204,7 +1190,11 @@ impl SidecarSpawner for ProductionSpawner {
         options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
         options.insert("retry-wait".to_string(), serde_json::json!("2"));
         options.insert("continue".to_string(), serde_json::json!("true"));
-        if let Some(speed) = &payload.speed_limit {
+        if let Some(speed) = payload
+            .speed_limit
+            .as_deref()
+            .and_then(crate::normalize_speed_limit_for_aria2)
+        {
             options.insert("max-download-limit".to_string(), serde_json::json!(speed));
         }
         if let Some(user) = &payload.username {

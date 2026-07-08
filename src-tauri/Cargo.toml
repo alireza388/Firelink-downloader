@@ -36,14 +36,14 @@ uuid = { version = "1", features = ["v4"] }
 ts-rs = { version = "12", features = ["serde-compat", "uuid-impl"] }
 tauri-plugin-notification = "2.3.3"
 sysinfo = "0.39.3"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tempfile = "3"
 thiserror = "2.0.18"
 axum = "0.8.9"
-tower-http = { version = "0.6.11", features = ["cors"] }
+tower-http = { version = "0.7", features = ["cors"] }
 sysproxy = "0.3.0"
 semver = "1.0.28"
 keepawake = "0.6.0"

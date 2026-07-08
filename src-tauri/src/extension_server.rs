@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -195,13 +195,8 @@ async fn ping_handler(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let proof = sign_server_proof(
-        timestamp_str,
-        nonce,
-        state.bound_port,
-        &state.pairing_token,
-    )
-    .map_err(|_| StatusCode::FORBIDDEN)?;
+    let proof = sign_server_proof(timestamp_str, nonce, state.bound_port, &state.pairing_token)
+        .map_err(|_| StatusCode::FORBIDDEN)?;
 
     let mut response = Response::new(Body::empty());
     response.headers_mut().insert(
@@ -458,7 +453,7 @@ mod tests {
         SERVER_HEADER,
     };
     use axum::{http::StatusCode, middleware, routing::get, Router};
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
     use std::sync::{Arc, RwLock};
 

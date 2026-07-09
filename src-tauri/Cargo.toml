@@ -58,12 +58,13 @@ log = "0.4.32"
 tauri-plugin-log = "2"
 trash = "5"
 async-trait = "0.1"
+keyring-core = "1.0.0"
 [target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
 objc = "0.2.7"
-keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3", features = ["windows-native"] }
+windows-native-keyring-store = "1.1.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", features = ["sync-secret-service", "vendored"] }
+zbus-secret-service-keyring-store = { version = "1.0.0", features = ["crypto-rust"] }

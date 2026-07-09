@@ -864,20 +864,69 @@ pub fn save_pairing_token_to_settings(
     save_settings(connection, &updated)
 }
 
+fn ensure_keyring_store() -> Result<(), String> {
+    if keyring_core::get_default_store().is_some() {
+        return Ok(());
+    }
+
+    static STORE_INIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = STORE_INIT_LOCK
+        .lock()
+        .map_err(|_| "keyring store initialization lock is unavailable".to_string())?;
+
+    if keyring_core::get_default_store().is_some() {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let store = apple_native_keyring_store::keychain::Store::new()
+            .map_err(|error| error.to_string())?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let store = windows_native_keyring_store::Store::new()
+            .map_err(|error| error.to_string())?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let store = zbus_secret_service_keyring_store::Store::new()
+            .map_err(|error| error.to_string())?;
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        Err("No native keyring store is available for this platform".to_string())
+    }
+}
+
+fn keychain_entry(id: &str) -> Result<keyring_core::Entry, String> {
+    ensure_keyring_store()?;
+    keyring_core::Entry::new(KEYCHAIN_SERVICE, id).map_err(|error| error.to_string())
+}
+
 pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, id).map_err(|error| error.to_string())?;
+    let entry = keychain_entry(id)?;
     entry
         .set_password(password)
         .map_err(|error| error.to_string())
 }
 
 pub fn get_keychain_password(id: &str) -> Result<String, String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, id).map_err(|error| error.to_string())?;
+    let entry = keychain_entry(id)?;
     entry.get_password().map_err(|error| error.to_string())
 }
 
 pub fn delete_keychain_password(id: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, id).map_err(|error| error.to_string())?;
+    let entry = keychain_entry(id)?;
     let _ = entry.delete_credential();
     Ok(())
 }

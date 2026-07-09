@@ -818,6 +818,7 @@ describe('useDownloadStore', () => {
     expect(state.isAddModalOpen).toBe(true);
     expect(state.pendingAddUrls).toBe('https://adult.example/watch/123');
     expect(state.pendingAddMediaUrls).toEqual(['https://adult.example/watch/123']);
+    expect(state.pendingAddCookies).toBe('');
   });
 
   it('deduplicates forced media URLs and drops stale media intent when opening fresh', async () => {

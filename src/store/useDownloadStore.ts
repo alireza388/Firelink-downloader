@@ -552,12 +552,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
 
+    // Explicit media uses yt-dlp and its configured browser-cookie source.
+    // Passing Firefox's complete page Cookie header can exceed YouTube's
+    // request-header limit; ordinary captured file downloads keep it.
+    const cookies = request.media === true ? null : request.cookies;
+
     get().openAddModalWithUrls(
       urls.join('\n'),
       request.referer,
       urls.length === 1 ? request.filename : null,
       request.headers,
-      request.cookies,
+      cookies,
       request.media === true
     );
   },

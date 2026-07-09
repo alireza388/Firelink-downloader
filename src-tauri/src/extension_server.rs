@@ -315,7 +315,13 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         silent: payload.silent,
         filename,
         headers: payload.headers.filter(|value| !value.trim().is_empty()),
-        cookies: payload.cookies.filter(|value| !value.trim().is_empty()),
+        // A full browser Cookie header can exceed upstream request-header
+        // limits. Media uses yt-dlp's configured browser-cookie source
+        // instead; regular captured downloads retain their exact cookies.
+        cookies: (!payload.media)
+            .then_some(payload.cookies)
+            .flatten()
+            .filter(|value| !value.trim().is_empty()),
         media: payload.media,
     })
 }
@@ -449,8 +455,8 @@ fn is_allowed_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_server_identity, is_valid_client_nonce, sign_server_proof, PROTOCOL_VERSION_HEADER,
-        SERVER_HEADER,
+        add_server_identity, is_valid_client_nonce, normalize_download, sign_server_proof,
+        ExtensionRequest, PROTOCOL_VERSION_HEADER, SERVER_HEADER,
     };
     use axum::{http::StatusCode, middleware, routing::get, Router};
     use hmac::{Hmac, KeyInit, Mac};
@@ -490,6 +496,24 @@ mod tests {
         assert!(is_valid_client_nonce("ABCDEF0123456789abcdef0123456789"));
         assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcde"));
         assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn explicit_media_drops_the_extension_cookie_header() {
+        let download = normalize_download(ExtensionRequest {
+            urls: vec!["https://www.youtube.com/watch?v=example".to_string()],
+            referer: None,
+            silent: false,
+            filename: None,
+            headers: Some("User-Agent: Firefox".to_string()),
+            cookies: Some("large=browser-cookie-header".to_string()),
+            media: true,
+        })
+        .expect("valid media handoff");
+
+        assert!(download.media);
+        assert!(download.cookies.is_none());
+        assert_eq!(download.headers.as_deref(), Some("User-Agent: Firefox"));
     }
 
     #[test]

@@ -102,6 +102,21 @@ async fn push_appends_to_pending_and_emits_queued() {
 }
 
 #[tokio::test]
+async fn cancelled_enqueue_generation_cannot_register_after_a_newer_user_action() {
+    let (mgr, _spawner) = make_manager(2);
+    mgr.cancel_enqueue_generation("a", 4).await;
+
+    let stale = mgr.push_with_generation(sample_task("a"), 4).await;
+    assert!(stale.is_err(), "cancelled generation must not enter the queue");
+    assert!(!mgr.is_registered("a").await);
+
+    mgr.push_with_generation(sample_task("a"), 5)
+        .await
+        .expect("newer generation should be accepted");
+    assert_eq!(mgr.pending_order(None).await, vec!["a".to_string()]);
+}
+
+#[tokio::test]
 async fn release_permit_is_idempotent() {
     let (mgr, _spawner) = make_manager(2);
     let permit = mgr.acquire_permit().await;

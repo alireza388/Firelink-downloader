@@ -442,7 +442,7 @@ function App() {
           const trackedIds = state.schedulerActiveDownloadIds;
           if (trackedIds.length > 0) {
             const pauseResults = await Promise.allSettled(
-              trackedIds.map(id => invoke('pause_download', { id }))
+              trackedIds.map(id => useDownloadStore.getState().pauseDownload(id))
             );
             const failedPauses = pauseResults.filter(result => result.status === 'rejected').length;
             if (failedPauses > 0) {
@@ -586,6 +586,7 @@ function App() {
 
   useEffect(() => {
     if (!coreReady) return;
+    let disposed = false;
     const unlistenDownload = initDownloadListener();
 
     const unlistenTerminalState = listen('download-state', (event) => {
@@ -630,10 +631,14 @@ function App() {
       useDownloadStore.getState().openAddModalWithUrls(event.payload);
     });
     Promise.all([unlistenExtension, unlistenDeepLink])
-      .then(() => invoke('set_extension_frontend_ready', { ready: true }))
+      .then(() => {
+        if (disposed) return;
+        return invoke('set_extension_frontend_ready', { ready: true });
+      })
       .catch(error => console.error('Failed to activate browser extension integration:', error));
 
     return () => {
+      disposed = true;
       invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
       unlistenTerminalState.then(f => f());
       unlistenExtension.then(f => f());

@@ -35,40 +35,50 @@ export const useDownloadProgressStore = create<DownloadProgressState>((set) => (
 let unlistenProgress: UnlistenFn | null = null;
 let unlistenState: UnlistenFn | null = null;
 let unlistenTray: UnlistenFn | null = null;
+let listenerSetup: Promise<void> | null = null;
+let listenerConsumers = 0;
 
-export async function initDownloadListener() {
-  if (unlistenProgress) return;
-  unlistenProgress = await listen('download-progress', (event) => {
-    const payload = event.payload;
-    useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
+const disposeDownloadListeners = () => {
+  unlistenProgress?.();
+  unlistenProgress = null;
+  unlistenState?.();
+  unlistenState = null;
+  unlistenTray?.();
+  unlistenTray = null;
+  listenerSetup = null;
+};
 
-    const mainStore = useDownloadStore.getState();
-    const current = mainStore.downloads.find(d => d.id === payload.id);
-    if (current) {
-      const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
-      const updates: Partial<DownloadItem> = {};
-      if (current.status === 'downloading' || current.status === 'processing') {
-        updates.fraction = payload.fraction;
-        updates.speed = payload.speed;
-        updates.eta = payload.eta;
-      }
-      if (shouldUpdateSize && current.size !== payload.size) {
-        updates.size = payload.size!;
-      }
-      if (Object.keys(updates).length > 0) {
-        mainStore.updateDownload(payload.id, updates);
-      }
-    }
-  });
+const startDownloadListeners = async () => {
+  const registrations = await Promise.allSettled([
+    listen('download-progress', (event) => {
+      const payload = event.payload;
+      useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
 
-  if (!unlistenState) {
-    unlistenState = await listen('download-state', (event) => {
+      const mainStore = useDownloadStore.getState();
+      const current = mainStore.downloads.find(d => d.id === payload.id);
+      if (current) {
+        const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
+        const updates: Partial<DownloadItem> = {};
+        if (current.status === 'downloading' || current.status === 'processing') {
+          updates.fraction = payload.fraction;
+          updates.speed = payload.speed;
+          updates.eta = payload.eta;
+        }
+        if (shouldUpdateSize && current.size !== payload.size) {
+          updates.size = payload.size!;
+        }
+        if (Object.keys(updates).length > 0) {
+          mainStore.updateDownload(payload.id, updates);
+        }
+      }
+    }),
+    listen('download-state', (event) => {
       const payload = event.payload;
       const mainStore = useDownloadStore.getState();
       const current = mainStore.downloads.find(d => d.id === payload.id);
       if (current) {
         const status = payload.status as DownloadStatus;
-        
+
         // Prevent race condition: don't transition backwards from terminal state
         if ((current.status === 'completed' || current.status === 'failed') &&
             (status !== 'completed' && status !== 'failed')) {
@@ -111,32 +121,58 @@ export async function initDownloadListener() {
           useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
         }
       }
-    });
-  }
-
-  if (!unlistenTray) {
-    unlistenTray = await listen('tray-action', (event) => {
+    }),
+    listen('tray-action', (event) => {
       const mainStore = useDownloadStore.getState();
       if (event.payload === 'pause-all') {
         void mainStore.pauseAll();
       } else if (event.payload === 'resume-all') {
         void mainStore.startAll();
       }
+    }),
+  ]);
+
+  const failedRegistration = registrations.find(
+    (registration): registration is PromiseRejectedResult => registration.status === 'rejected'
+  );
+  if (failedRegistration) {
+    for (const registration of registrations) {
+      if (registration.status === 'fulfilled') registration.value();
+    }
+    throw failedRegistration.reason;
+  }
+
+  const [progress, state, tray] = registrations as [
+    PromiseFulfilledResult<UnlistenFn>,
+    PromiseFulfilledResult<UnlistenFn>,
+    PromiseFulfilledResult<UnlistenFn>,
+  ];
+  unlistenProgress = progress.value;
+  unlistenState = state.value;
+  unlistenTray = tray.value;
+};
+
+export async function initDownloadListener(): Promise<() => void> {
+  listenerConsumers += 1;
+  if (!listenerSetup) {
+    listenerSetup = startDownloadListeners().catch(error => {
+      disposeDownloadListeners();
+      throw error;
     });
   }
 
+  try {
+    await listenerSetup;
+  } catch (error) {
+    listenerConsumers -= 1;
+    throw error;
+  }
+
+  let released = false;
   return () => {
-    if (unlistenProgress) {
-      unlistenProgress();
-      unlistenProgress = null;
-    }
-    if (unlistenState) {
-      unlistenState();
-      unlistenState = null;
-    }
-    if (unlistenTray) {
-      unlistenTray();
-      unlistenTray = null;
-    }
+    if (released) return;
+    released = true;
+    listenerConsumers -= 1;
+    if (listenerConsumers === 0) disposeDownloadListeners();
   };
 }

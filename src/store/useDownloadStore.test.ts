@@ -214,6 +214,120 @@ describe('useDownloadStore', () => {
     });
   });
 
+  it('does not resurrect a row removed while its backend enqueue is in flight', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'late', url: 'http://test', fileName: 'late.bin', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+      ] as any[],
+    });
+
+    let resolveEnqueue!: (value: { id: string; filename: string }) => void;
+    const enqueue = new Promise<{ id: string; filename: string }>(resolve => {
+      resolveEnqueue = resolve;
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'enqueue_download') return enqueue as never;
+      if (command === 'get_pending_order') return Promise.resolve(['late']) as never;
+      return Promise.resolve(undefined) as never;
+    });
+
+    const start = useDownloadStore.getState().startQueue('MAIN');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'enqueue_download',
+        expect.objectContaining({ item: expect.objectContaining({ id: 'late' }) })
+      );
+    });
+
+    await useDownloadStore.getState().removeDownload('late');
+    resolveEnqueue({ id: 'late', filename: 'late.bin' });
+
+    await expect(start).resolves.toEqual([]);
+    expect(useDownloadStore.getState().downloads).toEqual([]);
+    expect(useDownloadStore.getState().backendRegisteredIds.has('late')).toBe(false);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(([command]) => command === 'remove_download')
+    ).toHaveLength(2);
+  });
+
+  it('re-enqueues the edited values only after an obsolete queued dispatch is removed', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'edited', url: 'http://test', fileName: 'old.bin', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+      ] as any[],
+    });
+
+    let resolveFirstEnqueue!: (value: { id: string; filename: string }) => void;
+    const firstEnqueue = new Promise<{ id: string; filename: string }>(resolve => {
+      resolveFirstEnqueue = resolve;
+    });
+    let enqueueCount = 0;
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'enqueue_download') {
+        enqueueCount += 1;
+        return (enqueueCount === 1
+          ? firstEnqueue
+          : Promise.resolve({ id: 'edited', filename: 'new.bin' })) as never;
+      }
+      if (command === 'get_pending_order') return Promise.resolve(['edited']) as never;
+      return Promise.resolve(undefined) as never;
+    });
+
+    const start = useDownloadStore.getState().startQueue('MAIN');
+    await vi.waitFor(() => expect(enqueueCount).toBe(1));
+    const update = useDownloadStore.getState().applyProperties('edited', { fileName: 'new.bin' });
+    resolveFirstEnqueue({ id: 'edited', filename: 'old.bin' });
+
+    await expect(update).resolves.toBeUndefined();
+    await expect(start).resolves.toEqual([]);
+    expect(enqueueCount).toBe(2);
+    expect(vi.mocked(ipc.invokeCommand)).toHaveBeenCalledWith(
+      'get_pending_order',
+      { queueId: 'MAIN' }
+    );
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      fileName: 'new.bin',
+      hasBeenDispatched: true,
+    });
+  });
+
+  it('settles an in-flight dispatch before pausing so it cannot start after pause succeeds', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'paused', url: 'http://test', fileName: 'paused.bin', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+      ] as any[],
+    });
+
+    let resolveEnqueue!: (value: { id: string; filename: string }) => void;
+    const enqueue = new Promise<{ id: string; filename: string }>(resolve => {
+      resolveEnqueue = resolve;
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'enqueue_download') return enqueue as never;
+      return Promise.resolve(undefined) as never;
+    });
+
+    const start = useDownloadStore.getState().startQueue('MAIN');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'enqueue_download',
+        expect.objectContaining({ item: expect.objectContaining({ id: 'paused' }) })
+      );
+    });
+    const pause = useDownloadStore.getState().pauseDownload('paused');
+    resolveEnqueue({ id: 'paused', filename: 'paused.bin' });
+
+    await expect(pause).resolves.toBeUndefined();
+    await expect(start).resolves.toEqual([]);
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({ status: 'paused' });
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(([command]) => command === 'remove_download')
+    ).toHaveLength(1);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(([command]) => command === 'pause_download')
+    ).toHaveLength(1);
+  });
+
   it('resumeDownload unregisters ID and re-dispatches if un-resumable', async () => {
     useDownloadStore.setState({
       downloads: [
@@ -536,7 +650,12 @@ describe('useDownloadStore', () => {
         { id: 'active', url: 'https://example.com/file', fileName: 'file', status: 'downloading', category: 'Other', dateAdded: '', queueId: 'main' }
       ] as any[]
     });
-    vi.mocked(ipc.invokeCommand).mockRejectedValueOnce(new Error('writer did not stop'));
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'remove_download') {
+        return Promise.reject(new Error('writer did not stop')) as never;
+      }
+      return Promise.resolve(undefined) as never;
+    });
 
     await expect(useDownloadStore.getState().removeDownload('active', true))
       .rejects.toThrow('writer did not stop');

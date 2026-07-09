@@ -78,6 +78,7 @@ type CommandMap = {
   is_log_paused: { args: undefined; result: boolean };
   get_pending_order: { args: { queueId: string | null }; result: string[] };
   enqueue_download: { args: { item: EnqueueItem }; result: EnqueueAccepted };
+  cancel_enqueue_generation: { args: { id: string; generation: string }; result: void };
   enqueue_many: { args: { items: EnqueueItem[] }; result: import('./bindings/EnqueueResult').EnqueueResult[] };
   move_in_queue: { args: { id: string; queueId: string; direction: 'up' | 'down' }; result: string[] };
   remove_from_queue: { args: { id: string }; result: boolean };

@@ -84,6 +84,7 @@ pub trait SidecarSpawner: Send + Sync + 'static {
 /// The centralized concurrency gatekeeper. One instance lives in AppState.
 pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     registered_ids: Mutex<HashSet<String>>,
+    enqueue_cancellations: Mutex<HashMap<String, u64>>,
     pending: Mutex<VecDeque<QueuedTask>>,
     semaphore: Arc<Semaphore>,
     active_permits: Mutex<HashMap<String, OwnedSemaphorePermit>>,
@@ -134,6 +135,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
     ) -> Self {
         Self {
             registered_ids: Mutex::new(HashSet::new()),
+            enqueue_cancellations: Mutex::new(HashMap::new()),
             pending: Mutex::new(VecDeque::new()),
             semaphore: Arc::new(Semaphore::new(capacity)),
             active_permits: Mutex::new(HashMap::new()),
@@ -171,6 +173,41 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn is_registered(&self, id: &str) -> bool {
         self.registered_ids.lock().await.contains(id)
+    }
+
+    /// Reject an in-flight enqueue generation if a newer UI action supersedes it.
+    pub async fn cancel_enqueue_generation(&self, id: &str, generation: u64) {
+        let mut cancellations = self.enqueue_cancellations.lock().await;
+        cancellations
+            .entry(id.to_string())
+            .and_modify(|current| *current = (*current).max(generation))
+            .or_insert(generation);
+    }
+
+    /// Atomically checks the cancellation watermark before registering a task.
+    pub async fn push_with_generation(
+        &self,
+        task: QueuedTask,
+        generation: u64,
+    ) -> Result<(), String> {
+        let id = task.id.clone();
+        let cancellations = self.enqueue_cancellations.lock().await;
+        if cancellations.get(&id).is_some_and(|cancelled| *cancelled >= generation) {
+            return Err("Download enqueue was superseded by a newer user action".to_string());
+        }
+
+        let mut registered = self.registered_ids.lock().await;
+        if registered.contains(&id) {
+            return Err("Duplicate task".to_string());
+        }
+        registered.insert(id.clone());
+        drop(registered);
+        drop(cancellations);
+
+        self.pending.lock().await.push_back(task);
+        self.emit_state(id, DownloadStatus::Queued);
+        self.notify.notify_one();
+        Ok(())
     }
 
     pub async fn next_aria2_control_epoch(&self, id: &str) -> u64 {
@@ -1336,6 +1373,9 @@ pub struct EnqueueItem {
     pub format_selector: Option<String>,
     pub cookie_source: Option<String>,
     pub is_media: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub lifecycle_generation: Option<String>,
 }
 
 impl EnqueueItem {

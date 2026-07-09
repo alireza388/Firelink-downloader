@@ -977,30 +977,47 @@ fn aggregate_media_fraction(
     ((*current_track + *last_fraction) / total_tracks).clamp(0.0, 1.0)
 }
 
+struct MediaProgressEmitterState {
+    current_track: f64,
+    last_fraction: f64,
+    speed_sampler: MediaSpeedSampler,
+    last_progress_at: Instant,
+}
+
+impl MediaProgressEmitterState {
+    fn new() -> Self {
+        Self {
+            current_track: 0.0,
+            last_fraction: 0.0,
+            speed_sampler: MediaSpeedSampler::default(),
+            last_progress_at: Instant::now()
+                .checked_sub(MEDIA_PROGRESS_EMIT_INTERVAL)
+                .unwrap_or_else(Instant::now),
+        }
+    }
+}
+
 fn emit_media_progress(
     app_handle: &tauri::AppHandle,
     id: &str,
     progress: MediaProgress,
     total_tracks: f64,
-    current_track: &mut f64,
-    last_fraction: &mut f64,
-    speed_sampler: &mut MediaSpeedSampler,
-    last_progress_at: &mut Instant,
+    state: &mut MediaProgressEmitterState,
 ) {
-    let previous_track = *current_track;
+    let previous_track = state.current_track;
     let overall_fraction = aggregate_media_fraction(
         total_tracks,
-        current_track,
-        last_fraction,
+        &mut state.current_track,
+        &mut state.last_fraction,
         progress.fraction,
     );
-    if *current_track != previous_track {
-        speed_sampler.reset();
+    if state.current_track != previous_track {
+        state.speed_sampler.reset();
     }
-    let (speed, eta) = media_progress_speed(&progress, Instant::now(), speed_sampler);
+    let (speed, eta) = media_progress_speed(&progress, Instant::now(), &mut state.speed_sampler);
 
     let now = Instant::now();
-    if now.duration_since(*last_progress_at) >= MEDIA_PROGRESS_EMIT_INTERVAL {
+    if now.duration_since(state.last_progress_at) >= MEDIA_PROGRESS_EMIT_INTERVAL {
         let _ = app_handle.emit(
             "download-progress",
             DownloadProgressEvent {
@@ -1012,7 +1029,7 @@ fn emit_media_progress(
                 size_is_final: false,
             },
         );
-        *last_progress_at = now;
+        state.last_progress_at = now;
     }
 }
 
@@ -1408,6 +1425,7 @@ static MEDIA_METADATA_LOCKS: OnceLock<
     tokio::sync::Mutex<HashMap<u64, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 > = OnceLock::new();
 
+#[allow(clippy::too_many_arguments)] // Hash every user-controlled yt-dlp input explicitly.
 fn media_metadata_cache_key(
     url: &str,
     cookie_browser: &Option<String>,
@@ -1454,6 +1472,7 @@ fn resolve_metadata_ytdlp_path(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Keep the generated TypeScript IPC contract flat and stable.
 async fn fetch_media_metadata(
     app_handle: tauri::AppHandle,
     url: String,
@@ -1564,6 +1583,7 @@ async fn fetch_media_metadata(
     result
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the stable command contract for the fallback call.
 async fn fetch_media_metadata_uncached(
     app_handle: tauri::AppHandle,
     url: String,
@@ -2840,12 +2860,7 @@ pub(crate) async fn start_media_download_internal(
         None
     };
     let _keep_alive = config_path;
-    let mut current_track: f64 = 0.0;
-    let mut last_fraction: f64 = 0.0;
-    let mut speed_sampler = MediaSpeedSampler::default();
-    let mut last_progress_at = std::time::Instant::now()
-        .checked_sub(MEDIA_PROGRESS_EMIT_INTERVAL)
-        .unwrap_or_else(std::time::Instant::now);
+    let mut progress_state = MediaProgressEmitterState::new();
 
     // Resolve absolute paths to bundled binaries
     let aria2c_path = resolve_bundled_binary_path(&app_handle, "aria2c")?;
@@ -2993,10 +3008,7 @@ pub(crate) async fn start_media_download_internal(
                                         id,
                                         progress,
                                         total_tracks,
-                                        &mut current_track,
-                                        &mut last_fraction,
-                                        &mut speed_sampler,
-                                        &mut last_progress_at,
+                                        &mut progress_state,
                                     );
                                 } else {
                                     let candidate = line.trim();
@@ -3022,10 +3034,7 @@ pub(crate) async fn start_media_download_internal(
                                         id,
                                         progress,
                                         total_tracks,
-                                        &mut current_track,
-                                        &mut last_fraction,
-                                        &mut speed_sampler,
-                                        &mut last_progress_at,
+                                        &mut progress_state,
                                     );
                                 }
                                 if !processing_started && is_media_processing_line(&line) {
@@ -3064,10 +3073,7 @@ pub(crate) async fn start_media_download_internal(
                                         id,
                                         progress,
                                         total_tracks,
-                                        &mut current_track,
-                                        &mut last_fraction,
-                                        &mut speed_sampler,
-                                        &mut last_progress_at,
+                                        &mut progress_state,
                                     );
                                 } else {
                                     let candidate = line.trim();
@@ -3086,10 +3092,7 @@ pub(crate) async fn start_media_download_internal(
                                         id,
                                         progress,
                                         total_tracks,
-                                        &mut current_track,
-                                        &mut last_fraction,
-                                        &mut speed_sampler,
-                                        &mut last_progress_at,
+                                        &mut progress_state,
                                     );
                                 }
                                 if !processing_started && is_media_processing_line(&line) {
@@ -3953,7 +3956,21 @@ async fn enqueue_download(
         &item.destination,
         &item.filename,
     )?;
-    if let Err(e) = state.queue_manager.push(item.into_task()).await {
+    let lifecycle_generation = item
+        .lifecycle_generation
+        .as_deref()
+        .map(|generation| {
+            generation
+                .parse::<u64>()
+                .map_err(|_| AppError::Internal("Invalid enqueue lifecycle generation".to_string()))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if let Err(e) = state
+        .queue_manager
+        .push_with_generation(item.into_task(), lifecycle_generation)
+        .await
+    {
         let _ = crate::download_ownership::remove(&app_handle, &id);
         state.queue_manager.release_registered_id(&id).await;
         return Err(AppError::Internal(e));
@@ -3962,6 +3979,22 @@ async fn enqueue_download(
         id,
         filename: accepted_filename,
     })
+}
+
+#[tauri::command]
+async fn cancel_enqueue_generation(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    generation: String,
+) -> Result<(), AppError> {
+    let generation = generation
+        .parse::<u64>()
+        .map_err(|_| AppError::Internal("Invalid enqueue lifecycle generation".to_string()))?;
+    state
+        .queue_manager
+        .cancel_enqueue_generation(&id, generation)
+        .await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -5793,7 +5826,7 @@ pub fn run() {
             check_file_exists, toggle_tray_icon, set_extension_pairing_token,
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
-            enqueue_download, enqueue_many, move_in_queue, remove_from_queue, get_pending_order,
+            enqueue_download, enqueue_many, cancel_enqueue_generation, move_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories,

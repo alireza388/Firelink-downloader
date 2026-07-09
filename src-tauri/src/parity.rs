@@ -86,10 +86,10 @@ fn proxy_from_environment() -> Option<String> {
 fn command_stdout(command: &mut Command) -> std::io::Result<String> {
     let output = command.output()?;
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("command exited with {}", output.status),
-        ));
+        return Err(std::io::Error::other(format!(
+            "command exited with {}",
+            output.status
+        )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

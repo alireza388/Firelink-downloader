@@ -16,6 +16,53 @@ import { canPauseDownload, canStartDownload } from '../utils/downloadActions';
 export type { DownloadCategory } from '../utils/downloads';
 
 const backendDispatchPromises = new Map<string, Promise<boolean>>();
+const downloadLifecycleGenerations = new Map<string, bigint>();
+
+const advanceDownloadLifecycle = (id: string): bigint => {
+  const nextGeneration = (downloadLifecycleGenerations.get(id) ?? 0n) + 1n;
+  downloadLifecycleGenerations.set(id, nextGeneration);
+  return nextGeneration;
+};
+
+const currentDownloadLifecycle = (id: string): bigint =>
+  downloadLifecycleGenerations.get(id) ?? 0n;
+
+type DispatchInvalidation = {
+  generation: bigint;
+  pendingDispatch?: Promise<boolean>;
+};
+
+const invalidateDispatch = async (id: string): Promise<DispatchInvalidation> => {
+  const generation = currentDownloadLifecycle(id);
+  const nextGeneration = advanceDownloadLifecycle(id);
+  try {
+    await invoke('cancel_enqueue_generation', { id, generation: generation.toString() });
+  } catch (error) {
+    console.warn(`Failed to cancel stale backend enqueue for ${id}:`, error);
+  }
+  return { generation: nextGeneration, pendingDispatch: backendDispatchPromises.get(id) };
+};
+
+const invalidateAndWaitForDispatch = async (id: string): Promise<boolean> => {
+  const { pendingDispatch } = await invalidateDispatch(id);
+  if (!pendingDispatch) return false;
+  await pendingDispatch;
+  return true;
+};
+
+const isCurrentDownloadLifecycle = (id: string, generation: bigint): boolean =>
+  currentDownloadLifecycle(id) === generation &&
+  useDownloadStore.getState().downloads.some(download => download.id === id);
+
+const removeStaleBackendDispatch = async (id: string): Promise<void> => {
+  try {
+    await invoke('remove_download', { id, deleteAssets: false });
+  } catch (error) {
+    // The original remove request may already have won this race. Either way,
+    // never allow a stale enqueue to make the deleted row live again.
+    console.warn(`Failed to remove stale backend dispatch for ${id}:`, error);
+  }
+};
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -32,15 +79,19 @@ export async function dispatchItem(id: string): Promise<boolean> {
   if (backendDispatchPromises.has(id)) return backendDispatchPromises.get(id)!;
 
   const promise = (async () => {
+    let lifecycleGeneration: bigint | null = null;
     try {
       const state = useDownloadStore.getState();
       const item = state.downloads.find(d => d.id === id);
       if (!item) return false;
       if (state.backendRegisteredIds.has(id)) return true;
+      lifecycleGeneration = currentDownloadLifecycle(id);
 
       const settings = useSettingsStore.getState();
       const destination = item.destination ||
         await resolveCategoryDestination(settings, item.category);
+      if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) return false;
+
       const login = getSiteLogin(item.url, settings);
       let keychainPassword = null;
       if (login) {
@@ -50,6 +101,10 @@ export async function dispatchItem(id: string): Promise<boolean> {
           console.warn("Failed to retrieve keychain password for dispatch:", e);
         }
       }
+      if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) return false;
+
+      const proxy = await getProxyArgs(settings);
+      if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) return false;
 
       const enqueueItem = {
         id: item.id,
@@ -67,13 +122,19 @@ export async function dispatchItem(id: string): Promise<boolean> {
         mirrors: item.mirrors || null,
         user_agent: settings.customUserAgent.trim() || null,
         max_tries: settings.maxAutomaticRetries,
-        proxy: await getProxyArgs(settings),
+        proxy,
         format_selector: item.mediaFormatSelector || null,
         cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
-        is_media: item.isMedia || false
+        is_media: item.isMedia || false,
+        lifecycle_generation: lifecycleGeneration.toString(),
       };
 
       const accepted = await invoke('enqueue_download', { item: enqueueItem });
+      if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) {
+        await removeStaleBackendDispatch(id);
+        return false;
+      }
+
       const acceptedFilename = accepted?.filename || item.fileName;
       if (acceptedFilename !== item.fileName) {
         useDownloadStore.getState().updateDownload(id, {
@@ -82,16 +143,23 @@ export async function dispatchItem(id: string): Promise<boolean> {
         });
       }
       const order = await invoke('get_pending_order', { queueId: item.queueId || MAIN_QUEUE_ID });
+      if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) {
+        await removeStaleBackendDispatch(id);
+        return false;
+      }
+
       useDownloadStore.getState().setPendingOrder(order);
       useDownloadStore.getState().registerBackendIds([id]);
       useDownloadStore.getState().updateDownload(id, { lastError: undefined });
       return true;
     } catch (e) {
       console.error(`Failed to dispatch ${id}:`, e);
-      useDownloadStore.getState().updateDownload(id, {
-        status: 'failed',
-        lastError: errorMessage(e)
-      });
+      if (lifecycleGeneration !== null && isCurrentDownloadLifecycle(id, lifecycleGeneration)) {
+        useDownloadStore.getState().updateDownload(id, {
+          status: 'failed',
+          lastError: errorMessage(e)
+        });
+      }
       return false;
     } finally {
       backendDispatchPromises.delete(id);
@@ -289,6 +357,7 @@ interface DownloadState {
   addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<boolean>;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
   removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
+  pauseDownload: (id: string) => Promise<void>;
   redownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<boolean>;
   startQueue: (queueId: string) => Promise<string[]>;
@@ -510,6 +579,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       queuePosition,
       hasBeenDispatched: false
     };
+    advanceDownloadLifecycle(item.id);
     set((state) => ({ downloads: [...state.downloads, ownedItem] }));
 
     if (action.type === 'add-to-queue') {
@@ -526,6 +596,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return false;
   },
   applyProperties: async (id, updates) => {
+    const wasDispatching = await invalidateAndWaitForDispatch(id);
     const state = get();
     const item = state.downloads.find(d => d.id === id);
     if (!item) return;
@@ -548,8 +619,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         state.unregisterBackendIds([id]);
       }
       state.updateDownload(id, updates);
-      if (isRegistered) {
-        if (!await dispatchItem(id)) {
+      if (isRegistered || wasDispatching) {
+        const dispatched = await dispatchItem(id);
+        if (dispatched) {
+          state.updateDownload(id, { hasBeenDispatched: true });
+        } else {
           state.removeFromQueue(id);
         }
       }
@@ -590,6 +664,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
   },
   removeDownload: async (id, deleteFile = false) => {
+    await invalidateDispatch(id);
     const item = get().downloads.find(d => d.id === id);
 
     if (item) {
@@ -606,6 +681,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     info(`Download ${id} removed`);
     syncSystemIntegrations();
   },
+  pauseDownload: async (id) => {
+    const { generation } = await invalidateDispatch(id);
+
+    await invoke('pause_download', { id });
+
+    if (!isCurrentDownloadLifecycle(id, generation)) return;
+    const current = get().downloads.find(download => download.id === id);
+    if (current && current.status !== 'completed' && current.status !== 'failed') {
+      get().updateDownload(id, { status: 'paused', speed: '-', eta: '-' });
+    }
+  },
   redownload: async (id) => {
     const targetItem = get().downloads.find(d => d.id === id);
     if (!targetItem) {
@@ -618,6 +704,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     const url = targetItem.url?.trim();
     if (!url) throw new Error('Cannot redownload: original URL is missing.');
+
+    await invalidateAndWaitForDispatch(id);
 
     // Remove from backend to clear its state and delete the existing file so we can overwrite
     try {
@@ -746,9 +834,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
     if (activeIds.length === 0) return 0;
 
-    const results = await Promise.allSettled(
-      activeIds.map(id => invoke('pause_download', { id }))
-    );
+    const results = await Promise.allSettled(activeIds.map(id => get().pauseDownload(id)));
     const pausedCount = results.filter(result => result.status === 'fulfilled').length;
     const failedCount = activeIds.length - pausedCount;
     if (failedCount > 0) {
@@ -778,9 +864,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       .map(item => item.id);
     if (activeIds.length === 0) return 0;
 
-    const results = await Promise.allSettled(
-      activeIds.map(id => invoke('pause_download', { id }))
-    );
+    const results = await Promise.allSettled(activeIds.map(id => get().pauseDownload(id)));
     const pausedCount = results.filter(result => result.status === 'fulfilled').length;
     syncSystemIntegrations();
     return pausedCount;
@@ -793,7 +877,13 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       throw new Error(`Pause ${locked.fileName} before moving it to another queue.`);
     }
 
-    for (const item of selected) {
+    await Promise.all(
+      selected
+        .filter(item => item.status !== 'completed')
+        .map(item => invalidateAndWaitForDispatch(item.id))
+    );
+
+    for (const item of get().downloads.filter(item => selectedIds.has(item.id))) {
       if (!get().backendRegisteredIds.has(item.id)) continue;
       if (item.status === 'queued') {
         await invoke('remove_from_queue', { id: item.id });
@@ -927,7 +1017,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               proxy: await getProxyArgs(settings),
               format_selector: item.mediaFormatSelector || null,
               cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
-              is_media: item.isMedia || false
+              is_media: item.isMedia || false,
+              lifecycle_generation: currentDownloadLifecycle(item.id).toString(),
             });
           }
           const results = await invoke('enqueue_many', { items: itemsToEnqueue });

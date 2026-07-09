@@ -338,7 +338,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
 
     try {
-      await invoke('pause_download', { id });
+      await useDownloadStore.getState().pauseDownload(id);
     } catch (e) {
       console.error("Failed to pause:", e);
       showInteractionError('Could not pause download', e);

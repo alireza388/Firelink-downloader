@@ -3,7 +3,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use regex::Regex;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -885,33 +885,59 @@ fn parse_human_size(s: &str) -> Option<f64> {
     }
 }
 
+const MEDIA_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(1000);
+const MEDIA_SPEED_SAMPLE_WINDOW: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Default)]
+struct MediaSpeedSampler {
+    samples: VecDeque<(Instant, f64)>,
+}
+
+impl MediaSpeedSampler {
+    fn reset(&mut self) {
+        self.samples.clear();
+    }
+
+    fn sample(&mut self, downloaded_bytes: f64, now: Instant) -> Option<f64> {
+        if self
+            .samples
+            .back()
+            .is_some_and(|(_, last_bytes)| downloaded_bytes < *last_bytes)
+        {
+            self.reset();
+        }
+
+        self.samples.push_back((now, downloaded_bytes));
+        while self.samples.len() > 2 {
+            let Some((oldest_at, _)) = self.samples.front() else {
+                break;
+            };
+            if now.duration_since(*oldest_at) <= MEDIA_SPEED_SAMPLE_WINDOW {
+                break;
+            }
+            self.samples.pop_front();
+        }
+
+        let (oldest_at, oldest_bytes) = *self.samples.front()?;
+        let elapsed = now.duration_since(oldest_at).as_secs_f64();
+        if elapsed <= 0.25 || downloaded_bytes <= oldest_bytes {
+            return None;
+        }
+
+        Some((downloaded_bytes - oldest_bytes) / elapsed)
+    }
+}
+
 fn media_progress_speed(
     progress: &MediaProgress,
     now: Instant,
-    last_sample: &mut Option<(Instant, f64)>,
+    speed_sampler: &mut MediaSpeedSampler,
 ) -> (String, String) {
     let Some(downloaded_bytes) = progress.downloaded_bytes else {
         return (progress.speed.clone(), progress.eta.clone());
     };
 
-    let Some((last_at, last_bytes)) = *last_sample else {
-        *last_sample = Some((now, downloaded_bytes));
-        return (progress.speed.clone(), progress.eta.clone());
-    };
-
-    *last_sample = Some((now, downloaded_bytes));
-
-    if downloaded_bytes < last_bytes {
-        return (progress.speed.clone(), progress.eta.clone());
-    }
-
-    let elapsed = now.duration_since(last_at).as_secs_f64();
-    if elapsed <= 0.05 {
-        return (progress.speed.clone(), progress.eta.clone());
-    }
-
-    let bytes_per_second = (downloaded_bytes - last_bytes) / elapsed;
-    if bytes_per_second > 0.0 {
+    if let Some(bytes_per_second) = speed_sampler.sample(downloaded_bytes, now) {
         let speed_str = crate::download::format_speed(bytes_per_second);
         let eta_str = if progress.fraction > 0.0 && progress.fraction < 1.0 {
             let total = downloaded_bytes / progress.fraction;
@@ -951,7 +977,7 @@ fn emit_media_progress(
     total_tracks: f64,
     current_track: &mut f64,
     last_fraction: &mut f64,
-    last_speed_sample: &mut Option<(Instant, f64)>,
+    speed_sampler: &mut MediaSpeedSampler,
     last_progress_at: &mut Instant,
 ) {
     let previous_track = *current_track;
@@ -962,12 +988,12 @@ fn emit_media_progress(
         progress.fraction,
     );
     if *current_track != previous_track {
-        *last_speed_sample = None;
+        speed_sampler.reset();
     }
-    let (speed, eta) = media_progress_speed(&progress, Instant::now(), last_speed_sample);
+    let (speed, eta) = media_progress_speed(&progress, Instant::now(), speed_sampler);
 
     let now = Instant::now();
-    if now.duration_since(*last_progress_at) >= Duration::from_millis(200) {
+    if now.duration_since(*last_progress_at) >= MEDIA_PROGRESS_EMIT_INTERVAL {
         let _ = app_handle.emit(
             "download-progress",
             DownloadProgressEvent {
@@ -2805,9 +2831,9 @@ pub(crate) async fn start_media_download_internal(
     let _keep_alive = config_path;
     let mut current_track: f64 = 0.0;
     let mut last_fraction: f64 = 0.0;
-    let mut last_speed_sample: Option<(Instant, f64)> = None;
+    let mut speed_sampler = MediaSpeedSampler::default();
     let mut last_progress_at = std::time::Instant::now()
-        .checked_sub(std::time::Duration::from_millis(200))
+        .checked_sub(MEDIA_PROGRESS_EMIT_INTERVAL)
         .unwrap_or_else(std::time::Instant::now);
 
     // Resolve absolute paths to bundled binaries
@@ -2944,7 +2970,7 @@ pub(crate) async fn start_media_download_internal(
                                         total_tracks,
                                         &mut current_track,
                                         &mut last_fraction,
-                                        &mut last_speed_sample,
+                                        &mut speed_sampler,
                                         &mut last_progress_at,
                                     );
                                 } else {
@@ -2973,7 +2999,7 @@ pub(crate) async fn start_media_download_internal(
                                         total_tracks,
                                         &mut current_track,
                                         &mut last_fraction,
-                                        &mut last_speed_sample,
+                                        &mut speed_sampler,
                                         &mut last_progress_at,
                                     );
                                 }
@@ -3015,7 +3041,7 @@ pub(crate) async fn start_media_download_internal(
                                         total_tracks,
                                         &mut current_track,
                                         &mut last_fraction,
-                                        &mut last_speed_sample,
+                                        &mut speed_sampler,
                                         &mut last_progress_at,
                                     );
                                 } else {
@@ -3037,7 +3063,7 @@ pub(crate) async fn start_media_download_internal(
                                         total_tracks,
                                         &mut current_track,
                                         &mut last_fraction,
-                                        &mut last_speed_sample,
+                                        &mut speed_sampler,
                                         &mut last_progress_at,
                                     );
                                 }
@@ -4596,10 +4622,11 @@ mod tests {
         collect_download_uris, drain_media_output_lines, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
-        media_output_template, media_progress_args, media_progress_speed, normalize_speed_limit_for_aria2,
+        media_output_template, media_progress_args, media_progress_speed,
+        normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
-        FirelinkDeepLink, MediaProgress, MEDIA_PROGRESS_PREFIX,
+        FirelinkDeepLink, MediaProgress, MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -5149,12 +5176,46 @@ mod tests {
             downloaded_bytes: Some(3_097_152.0),
         };
         let start = Instant::now();
-        let mut sample = None;
+        let mut sampler = MediaSpeedSampler::default();
 
-        assert_eq!(media_progress_speed(&first, start, &mut sample), ("fallback".to_string(), "-".to_string()));
         assert_eq!(
-            media_progress_speed(&second, start + Duration::from_secs(1), &mut sample),
+            media_progress_speed(&first, start, &mut sampler),
+            ("fallback".to_string(), "-".to_string())
+        );
+        assert_eq!(
+            media_progress_speed(&second, start + Duration::from_secs(1), &mut sampler),
             ("2.0 MB/s".to_string(), "1s".to_string())
+        );
+    }
+
+    #[test]
+    fn smooths_media_speed_across_short_stalls() {
+        let start = Instant::now();
+        let mut sampler = MediaSpeedSampler::default();
+        let mut progress = MediaProgress {
+            fraction: 0.25,
+            speed: "-".to_string(),
+            eta: "-".to_string(),
+            size: None,
+            downloaded_bytes: Some(1_000_000.0),
+        };
+
+        assert_eq!(
+            media_progress_speed(&progress, start, &mut sampler),
+            ("-".to_string(), "-".to_string())
+        );
+
+        progress.fraction = 0.5;
+        progress.downloaded_bytes = Some(3_000_000.0);
+        assert_eq!(
+            media_progress_speed(&progress, start + Duration::from_secs(1), &mut sampler),
+            ("1.9 MB/s".to_string(), "2s".to_string())
+        );
+
+        progress.downloaded_bytes = Some(3_000_000.0);
+        assert_eq!(
+            media_progress_speed(&progress, start + Duration::from_secs(2), &mut sampler),
+            ("976.6 KB/s".to_string(), "3s".to_string())
         );
     }
 

@@ -470,6 +470,7 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
+        crate::ensure_reqwest_crypto_provider();
         let response = reqwest::get(format!("http://{address}/ping"))
             .await
             .unwrap();

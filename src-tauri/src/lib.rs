@@ -12,6 +12,13 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use ts_rs::TS;
 
+pub(crate) fn ensure_reqwest_crypto_provider() {
+    static INSTALL: OnceLock<()> = OnceLock::new();
+    INSTALL.get_or_init(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 fn sanitize_metadata_filename(filename: &str) -> Option<String> {
     let normalized = filename.trim().replace('\\', "/");
     let basename = std::path::Path::new(&normalized)
@@ -1195,6 +1202,8 @@ async fn fetch_metadata(
     cookies: Option<String>,
     proxy: Option<String>,
 ) -> Result<MetadataResponse, String> {
+    ensure_reqwest_crypto_provider();
+
     let mut current_url = url.clone();
     let original_host = reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
     let mut redirects = 0;
@@ -2120,6 +2129,8 @@ pub(crate) async fn rpc_call(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    ensure_reqwest_crypto_provider();
+
     let url = format!("http://127.0.0.1:{}/jsonrpc", port);
     let mut payload = serde_json::Map::new();
     payload.insert("jsonrpc".to_string(), serde_json::json!("2.0"));
@@ -5266,6 +5277,8 @@ fn is_log_paused() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    ensure_reqwest_crypto_provider();
+
     let extension_pairing_token = Arc::new(RwLock::new(String::new()));
     let server_pairing_token = extension_pairing_token.clone();
     let extension_frontend_ready = Arc::new(AtomicBool::new(false));

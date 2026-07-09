@@ -541,6 +541,7 @@ pub async fn check_for_updates(
 ) -> Result<ReleaseCheckOutcome, String> {
     let current_version = app_handle.package_info().version.to_string();
 
+    crate::ensure_reqwest_crypto_provider();
     let client = reqwest::Client::new();
     let res = client
         .get("https://api.github.com/repos/nimbold/Firelink/releases?per_page=30")

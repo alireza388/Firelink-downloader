@@ -1010,6 +1010,8 @@ async fn probe_bounded_range_support(
     uri: &str,
     payload: &SpawnPayload,
 ) -> Result<BoundedRangeSupport, String> {
+    crate::ensure_reqwest_crypto_provider();
+
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(5))
         .timeout(std::time::Duration::from_secs(10));

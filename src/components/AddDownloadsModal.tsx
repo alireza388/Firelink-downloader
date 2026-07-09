@@ -3,7 +3,8 @@ import {
   useDownloadStore,
   getSiteLogin,
   getProxyArgs,
-  type AddDownloadAction
+  type AddDownloadAction,
+  type PendingAddRequestContext
 } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, type LucideIcon } from 'lucide-react';
@@ -39,16 +40,6 @@ const formatBytes = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
-const isCrossHostRedirect = (sourceUrl: string, downloadUrl: string) => {
-  try {
-    const sourceHost = new URL(sourceUrl).hostname;
-    const downloadHost = new URL(downloadUrl).hostname;
-    return downloadHost !== sourceHost && !downloadHost.endsWith(`.${sourceHost}`);
-  } catch {
-    return false;
-  }
-};
-
 const normalizeComparableUrl = (rawUrl: string) => {
   try {
     return new URL(rawUrl).href;
@@ -56,6 +47,11 @@ const normalizeComparableUrl = (rawUrl: string) => {
     return rawUrl.trim();
   }
 };
+
+const extensionHeaders = (context: PendingAddRequestContext | undefined) => [
+  context?.referer ? `Referer: ${context.referer.replace(/[\r\n]/g, '')}` : '',
+  context?.headers
+].filter(Boolean).join('\n');
 
 export const AddDownloadsModal = () => {
   const { addToast } = useToast();
@@ -67,6 +63,9 @@ export const AddDownloadsModal = () => {
     pendingAddHeaders,
     pendingAddCookies,
     pendingAddMediaUrls,
+    pendingAddRequestContexts,
+    pendingAddRequestVersion,
+    pendingAddLatestUrls,
     toggleAddModal,
     addDownload,
     queues
@@ -106,43 +105,76 @@ export const AddDownloadsModal = () => {
   const [checksumValue, setChecksumValue] = useState('');
   const [headers, setHeaders] = useState('');
   const [cookies, setCookies] = useState('');
-  const headersFromExtensionRef = useRef(false);
-  const cookiesFromExtensionRef = useRef(false);
+  const headersManuallyEditedRef = useRef(false);
+  const cookiesManuallyEditedRef = useRef(false);
+  const modalSessionRef = useRef(false);
+  const observedRequestVersionRef = useRef(0);
   const [mirrors, setMirrors] = useState('');
 
+  const requestContextForUrl = (url: string) =>
+    pendingAddRequestContexts[normalizeComparableUrl(url)];
+  const hasExtensionRequestContext = Object.keys(pendingAddRequestContexts).length > 0;
+  const headersForRow = (sourceUrl: string) => {
+    if (headersManuallyEditedRef.current) return headers.trim();
+    const context = requestContextForUrl(sourceUrl);
+    if (context) return extensionHeaders(context).trim();
+    return hasExtensionRequestContext ? '' : headers.trim();
+  };
+  const cookiesForRow = (sourceUrl: string) => {
+    if (cookiesManuallyEditedRef.current) return cookies.trim();
+    const context = requestContextForUrl(sourceUrl);
+    if (context) return context.cookies.trim();
+    return hasExtensionRequestContext ? '' : cookies.trim();
+  };
+  const suggestedFilenameForRow = (sourceUrl: string) => {
+    const context = requestContextForUrl(sourceUrl);
+    if (context?.filename) return context.filename;
+    return hasExtensionRequestContext ? '' : pendingAddFilename;
+  };
+
   useEffect(() => {
-    if (isAddModalOpen) {
-      setSaveLocation(baseDownloadFolder);
-      setIsSaveLocationManual(false);
-      setUrls(pendingAddUrls || '');
-      setParsedItems([]);
-      setSelectedItemIndex(null);
-      setPendingUseSharedDestination(false);
-      setPendingDestinationOverrides({});
-      setConnections(perServerConnections);
-      setSpeedLimitEnabled(false);
-      setSpeedLimit('1024');
-      setUseAuth(false);
-      setUsername('');
-      setPassword('');
-      setAdvancedExpanded(false);
-      setChecksumEnabled(false);
-      setChecksumAlgo('SHA-256');
-      setChecksumValue('');
-      const extensionHeaders = [
-        pendingAddReferer ? `Referer: ${pendingAddReferer.replace(/[\r\n]/g, '')}` : '',
-        pendingAddHeaders
-      ].filter(Boolean).join('\n');
-      setHeaders(extensionHeaders);
-      headersFromExtensionRef.current = Boolean(extensionHeaders.trim());
-      setCookies(pendingAddCookies);
-      cookiesFromExtensionRef.current = Boolean(pendingAddCookies?.trim());
-      setMirrors('');
-      setIsQueueMenuOpen(false);
-      setIsSubmitting(false);
-    } else {
+    if (!isAddModalOpen) {
+      modalSessionRef.current = false;
       setUrls('');
+      return;
     }
+
+    if (modalSessionRef.current) return;
+    modalSessionRef.current = true;
+    const initialUrls = pendingAddUrls || '';
+    const initialUrlLines = initialUrls.split('\n').map(url => url.trim()).filter(Boolean);
+    observedRequestVersionRef.current = pendingAddRequestVersion;
+    const initialContext = initialUrlLines.length === 1
+      ? requestContextForUrl(initialUrlLines[0])
+      : undefined;
+
+    setSaveLocation(baseDownloadFolder);
+    setIsSaveLocationManual(false);
+    setUrls(initialUrls);
+    setParsedItems([]);
+    setSelectedItemIndex(null);
+    setPendingUseSharedDestination(false);
+    setPendingDestinationOverrides({});
+    setConnections(perServerConnections);
+    setSpeedLimitEnabled(false);
+    setSpeedLimit('1024');
+    setUseAuth(false);
+    setUsername('');
+    setPassword('');
+    setAdvancedExpanded(false);
+    setChecksumEnabled(false);
+    setChecksumAlgo('SHA-256');
+    setChecksumValue('');
+    setHeaders(initialContext ? extensionHeaders(initialContext) : [
+      pendingAddReferer ? `Referer: ${pendingAddReferer.replace(/[\r\n]/g, '')}` : '',
+      pendingAddHeaders
+    ].filter(Boolean).join('\n'));
+    headersManuallyEditedRef.current = false;
+    setCookies(initialContext?.cookies || pendingAddCookies);
+    cookiesManuallyEditedRef.current = false;
+    setMirrors('');
+    setIsQueueMenuOpen(false);
+    setIsSubmitting(false);
   }, [
     isAddModalOpen,
     pendingAddUrls,
@@ -153,6 +185,18 @@ export const AddDownloadsModal = () => {
     baseDownloadFolder,
     perServerConnections
   ]);
+
+  useEffect(() => {
+    if (!isAddModalOpen || !modalSessionRef.current
+      || observedRequestVersionRef.current === pendingAddRequestVersion) return;
+    observedRequestVersionRef.current = pendingAddRequestVersion;
+    const additions = pendingAddLatestUrls
+      .split('\n')
+      .map(url => url.trim())
+      .filter(Boolean);
+    if (additions.length === 0) return;
+    setUrls(current => current.trim() ? `${current.trim()}\n${additions.join('\n')}` : additions.join('\n'));
+  }, [isAddModalOpen, pendingAddRequestVersion, pendingAddLatestUrls]);
 
   useEffect(() => {
     if (!isQueueMenuOpen) return;
@@ -194,10 +238,33 @@ export const AddDownloadsModal = () => {
         return url;
       }
     }));
-    setParsedItems(current =>
-      reconcileDownloadRows(urls, current, pendingAddFilename || undefined, forcedMediaUrls)
+    const requestFilenames = Object.fromEntries(
+      Object.entries(pendingAddRequestContexts)
+        .filter(([, context]) => Boolean(context.filename))
+        .map(([url, context]) => [url, context.filename])
     );
-  }, [urls, pendingAddFilename, pendingAddMediaUrls]);
+    const requestContextVersions = Object.fromEntries(
+      Object.entries(pendingAddRequestContexts)
+        .map(([url, context]) => [url, context.version])
+    );
+    setParsedItems(current =>
+      reconcileDownloadRows(
+        urls,
+        current,
+        hasExtensionRequestContext ? undefined : pendingAddFilename || undefined,
+        forcedMediaUrls,
+        undefined,
+        requestFilenames,
+        requestContextVersions
+      )
+    );
+  }, [
+    urls,
+    pendingAddFilename,
+    pendingAddMediaUrls,
+    pendingAddRequestContexts,
+    hasExtensionRequestContext
+  ]);
 
   useEffect(() => {
     for (const row of parsedItems) {
@@ -223,67 +290,19 @@ export const AddDownloadsModal = () => {
               }
             }
 
+            const rowHeaders = headersForRow(row.sourceUrl);
+            const rowCookies = cookiesForRow(row.sourceUrl);
             const mediaMetadataArgs = {
               url: row.sourceUrl,
               cookieBrowser: browserArg,
               userAgent: settingsStore.customUserAgent.trim() || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
-              headers: headers?.trim() || null,
-              cookies: cookies?.trim() || null,
+              headers: rowHeaders || null,
+              cookies: rowCookies || null,
               proxy
             };
-            const cleanMediaMetadataArgs = {
-              ...mediaMetadataArgs,
-              headers: null,
-              cookies: null
-            };
-            const isExtensionMediaRow = pendingAddMediaUrls
-              .map(normalizeComparableUrl)
-              .includes(normalizeComparableUrl(row.sourceUrl));
-            const hasExtensionContext =
-              headersFromExtensionRef.current || cookiesFromExtensionRef.current;
-            let mediaData;
-            if (isExtensionMediaRow && hasExtensionContext) {
-              try {
-                mediaData = await fetchMediaMetadataDeduped(cleanMediaMetadataArgs);
-                if (headersFromExtensionRef.current) {
-                  setHeaders('');
-                  headersFromExtensionRef.current = false;
-                }
-                if (cookiesFromExtensionRef.current) {
-                  setCookies('');
-                  cookiesFromExtensionRef.current = false;
-                }
-              } catch (cleanError) {
-                console.warn(
-                  'Media metadata failed without extension browser context; retrying with extension headers/cookies',
-                  cleanError
-                );
-                mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
-              }
-            } else {
-              try {
-                mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
-              } catch (error) {
-                if (!hasExtensionContext) {
-                  throw error;
-                }
-                console.warn(
-                  'Media metadata failed with extension browser context; retrying without extension headers/cookies',
-                  error
-                );
-                mediaData = await fetchMediaMetadataDeduped(cleanMediaMetadataArgs);
-                if (headersFromExtensionRef.current) {
-                  setHeaders('');
-                  headersFromExtensionRef.current = false;
-                }
-                if (cookiesFromExtensionRef.current) {
-                  setCookies('');
-                  cookiesFromExtensionRef.current = false;
-                }
-              }
-            }
+            const mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
                 const quality = f.resolution || 'Video';
@@ -337,15 +356,11 @@ export const AddDownloadsModal = () => {
               userAgent: settingsStore.customUserAgent.trim() || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
-              headers: headers?.trim() || null,
-              cookies: cookies?.trim() || null,
+              headers: headersForRow(row.sourceUrl) || null,
+              cookies: cookiesForRow(row.sourceUrl) || null,
               proxy
             });
             const nextDownloadUrl = meta.url || row.sourceUrl;
-            if (cookiesFromExtensionRef.current && isCrossHostRedirect(row.sourceUrl, nextDownloadUrl)) {
-              setCookies('');
-              cookiesFromExtensionRef.current = false;
-            }
             setParsedItems(current => updateRowIfCurrent(
               current,
               row.id,
@@ -355,8 +370,8 @@ export const AddDownloadsModal = () => {
                 ...currentRow,
                 downloadUrl: nextDownloadUrl || currentRow.downloadUrl,
                 file: canonicalizeDownloadFileName(
-                  current.length === 1 && pendingAddFilename
-                    ? pendingAddFilename
+                  current.length === 1 && suggestedFilenameForRow(row.sourceUrl)
+                    ? suggestedFilenameForRow(row.sourceUrl)
                     : meta.filename
                 ),
                 size: meta.size_bytes ? meta.size : undefined,
@@ -690,11 +705,11 @@ export const AddDownloadsModal = () => {
           speedLimit: speedLimitEnabled ? `${speedLimit}K` : '0',
           username: useAuth ? username.trim() : undefined,
           password: useAuth ? password.trim() : undefined,
-          headers: headers.trim() || undefined,
+          headers: headersForRow(item.sourceUrl) || undefined,
           checksum: checksumEnabled && checksumValue.trim()
             ? `${checksumAlgo}=${checksumValue.trim()}`
             : undefined,
-          cookies: cookies.trim() || undefined,
+          cookies: cookiesForRow(item.sourceUrl) || undefined,
           mirrors: mirrors.trim() || undefined,
           destination: useSharedDestination
             ? finalLocation
@@ -1089,7 +1104,7 @@ export const AddDownloadsModal = () => {
                       <textarea
                         value={headers}
                         onChange={e => {
-                          headersFromExtensionRef.current = false;
+                          headersManuallyEditedRef.current = true;
                           setHeaders(e.target.value);
                         }}
                         className="add-download-control w-full h-12 px-3 py-1.5 text-xs font-mono resize-none"
@@ -1102,7 +1117,7 @@ export const AddDownloadsModal = () => {
                         type="text"
                         value={cookies}
                         onChange={e => {
-                          cookiesFromExtensionRef.current = false;
+                          cookiesManuallyEditedRef.current = true;
                           setCookies(e.target.value);
                         }}
                         placeholder="name=value; other=value"

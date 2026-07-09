@@ -88,6 +88,9 @@ describe('useDownloadStore', () => {
       pendingAddHeaders: '',
       pendingAddCookies: '',
       pendingAddMediaUrls: [],
+      pendingAddRequestContexts: {},
+      pendingAddRequestVersion: 0,
+      pendingAddLatestUrls: '',
     });
   });
 
@@ -616,7 +619,7 @@ describe('useDownloadStore', () => {
     expect(state.pendingAddMediaUrls).toEqual([]);
 	 });
 
- it('routes silent extension captures to the Add Modal instead of queuing immediately', async () => {
+  it('routes silent extension captures to the Add Modal instead of queuing immediately', async () => {
   await useDownloadStore.getState().handleExtensionDownload({
    urls: ['https://example.com/downloads/report.pdf'],
    referer: 'https://example.com/page',
@@ -636,6 +639,50 @@ describe('useDownloadStore', () => {
 	  expect(state.pendingAddCookies).toBe('session=secret');
     expect(state.pendingAddMediaUrls).toEqual([]);
 	 });
+
+  it('keeps each extension handoff context attached to its own URL while the Add Modal is open', async () => {
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://first.example/file.zip'],
+      referer: 'https://first.example/page',
+      silent: true,
+      filename: 'first.zip',
+      headers: 'User-Agent: First Browser',
+      cookies: 'first=session',
+      media: false
+    });
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://second.example/file.zip'],
+      referer: 'https://second.example/page',
+      silent: true,
+      filename: 'second.zip',
+      headers: 'User-Agent: Second Browser',
+      cookies: 'second=session',
+      media: false
+    });
+
+    const state = useDownloadStore.getState();
+    expect(state.pendingAddUrls).toBe(
+      'https://first.example/file.zip\nhttps://second.example/file.zip'
+    );
+    expect(state.pendingAddRequestVersion).toBe(2);
+    expect(state.pendingAddLatestUrls).toBe('https://second.example/file.zip');
+    expect(state.pendingAddRequestContexts).toEqual({
+      'https://first.example/file.zip': {
+        version: 1,
+        referer: 'https://first.example/page',
+        filename: 'first.zip',
+        headers: 'User-Agent: First Browser',
+        cookies: 'first=session'
+      },
+      'https://second.example/file.zip': {
+        version: 2,
+        referer: 'https://second.example/page',
+        filename: 'second.zip',
+        headers: 'User-Agent: Second Browser',
+        cookies: 'second=session'
+      }
+    });
+  });
 
   it('preserves explicit extension media intent for non-allow-listed pages', async () => {
     await useDownloadStore.getState().handleExtensionDownload({

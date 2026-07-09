@@ -71,6 +71,59 @@ describe('add download metadata workflow', () => {
     });
   });
 
+  it('keeps extension-provided filenames scoped to their individual URLs', () => {
+    const rows = reconcileDownloadRows(
+      'https://first.example/download\nhttps://second.example/download',
+      [],
+      undefined,
+      new Set(),
+      () => crypto.randomUUID(),
+      {
+        'https://first.example/download': 'first.zip',
+        'https://second.example/download': 'second.zip'
+      }
+    );
+
+    expect(rows.map(item => item.file)).toEqual(['first.zip', 'second.zip']);
+  });
+
+  it('refreshes an existing row when a newer extension handoff changes its request context', () => {
+    const existing = row({
+      isMedia: true,
+      status: 'ready',
+      generation: 4,
+      requestContextVersion: 1,
+      formats: [{
+        name: '1080p MP4',
+        selector: '137+140',
+        ext: 'mp4',
+        formatLabel: 'MP4',
+        detail: '10 MB',
+        type: 'Video',
+        bytes: 10
+      }],
+      selectedFormat: 0
+    });
+
+    const refreshed = reconcileDownloadRows(
+      existing.sourceUrl,
+      [existing],
+      undefined,
+      new Set(),
+      () => 'unused',
+      {},
+      { [existing.sourceUrl]: 2 }
+    );
+
+    expect(refreshed[0]).toMatchObject({
+      status: 'loading',
+      generation: 5,
+      requestContextVersion: 2,
+      formats: undefined,
+      selectedFormat: undefined
+    });
+  });
+
   it('upgrades an existing normal row when the user explicitly fetches it as media', () => {
     const existing = row({
       sourceUrl: 'https://adult.example/watch/123',

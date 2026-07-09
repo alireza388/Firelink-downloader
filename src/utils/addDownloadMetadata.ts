@@ -26,6 +26,7 @@ export interface AddDownloadDraftRow {
   sizeBytes?: number;
   status: MetadataStatus;
   generation: number;
+  requestContextVersion?: number;
   isMedia: boolean;
   resumable?: boolean;
   formats?: AddMediaFormat[];
@@ -72,7 +73,9 @@ export const reconcileDownloadRows = (
   currentRows: AddDownloadDraftRow[],
   pendingFilename?: string,
   forceMediaUrls: ReadonlySet<string> = new Set(),
-  createId: () => string = () => crypto.randomUUID()
+  createId: () => string = () => crypto.randomUUID(),
+  requestFilenames: Readonly<Record<string, string>> = {},
+  requestContextVersions: Readonly<Record<string, number>> = {}
 ): AddDownloadDraftRow[] => {
   const inputs = parseInputLines(rawText);
   const existing = new Map(currentRows.map(row => [row.sourceUrl, row]));
@@ -80,23 +83,28 @@ export const reconcileDownloadRows = (
   return inputs.map(input => {
     const preserved = existing.get(input.sourceUrl);
     if (preserved) {
-      if (input.valid && forceMediaUrls.has(input.sourceUrl) && !preserved.isMedia) {
+      const forcedMedia = input.valid && forceMediaUrls.has(input.sourceUrl);
+      const requestContextVersion = requestContextVersions[input.sourceUrl];
+      const contextChanged = requestContextVersion !== undefined
+        && requestContextVersion !== preserved.requestContextVersion;
+      if ((forcedMedia && !preserved.isMedia) || contextChanged) {
         return {
           ...preserved,
           status: 'loading',
           generation: preserved.generation + 1,
-          isMedia: true,
-          formats: undefined,
-          selectedFormat: undefined
+          requestContextVersion,
+          isMedia: preserved.isMedia || forcedMedia,
+          formats: preserved.isMedia || forcedMedia ? undefined : preserved.formats,
+          selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat
         };
       }
       return preserved;
     }
 
+    const requestedFilename = requestFilenames[input.sourceUrl]
+      || (inputs.length === 1 ? pendingFilename : undefined);
     const fallback = canonicalizeDownloadFileName(
-      inputs.length === 1 && pendingFilename
-        ? pendingFilename
-        : fileNameFromUrl(input.sourceUrl)
+      requestedFilename || fileNameFromUrl(input.sourceUrl)
     );
 
     return {
@@ -106,6 +114,7 @@ export const reconcileDownloadRows = (
       file: fallback,
       status: input.valid ? 'loading' : 'invalid',
       generation: input.valid ? 1 : 0,
+      requestContextVersion: requestContextVersions[input.sourceUrl],
       isMedia: input.valid && (forceMediaUrls.has(input.sourceUrl) || isMediaUrl(input.sourceUrl))
     };
   });

@@ -237,6 +237,13 @@ export type AddDownloadAction =
   | { type: 'start-now' }
   | { type: 'add-to-queue'; queueId: string };
 export type DownloadDraft = Omit<DownloadItem, 'status' | 'queueId' | 'hasBeenDispatched'>;
+export type PendingAddRequestContext = {
+  version: number;
+  referer: string;
+  filename: string;
+  headers: string;
+  cookies: string;
+};
 
 export type DeleteModalState = {
   isOpen: boolean;
@@ -261,6 +268,9 @@ interface DownloadState {
   pendingAddHeaders: string;
   pendingAddCookies: string;
   pendingAddMediaUrls: string[];
+  pendingAddRequestContexts: Record<string, PendingAddRequestContext>;
+  pendingAddRequestVersion: number;
+  pendingAddLatestUrls: string;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
   openAddModalWithUrls: (
@@ -394,6 +404,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddHeaders: '',
   pendingAddCookies: '',
   pendingAddMediaUrls: [],
+  pendingAddRequestContexts: {},
+  pendingAddRequestVersion: 0,
+  pendingAddLatestUrls: '',
   selectedPropertiesDownloadId: null,
   deleteModalState: { isOpen: false },
   openDeleteModal: (downloadIds) => set({ 
@@ -410,26 +423,60 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     pendingAddFilename: '',
     pendingAddHeaders: '',
     pendingAddCookies: '',
-    pendingAddMediaUrls: []
+    pendingAddMediaUrls: [],
+    pendingAddRequestContexts: {},
+    pendingAddLatestUrls: ''
   }),
   openAddModalWithUrls: (urls, referer, filename, headers, cookies, media = false) => set((state) => {
-    const existingUrls = state.isAddModalOpen && state.pendingAddUrls ? state.pendingAddUrls : '';
+    const isAppending = state.isAddModalOpen && Boolean(state.pendingAddUrls);
+    const existingUrls = isAppending ? state.pendingAddUrls : '';
     const mergedUrls = existingUrls ? `${existingUrls}\n${urls}` : urls;
-    const existingMediaUrls = state.isAddModalOpen ? state.pendingAddMediaUrls : [];
+    const existingMediaUrls = isAppending ? state.pendingAddMediaUrls : [];
     const pendingAddMediaUrls = media
       ? [...new Set([
           ...existingMediaUrls,
           ...urls.split('\n').map(url => url.trim()).filter(Boolean)
         ])]
       : existingMediaUrls;
+    const cleanReferer = referer?.trim() || '';
+    const cleanFilename = filename?.trim() || '';
+    const cleanHeaders = headers?.trim() || '';
+    const cleanCookies = cookies?.trim() || '';
+    const requestVersion = state.pendingAddRequestVersion + 1;
+    const hasRequestContext = Boolean(cleanReferer || cleanFilename || cleanHeaders || cleanCookies);
+    const pendingAddRequestContexts = isAppending
+      ? { ...state.pendingAddRequestContexts }
+      : {};
+    if (hasRequestContext) {
+      for (const rawUrl of urls.split('\n')) {
+        const trimmedUrl = rawUrl.trim();
+        if (!trimmedUrl) continue;
+        let key = trimmedUrl;
+        try {
+          key = new URL(trimmedUrl).href;
+        } catch {
+          // The Add modal will mark malformed input invalid; retain its original key here.
+        }
+        pendingAddRequestContexts[key] = {
+          version: requestVersion,
+          referer: cleanReferer,
+          filename: cleanFilename,
+          headers: cleanHeaders,
+          cookies: cleanCookies
+        };
+      }
+    }
     return {
       isAddModalOpen: true,
       pendingAddUrls: mergedUrls,
-      pendingAddReferer: referer?.trim() || '',
-      pendingAddFilename: filename?.trim() || '',
-      pendingAddHeaders: headers?.trim() || '',
-      pendingAddCookies: cookies?.trim() || '',
-      pendingAddMediaUrls
+      pendingAddReferer: cleanReferer,
+      pendingAddFilename: cleanFilename,
+      pendingAddHeaders: cleanHeaders,
+      pendingAddCookies: cleanCookies,
+      pendingAddMediaUrls,
+      pendingAddRequestContexts,
+      pendingAddRequestVersion: requestVersion,
+      pendingAddLatestUrls: urls
     };
   }),
   handleExtensionDownload: async (request) => {

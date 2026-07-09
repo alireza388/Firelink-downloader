@@ -536,7 +536,7 @@ fn build_media_format_options(
     let mut options = Vec::new();
 
     if has_video {
-        let available_heights: Vec<u64> = [2160_u64, 1440, 1080, 720, 480, 360]
+        let available_heights: Vec<u64> = [4320_u64, 2160, 1440, 1080, 720, 480, 360, 240, 144]
             .into_iter()
             .filter(|height| {
                 clean_formats
@@ -2876,9 +2876,15 @@ pub(crate) async fn start_media_download_internal(
             .arg("--socket-timeout")
             .arg("20")
             .arg("--retries")
-            .arg(max_retries.to_string())
+            // Firelink owns the retry budget so `maxAutomaticRetries` means
+            // the same thing for aria2 and media downloads. Letting yt-dlp
+            // also consume that value would multiply the configured retry
+            // count on every outer restart.
+            .arg("0")
             .arg("--extractor-retries")
-            .arg("3")
+            .arg("0")
+            .arg("--fragment-retries")
+            .arg("0")
             .arg("--ffmpeg-location")
             .arg(&ffmpeg_path)
             .arg("--js-runtimes")
@@ -2943,7 +2949,15 @@ pub(crate) async fn start_media_download_internal(
             } else if safe_filename.ends_with(".webm") {
                 cmd = cmd.arg("--merge-output-format").arg("webm");
             } else {
-                cmd = cmd.arg("--merge-output-format").arg("mkv");
+                // `--merge-output-format` only affects split video/audio
+                // selections. A progressive MP4/WebM stream already includes
+                // audio, so also request remuxing to keep an MKV option from
+                // producing a mismatched file extension and container.
+                cmd = cmd
+                    .arg("--merge-output-format")
+                    .arg("mkv")
+                    .arg("--remux-video")
+                    .arg("mkv");
             }
         }
 
@@ -4982,6 +4996,31 @@ mod tests {
         assert_eq!(option.format_id, "301+251");
         assert_eq!(option.filesize, None);
         assert_eq!(option.filesize_approx, Some(1_468_000_000));
+    }
+
+    #[test]
+    fn keeps_low_and_ultra_high_available_video_qualities() {
+        let formats = vec![
+            json!({
+                "format_id": "401",
+                "ext": "webm",
+                "height": 4320,
+                "vcodec": "av01.0.17M.08",
+                "acodec": "none"
+            }),
+            json!({
+                "format_id": "17",
+                "ext": "mp4",
+                "height": 144,
+                "vcodec": "avc1.42E01E",
+                "acodec": "mp4a.40.2"
+            })
+        ];
+
+        let options = build_media_format_options(&formats, Some(60.0));
+
+        assert!(options.iter().any(|format| format.resolution == "4320p"));
+        assert!(options.iter().any(|format| format.resolution == "144p"));
     }
 
     #[test]

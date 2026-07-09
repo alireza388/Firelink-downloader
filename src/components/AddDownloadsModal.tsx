@@ -791,6 +791,10 @@ export const AddDownloadsModal = () => {
     : 'Unknown';
   const canSubmit = canSubmitMetadataRows(parsedItems);
   const failedMetadataCount = parsedItems.filter(item => item.status === 'metadata-error').length;
+  const failedMediaMetadataCount = parsedItems.filter(
+    item => item.status === 'metadata-error' && item.isMedia
+  ).length;
+  const fallbackMetadataCount = failedMetadataCount - failedMediaMetadataCount;
 
   return (
     <>
@@ -844,7 +848,7 @@ export const AddDownloadsModal = () => {
                 />
                 <div className="flex justify-between items-center px-1">
                   <span className="text-[11px] text-text-muted font-medium">
-                    {parsedItems.filter(item => item.status === 'ready').length} ready, {failedMetadataCount} fallback
+                    {parsedItems.filter(item => item.status === 'ready').length} ready, {fallbackMetadataCount} fallback, {failedMediaMetadataCount} media retry
                   </span>
                     <button
                       type="button"
@@ -910,7 +914,7 @@ export const AddDownloadsModal = () => {
                                 </div>
                               ) : (
                                 item.status === 'metadata-error'
-                                  ? 'Fallback'
+                                  ? item.isMedia ? 'Metadata failed' : 'Fallback'
                                   : item.status === 'invalid'
                                     ? 'Invalid'
                                     : 'Ready'
@@ -987,7 +991,7 @@ export const AddDownloadsModal = () => {
                   </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-4 relative z-10">
-                      <span className="text-xs text-red-400 font-medium">Metadata unavailable. Default media format will be used.</span>
+                      <span className="text-xs text-red-400 font-medium">Metadata unavailable. Refresh metadata before adding this media.</span>
                     </div>
                   )}
                 </section>

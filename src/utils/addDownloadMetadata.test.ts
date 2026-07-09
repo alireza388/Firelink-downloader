@@ -187,11 +187,15 @@ describe('add download metadata workflow', () => {
     expect(updated[0]).toBe(current);
   });
 
-  it('allows ready and failed rows but blocks loading and invalid rows', () => {
+  it('allows normal-download fallback but blocks unresolved explicit media', () => {
     expect(canSubmitMetadataRows([
       row(),
       row({ id: 'fallback', status: 'metadata-error' })
     ])).toBe(true);
+    expect(canSubmitMetadataRows([
+      row(),
+      row({ id: 'media-fallback', status: 'metadata-error', isMedia: true })
+    ])).toBe(false);
     expect(canSubmitMetadataRows([row({ status: 'loading' })])).toBe(false);
     expect(canSubmitMetadataRows([row({ status: 'invalid' })])).toBe(false);
   });
@@ -246,6 +250,9 @@ describe('add download metadata workflow', () => {
     expect(metadataSummaryMessage([
       row({ status: 'metadata-error' })
     ])).toContain('can still be added');
+    expect(metadataSummaryMessage([
+      row({ status: 'metadata-error', isMedia: true })
+    ])).toContain('Refresh metadata before adding');
     expect(metadataSummaryMessage([
       row({ status: 'invalid' })
     ])).toContain('Correct or remove 1 invalid URL');

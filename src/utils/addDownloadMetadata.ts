@@ -146,7 +146,10 @@ export const refreshFailedMetadataRows = (
 
 export const canSubmitMetadataRows = (rows: AddDownloadDraftRow[]): boolean =>
   rows.length > 0
-  && rows.every(row => row.status === 'ready' || row.status === 'metadata-error');
+  && rows.every(row =>
+    row.status === 'ready'
+    || (!row.isMedia && row.status === 'metadata-error')
+  );
 
 export const mediaFormatSelectorForRow = (
   row: AddDownloadDraftRow
@@ -203,7 +206,11 @@ export const metadataSummaryMessage = (rows: AddDownloadDraftRow[]): string => {
   }
 
   const failed = rows.filter(row => row.status === 'metadata-error').length;
+  const failedMedia = rows.filter(row => row.status === 'metadata-error' && row.isMedia).length;
   const ready = rows.filter(row => row.status === 'ready').length;
+  if (failedMedia > 0) {
+    return `Media metadata is unavailable for ${failedMedia} item${failedMedia === 1 ? '' : 's'}. Refresh metadata before adding.`;
+  }
   if (failed === rows.length) {
     return 'Metadata is unavailable. Downloads can still be added using fallback details.';
   }

@@ -1110,8 +1110,13 @@ fn append_ytdlp_config_option(config: &mut String, option: &str, value: &str) {
     let safe_value = sanitize_ytdlp_config_value(value);
     if !safe_value.is_empty() {
         config.push_str(option);
-        config.push('\n');
-        config.push_str(&safe_value);
+        config.push(' ');
+        // yt-dlp parses one configuration line at a time. Quoting keeps
+        // whitespace and cookie delimiters inside this option's single value,
+        // rather than turning them into additional input URLs.
+        config.push('\'');
+        config.push_str(&safe_value.replace('\'', "'\\''"));
+        config.push('\'');
         config.push('\n');
     }
 }
@@ -4676,7 +4681,8 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_media_fraction, append_ytdlp_http_headers, build_media_format_options,
+        aggregate_media_fraction, append_ytdlp_config_option, append_ytdlp_http_headers,
+        build_media_format_options,
         collect_download_uris, drain_media_output_lines, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
@@ -4731,12 +4737,22 @@ mod tests {
         append_ytdlp_http_headers(
             &mut config,
             Some("Referer: https://example.com/video"),
-            Some("session=abc\r\n--proxy=http://bad.invalid"),
+            Some("session=abc; preference=high\r\n--proxy=http://bad.invalid"),
         )
         .unwrap();
 
-        assert!(config.contains("--add-header\nReferer: https://example.com/video\n"));
-        assert!(config.contains("--add-header\nCookie: session=abc--proxy=http://bad.invalid\n"));
+        assert_eq!(
+            config,
+            "--add-header 'Referer: https://example.com/video'\n--add-header 'Cookie: session=abc; preference=high--proxy=http://bad.invalid'\n"
+        );
+    }
+
+    #[test]
+    fn ytdlp_config_options_quote_embedded_single_quotes() {
+        let mut config = String::new();
+        append_ytdlp_config_option(&mut config, "--username", "sam's account");
+
+        assert_eq!(config, "--username 'sam'\\''s account'\n");
     }
 
     #[test]

@@ -8,9 +8,9 @@
         "sha256": "90254845be5282b1f4d843a873abff04f569f857f64250f833fe152b21eec152"
       },
       "deno": {
-        "version": "2.9.1",
-        "url": "https://github.com/denoland/deno/releases/download/v2.9.1/deno-x86_64-pc-windows-msvc.zip",
-        "sha256": "ab310b4232cca207d40ffa41867e93aaf9f893802bc76756e74f486a6b21b371"
+        "version": "2.9.2",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-pc-windows-msvc.zip",
+        "sha256": "5fe194d26ac5ef77fcc5288c2c438c7a0465f3b6180440ebf04092714bf2dcdf"
       },
       "ffmpeg": {
         "version": "8.1.2-22-g94138f6973",
@@ -30,9 +30,9 @@
         "sha256": "d7d2d09e900b5ae11821b5784b18cf064984a2bd88b1ca5c798d744bcbe3658b"
       },
       "deno": {
-        "version": "2.9.1",
-        "url": "https://github.com/denoland/deno/releases/download/v2.9.1/deno-x86_64-unknown-linux-gnu.zip",
-        "sha256": "710c54d63477d1100844ef4818f19507ce0dbf40510903b1d883f19e394446a2"
+        "version": "2.9.2",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-unknown-linux-gnu.zip",
+        "sha256": "934d1bd5cb09eaed7f2e4a4fc58208d04a3c5c0fcde9f319d93d735265c67a4a"
       },
       "ffmpeg": {
         "version": "8.1.2-22-g94138f6973",

@@ -5,6 +5,17 @@ All notable changes to Firelink will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-07-09
+
+### Improved
+- Refresh bundled Deno to 2.9.2 and update the TypeScript build toolchain used by the desktop app.
+- Keep release publishing aligned with the changelog so tag builds publish GitHub release notes automatically after the platform builds pass.
+
+### Fixed
+- Fix YouTube and other yt-dlp downloads that appeared stuck at 0% even while the transfer was active, addressing the progress problem reported around [#8](https://github.com/nimbold/Firelink/issues/8).
+- Improve media download speed and ETA updates so short stalls no longer make the main list look frozen or misleading.
+- Keep media progress sizes from replacing the final file size until the completed file is actually known.
+
 ## [1.0.2] - 2026-07-08
 
 ### New

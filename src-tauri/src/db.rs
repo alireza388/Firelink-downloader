@@ -908,9 +908,30 @@ fn ensure_keyring_store() -> Result<(), String> {
     }
 }
 
-fn keychain_entry(id: &str) -> Result<keyring_core::Entry, String> {
+fn keychain_entry_with_target(
+    id: &str,
+    target: Option<&str>,
+) -> Result<keyring_core::Entry, String> {
     ensure_keyring_store()?;
+    if let Some(target) = target {
+        return keyring_core::Entry::new_with_modifiers(
+            KEYCHAIN_SERVICE,
+            id,
+            &std::collections::HashMap::from([("target", target)]),
+        )
+        .map_err(|error| error.to_string());
+    }
     keyring_core::Entry::new(KEYCHAIN_SERVICE, id).map_err(|error| error.to_string())
+}
+
+fn keychain_entry(id: &str) -> Result<keyring_core::Entry, String> {
+    #[cfg(target_os = "linux")]
+    {
+        return keychain_entry_with_target(id, Some("default"));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    keychain_entry_with_target(id, None)
 }
 
 pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
@@ -922,7 +943,15 @@ pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
 
 pub fn get_keychain_password(id: &str) -> Result<String, String> {
     let entry = keychain_entry(id)?;
-    entry.get_password().map_err(|error| error.to_string())
+    match entry.get_password() {
+        Ok(password) => Ok(password),
+        #[cfg(target_os = "linux")]
+        Err(_) => keychain_entry_with_target(id, None)?
+            .get_password()
+            .map_err(|error| error.to_string()),
+        #[cfg(not(target_os = "linux"))]
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 pub fn delete_keychain_password(id: &str) -> Result<(), String> {

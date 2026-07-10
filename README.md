@@ -83,7 +83,7 @@ What it adds:
 
 Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.2 is the matching extension release for Firelink 1.0.3.
 
-The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Firefox` submodule.
+The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Browser` submodule.
 
 ## Platforms
 
@@ -148,7 +148,7 @@ Build staging includes only the current target. See `engines.lock.json`, `engine
 ├── src/                  React and TypeScript interface
 ├── src-tauri/            Rust backend, Tauri config, and native tests
 ├── scripts/              Engine provisioning, release, and smoke-test tooling
-└── Extensions/Firefox/   Firelink Companion submodule
+└── Extensions/Browser/   Firelink Companion submodule
 ```
 
 ## Help and Project Status

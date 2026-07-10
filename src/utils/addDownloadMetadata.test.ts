@@ -94,7 +94,6 @@ describe('add download metadata workflow', () => {
       status: 'ready',
       generation: 4,
       requestContextVersion: 1,
-      requestCookiesOmitted: true,
       formats: [{
         name: '1080p MP4',
         selector: '137+140',
@@ -121,7 +120,6 @@ describe('add download metadata workflow', () => {
       status: 'loading',
       generation: 5,
       requestContextVersion: 2,
-      requestCookiesOmitted: false,
       formats: undefined,
       selectedFormat: undefined
     });

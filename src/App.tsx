@@ -398,6 +398,12 @@ function App() {
   }, [logsEnabled]);
 
   useEffect(() => {
+    if (activeView !== 'logs') {
+      invoke('set_log_stream_active', { active: false }).catch(console.error);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
     if (!extensionPairingToken) return;
     invoke('set_extension_pairing_token', { token: extensionPairingToken }).catch(error => {
       console.error('Failed to configure browser extension pairing token:', error);

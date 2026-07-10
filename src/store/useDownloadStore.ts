@@ -551,12 +551,17 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
 
+    // Explicit media authentication belongs to yt-dlp's configured browser
+    // cookie source. Keep this frontend guard for events from older desktop or
+    // extension builds; ordinary captured downloads retain their cookies.
+    const cookies = request.media === true ? null : request.cookies;
+
     get().openAddModalWithUrls(
       urls.join('\n'),
       request.referer,
       urls.length === 1 ? request.filename : null,
       request.headers,
-      request.cookies,
+      cookies,
       request.media === true
     );
   },

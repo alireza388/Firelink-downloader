@@ -315,10 +315,15 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         silent: payload.silent,
         filename,
         headers: payload.headers.filter(|value| !value.trim().is_empty()),
-        // Keep the exact tab/container cookie context. The Add modal may retry
-        // public media without this header when an upstream rejects its size,
-        // but authenticated and container-scoped media must not lose it here.
-        cookies: payload.cookies.filter(|value| !value.trim().is_empty()),
+        // Explicit media is resolved by yt-dlp, which must use Firelink's
+        // configured browser-cookie source. Forwarding a browser's complete
+        // Cookie header can exceed upstream limits and makes old extension
+        // builds pay for a doomed metadata request before retrying. Ordinary
+        // captured downloads still need their exact request cookies.
+        cookies: (!payload.media)
+            .then_some(payload.cookies)
+            .flatten()
+            .filter(|value| !value.trim().is_empty()),
         media: payload.media,
     })
 }
@@ -496,24 +501,41 @@ mod tests {
     }
 
     #[test]
-    fn explicit_media_preserves_the_extension_cookie_header() {
+    fn explicit_media_drops_the_extension_cookie_header() {
         let download = normalize_download(ExtensionRequest {
             urls: vec!["https://www.youtube.com/watch?v=example".to_string()],
             referer: None,
             silent: false,
             filename: None,
             headers: Some("User-Agent: Firefox".to_string()),
-            cookies: Some("large=browser-cookie-header".to_string()),
+            cookies: Some(format!("large={}", "x".repeat(64 * 1024))),
             media: true,
         })
         .expect("valid media handoff");
 
         assert!(download.media);
+        assert!(download.cookies.is_none());
+        assert_eq!(download.headers.as_deref(), Some("User-Agent: Firefox"));
+    }
+
+    #[test]
+    fn regular_capture_preserves_the_extension_cookie_header() {
+        let download = normalize_download(ExtensionRequest {
+            urls: vec!["https://example.com/private.zip".to_string()],
+            referer: None,
+            silent: true,
+            filename: None,
+            headers: None,
+            cookies: Some("session=browser-cookie-header".to_string()),
+            media: false,
+        })
+        .expect("valid download handoff");
+
+        assert!(!download.media);
         assert_eq!(
             download.cookies.as_deref(),
-            Some("large=browser-cookie-header")
+            Some("session=browser-cookie-header")
         );
-        assert_eq!(download.headers.as_deref(), Some("User-Agent: Firefox"));
     }
 
     #[test]

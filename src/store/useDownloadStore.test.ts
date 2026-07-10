@@ -819,7 +819,7 @@ describe('useDownloadStore', () => {
       silent: false,
       filename: null,
       headers: 'User-Agent: Firefox Test',
-      cookies: 'session=secret',
+      cookies: `oversized=${'x'.repeat(64 * 1024)}`,
       media: true
     });
 
@@ -827,7 +827,21 @@ describe('useDownloadStore', () => {
     expect(state.isAddModalOpen).toBe(true);
     expect(state.pendingAddUrls).toBe('https://adult.example/watch/123');
     expect(state.pendingAddMediaUrls).toEqual(['https://adult.example/watch/123']);
-    expect(state.pendingAddCookies).toBe('session=secret');
+    expect(state.pendingAddCookies).toBe('');
+  });
+
+  it('preserves extension cookies for ordinary captured downloads', async () => {
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: ['https://example.com/private.zip'],
+      referer: 'https://example.com/downloads',
+      silent: true,
+      filename: 'private.zip',
+      headers: null,
+      cookies: 'session=secret',
+      media: false
+    });
+
+    expect(useDownloadStore.getState().pendingAddCookies).toBe('session=secret');
   });
 
   it('clears stale request context when the same URL is captured without it later', async () => {

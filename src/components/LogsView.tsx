@@ -7,11 +7,15 @@ import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'luc
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
-
-interface LogEntry {
-  level: 'Trace' | 'Debug' | 'Info' | 'Warn' | 'Error';
-  message: string;
-}
+import {
+  MAX_LOG_LINES,
+  appendBoundedLogEntries,
+  liveLogEntry,
+  mergeLogSnapshotAndLiveEntries,
+  persistedLogEntry,
+  pushBoundedLogEntry,
+  type LogEntry
+} from '../utils/logEntries';
 
 export default function LogsView() {
   const { addToast } = useToast();
@@ -20,56 +24,75 @@ export default function LogsView() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [levelFilter, setLevelFilter] = useState<LogEntry['level'] | 'All'>('All');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rawLineCountRef = useRef(0);
-
-  const MAX_LOG_LINES = 2000;
+  const liveBatchRef = useRef<LogEntry[]>([]);
+  const liveFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
+    const handleVisibilityChange = () => setPageVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    if (!pageVisible) {
+      void invoke('set_log_stream_active', { active: false }).catch(console.error);
+      return;
+    }
+
+    if (!logsEnabled) {
+      void invoke('set_log_stream_active', { active: false }).catch(console.error);
+    }
+
     let active = true;
-    let unlisten: (() => void) | undefined;
+    let initialized = false;
+    let pendingLiveEntries: LogEntry[] = [];
+    let unlistenPromise: Promise<() => void> | undefined;
+
+    const scheduleLiveEntry = (entry: LogEntry) => {
+      if (!initialized) {
+        pushBoundedLogEntry(pendingLiveEntries, entry);
+        return;
+      }
+
+      pushBoundedLogEntry(liveBatchRef.current, entry);
+      if (liveFrameRef.current !== null) return;
+      liveFrameRef.current = window.requestAnimationFrame(() => {
+        liveFrameRef.current = null;
+        if (!active || liveBatchRef.current.length === 0) return;
+        const batch = liveBatchRef.current;
+        liveBatchRef.current = [];
+        setLogs(current => appendBoundedLogEntries(current, batch));
+      });
+    };
 
     const init = async () => {
       try {
         await initLogger();
-        const [lines] = await Promise.all([
-          invoke('read_logs', { limit: MAX_LOG_LINES })
-        ]);
         if (!active) return;
-        const initialLogs = lines.map(message => {
-          const level: LogEntry['level'] = message.includes('[ERROR]') ? 'Error'
-            : message.includes('[WARN]') ? 'Warn'
-              : message.includes('[INFO]') ? 'Info'
-                : message.includes('[TRACE]') ? 'Trace'
-                  : 'Debug';
-          return { level, message };
-        });
-        
-        setLogs(initialLogs);
-        rawLineCountRef.current = initialLogs.length;
 
         if (logsEnabled) {
-          unlisten = await attachLogger((log) => {
+          unlistenPromise = attachLogger((log) => {
             if (!active) return;
-            const levelStr: LogEntry['level'] = log.level === 5 ? 'Error'
-              : log.level === 4 ? 'Warn'
-                : log.level === 3 ? 'Info'
-                  : log.level === 1 ? 'Trace'
-                    : 'Debug';
-
-            const timeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const formattedMsg = `[${timeStr}] [${levelStr.toUpperCase()}] ${log.message}`;
-
-            setLogs(prev => {
-              const newLogs = [...prev, { level: levelStr, message: formattedMsg }];
-              rawLineCountRef.current = newLogs.length;
-              if (newLogs.length > MAX_LOG_LINES + 500) {
-                return newLogs.slice(newLogs.length - MAX_LOG_LINES);
-              }
-              return newLogs;
-            });
+            scheduleLiveEntry(liveLogEntry(log.level, log.message));
           });
+          await unlistenPromise;
+          if (!active) return;
+          await invoke('set_log_stream_active', { active: true });
+          if (!active) {
+            await invoke('set_log_stream_active', { active: false }).catch(console.error);
+            return;
+          }
         }
+
+        const lines = await invoke('read_logs', { limit: MAX_LOG_LINES });
+        if (!active) return;
+        const snapshot = lines.map(persistedLogEntry);
+        initialized = true;
+        const caughtUpLogs = mergeLogSnapshotAndLiveEntries(snapshot, pendingLiveEntries);
+        pendingLiveEntries = [];
+        setLogs(caughtUpLogs);
       } catch (e) {
         console.error('Failed to init logs:', e);
       }
@@ -78,9 +101,19 @@ export default function LogsView() {
     
     return () => {
       active = false;
-      if (unlisten) unlisten();
+      liveBatchRef.current = [];
+      if (liveFrameRef.current !== null) {
+        window.cancelAnimationFrame(liveFrameRef.current);
+        liveFrameRef.current = null;
+      }
+      if (logsEnabled) {
+        void invoke('set_log_stream_active', { active: false }).catch(console.error);
+      }
+      if (unlistenPromise) {
+        void unlistenPromise.then(unlisten => unlisten()).catch(console.error);
+      }
     };
-  }, [logsEnabled]);
+  }, [logsEnabled, pageVisible]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -139,6 +172,11 @@ export default function LogsView() {
   };
 
   const handleClear = async () => {
+    liveBatchRef.current = [];
+    if (liveFrameRef.current !== null) {
+      window.cancelAnimationFrame(liveFrameRef.current);
+      liveFrameRef.current = null;
+    }
     setLogs([]);
     await invoke('clear_logs').catch(console.error);
   };

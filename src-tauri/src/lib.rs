@@ -4542,6 +4542,27 @@ fn redact_log_line(line: &str) -> String {
     query.replace_all(&redacted, "$1?[redacted]").into_owned()
 }
 
+fn redact_log_line_for_output(line: &str) -> String {
+    static HOME_PATHS: OnceLock<(String, String)> = OnceLock::new();
+    let (home, escaped_home) = HOME_PATHS.get_or_init(|| {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        let home = if home.len() > 3 { home } else { String::new() };
+        let escaped_home = home.replace('\\', "\\\\");
+        (home, escaped_home)
+    });
+
+    let mut redacted = line.to_string();
+    if !home.is_empty() {
+        redacted = redacted.replace(home, "<HOME>");
+    }
+    if !escaped_home.is_empty() && escaped_home != home {
+        redacted = redacted.replace(escaped_home, "<HOME>");
+    }
+    redact_log_line(&redacted)
+}
+
 fn redact_log_line_for_app(line: &str, app_handle: &tauri::AppHandle) -> String {
     use tauri::Manager;
     let without_home = app_handle
@@ -4780,8 +4801,9 @@ mod tests {
         media_output_template, media_progress_args, media_progress_speed,
         normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
-        redact_log_line, sanitize_ytdlp_config_value, should_cleanup_media_artifacts_after_failure,
-        FirelinkDeepLink, MediaProgress, MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
+        redact_log_line, redact_log_line_for_output, sanitize_ytdlp_config_value,
+        should_cleanup_media_artifacts_after_failure, FirelinkDeepLink, MediaProgress,
+        MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -4976,6 +4998,15 @@ mod tests {
         assert!(!redacted.contains("bearer-secret"));
         assert!(!redacted.contains("session=abc"));
         assert!(!redacted.contains("token=secret"));
+        assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_live_log_output_before_webview_delivery() {
+        let line = "Cookie: session=abc https://example.com/file?signature=secret";
+        let redacted = redact_log_line_for_output(line);
+        assert!(!redacted.contains("session=abc"));
+        assert!(!redacted.contains("signature=secret"));
         assert!(redacted.contains("[redacted]"));
     }
 
@@ -5459,6 +5490,7 @@ mod tests {
 }
 
 static LOG_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static LOG_STREAM_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[tauri::command]
 fn toggle_log_pause(pause: bool) {
@@ -5468,6 +5500,11 @@ fn toggle_log_pause(pause: bool) {
 #[tauri::command]
 fn is_log_paused() -> bool {
     LOG_PAUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_log_stream_active(active: bool) {
+    LOG_STREAM_ACTIVE.store(active, std::sync::atomic::Ordering::Release);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -5881,7 +5918,13 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview)
+                        .filter(|_| {
+                            LOG_STREAM_ACTIVE.load(std::sync::atomic::Ordering::Acquire)
+                        }),
                 ])
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
                 .filter(|metadata| {
@@ -5899,29 +5942,15 @@ pub fn run() {
                 .max_file_size(10_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(3))
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                .format({
-                    let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
-                    let home_dir = if home_dir.len() > 3 { home_dir } else { String::new() };
-                    let escaped_home_dir = home_dir.replace("\\", "\\\\");
-                    move |out, message, record| {
-                        let msg = message.to_string();
-                        let redacted = if !home_dir.is_empty() {
-                            let mut s = msg.replace(&home_dir, "<HOME>");
-                            if !escaped_home_dir.is_empty() && escaped_home_dir != home_dir {
-                                s = s.replace(&escaped_home_dir, "<HOME>");
-                            }
-                            s
-                        } else {
-                            msg
-                        };
-                        out.finish(format_args!(
-                            "[{}][{}][{}] {}",
-                            chrono::Local::now().format("%Y-%m-%d][%H:%M:%S"),
-                            record.level(),
-                            record.target(),
-                            redacted
-                        ))
-                    }
+                .format(|out, message, record| {
+                    let redacted = redact_log_line_for_output(&message.to_string());
+                    out.finish(format_args!(
+                        "[{}][{}][{}] {}",
+                        chrono::Local::now().format("%Y-%m-%d][%H:%M:%S"),
+                        record.level(),
+                        record.target(),
+                        redacted
+                    ))
                 })
                 .build(),
         )
@@ -5955,7 +5984,8 @@ pub fn run() {
             parity::create_category_directories,
             db_save_settings, db_load_settings, db_get_all_downloads, db_replace_downloads,
             db_get_all_queues, db_replace_queues,
-            read_logs, export_logs, toggle_log_pause, is_log_paused, clear_logs
+            read_logs, export_logs, toggle_log_pause, is_log_paused, clear_logs,
+            set_log_stream_active
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

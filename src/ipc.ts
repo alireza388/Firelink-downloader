@@ -76,6 +76,7 @@ type CommandMap = {
   clear_logs: { args: undefined; result: void };
   toggle_log_pause: { args: { pause: boolean }; result: void };
   is_log_paused: { args: undefined; result: boolean };
+  set_log_stream_active: { args: { active: boolean }; result: void };
   get_pending_order: { args: { queueId: string | null }; result: string[] };
   enqueue_download: { args: { item: EnqueueItem }; result: EnqueueAccepted };
   cancel_enqueue_generation: { args: { id: string; generation: string }; result: void };

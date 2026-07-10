@@ -27,7 +27,6 @@ export interface AddDownloadDraftRow {
   status: MetadataStatus;
   generation: number;
   requestContextVersion?: number;
-  requestCookiesOmitted?: boolean;
   isMedia: boolean;
   resumable?: boolean;
   formats?: AddMediaFormat[];
@@ -94,7 +93,6 @@ export const reconcileDownloadRows = (
           status: 'loading',
           generation: preserved.generation + 1,
           requestContextVersion,
-          requestCookiesOmitted: false,
           isMedia: preserved.isMedia || forcedMedia,
           formats: preserved.isMedia || forcedMedia ? undefined : preserved.formats,
           selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat

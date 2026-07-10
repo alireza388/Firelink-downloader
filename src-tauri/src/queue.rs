@@ -85,6 +85,7 @@ pub trait SidecarSpawner: Send + Sync + 'static {
 pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     registered_ids: Mutex<HashSet<String>>,
     enqueue_cancellations: Mutex<HashMap<String, u64>>,
+    enqueue_generations: Mutex<HashMap<String, u64>>,
     pending: Mutex<VecDeque<QueuedTask>>,
     semaphore: Arc<Semaphore>,
     active_permits: Mutex<HashMap<String, OwnedSemaphorePermit>>,
@@ -136,6 +137,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         Self {
             registered_ids: Mutex::new(HashSet::new()),
             enqueue_cancellations: Mutex::new(HashMap::new()),
+            enqueue_generations: Mutex::new(HashMap::new()),
             pending: Mutex::new(VecDeque::new()),
             semaphore: Arc::new(Semaphore::new(capacity)),
             active_permits: Mutex::new(HashMap::new()),
@@ -184,30 +186,97 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .or_insert(generation);
     }
 
-    /// Atomically checks the cancellation watermark before registering a task.
-    pub async fn push_with_generation(
+    /// Atomically reserve an ID after rejecting cancelled or replayed generations.
+    /// The returned watermark must be passed to `rollback_enqueue_reservation`
+    /// if ownership registration fails before the task is committed.
+    pub async fn reserve_enqueue_generation(
+        &self,
+        id: &str,
+        generation: u64,
+    ) -> Result<Option<u64>, String> {
+        let cancellations = self.enqueue_cancellations.lock().await;
+        if cancellations
+            .get(id)
+            .is_some_and(|cancelled| *cancelled >= generation)
+        {
+            return Err("Download enqueue was superseded by a newer user action".to_string());
+        }
+        let mut generations = self.enqueue_generations.lock().await;
+        let previous_generation = generations.get(id).copied();
+        if previous_generation.is_some_and(|seen| seen >= generation) {
+            return Err("Download enqueue was superseded by a newer user action".to_string());
+        }
+
+        let mut registered = self.registered_ids.lock().await;
+        if registered.contains(id) {
+            return Err("Duplicate task".to_string());
+        }
+        registered.insert(id.to_string());
+        generations.insert(id.to_string(), generation);
+        Ok(previous_generation)
+    }
+
+    pub async fn rollback_enqueue_reservation(
+        &self,
+        id: &str,
+        generation: u64,
+        previous_generation: Option<u64>,
+    ) {
+        let mut generations = self.enqueue_generations.lock().await;
+        let mut registered = self.registered_ids.lock().await;
+        if generations.get(id).copied() != Some(generation) {
+            return;
+        }
+        registered.remove(id);
+        match previous_generation {
+            Some(previous) => {
+                generations.insert(id.to_string(), previous);
+            }
+            None => {
+                generations.remove(id);
+            }
+        }
+    }
+
+    pub async fn commit_reserved_enqueue(
         &self,
         task: QueuedTask,
         generation: u64,
     ) -> Result<(), String> {
         let id = task.id.clone();
         let cancellations = self.enqueue_cancellations.lock().await;
-        if cancellations.get(&id).is_some_and(|cancelled| *cancelled >= generation) {
+        if cancellations
+            .get(&id)
+            .is_some_and(|cancelled| *cancelled >= generation)
+        {
             return Err("Download enqueue was superseded by a newer user action".to_string());
         }
-
-        let mut registered = self.registered_ids.lock().await;
-        if registered.contains(&id) {
-            return Err("Duplicate task".to_string());
-        }
-        registered.insert(id.clone());
-        drop(registered);
-        drop(cancellations);
-
         self.pending.lock().await.push_back(task);
         self.emit_state(id, DownloadStatus::Queued);
         self.notify.notify_one();
         Ok(())
+    }
+
+    /// Atomically checks the generation watermark before registering a task.
+    pub async fn push_with_generation(
+        &self,
+        task: QueuedTask,
+        generation: u64,
+    ) -> Result<(), String> {
+        let id = task.id.clone();
+        let previous_generation = self.reserve_enqueue_generation(&id, generation).await?;
+        if let Err(error) = self.commit_reserved_enqueue(task, generation).await {
+            self.rollback_enqueue_reservation(&id, generation, previous_generation)
+                .await;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Enqueue a task without a frontend lifecycle token. This is retained for
+    /// internal/test callers and still gets replay protection at generation 0.
+    pub async fn push(&self, task: QueuedTask) -> Result<(), String> {
+        self.push_with_generation(task, 0).await
     }
 
     pub async fn next_aria2_control_epoch(&self, id: &str) -> u64 {
@@ -233,22 +302,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn has_aria2_retry_state(&self, id: &str) -> bool {
         self.aria2_retry_strikes.lock().await.contains_key(id)
-    }
-
-    /// Enqueue a task. Checks the centralized `registered_ids` for deduplication.
-    pub async fn push(&self, task: QueuedTask) -> Result<(), String> {
-        let id = task.id.clone();
-        let mut registered = self.registered_ids.lock().await;
-        if registered.contains(&id) {
-            return Err("Duplicate task".to_string());
-        }
-        registered.insert(id.clone());
-        drop(registered);
-
-        self.pending.lock().await.push_back(task);
-        self.emit_state(id, DownloadStatus::Queued);
-        self.notify.notify_one();
-        Ok(())
     }
 
     /// Pop the next task, or None if empty.
@@ -877,40 +930,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
             self.notify.notify_one();
         }
         removed
-    }
-
-    /// Bulk enqueue by appending tasks. Used by startup and start-all.
-    pub async fn enqueue_many(&self, tasks: Vec<QueuedTask>) -> Vec<crate::ipc::EnqueueResult> {
-        let mut results = Vec::new();
-        let mut registered = self.registered_ids.lock().await;
-        let mut pending = self.pending.lock().await;
-
-        for task in tasks {
-            let id = task.id.clone();
-            let filename = task.payload.filename.clone();
-            if registered.contains(&id) {
-                results.push(crate::ipc::EnqueueResult {
-                    id: id.clone(),
-                    success: false,
-                    filename: None,
-                    error: Some("Duplicate task".to_string()),
-                });
-                continue;
-            }
-            registered.insert(id.clone());
-            pending.push_back(task);
-            self.emit_state(id.clone(), DownloadStatus::Queued);
-            results.push(crate::ipc::EnqueueResult {
-                id,
-                success: true,
-                filename: Some(filename),
-                error: None,
-            });
-        }
-        drop(pending);
-        drop(registered);
-        self.notify.notify_one();
-        results
     }
 }
 

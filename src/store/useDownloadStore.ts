@@ -311,6 +311,7 @@ export type PendingAddRequestContext = {
   filename: string;
   headers: string;
   cookies: string;
+  media: boolean;
 };
 
 export type DeleteModalState = {
@@ -338,7 +339,6 @@ interface DownloadState {
   pendingAddMediaUrls: string[];
   pendingAddRequestContexts: Record<string, PendingAddRequestContext>;
   pendingAddRequestVersion: number;
-  pendingAddLatestUrls: string;
   selectedPropertiesDownloadId: string | null;
   toggleAddModal: (isOpen: boolean) => void;
   openAddModalWithUrls: (
@@ -475,7 +475,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   pendingAddMediaUrls: [],
   pendingAddRequestContexts: {},
   pendingAddRequestVersion: 0,
-  pendingAddLatestUrls: '',
   selectedPropertiesDownloadId: null,
   deleteModalState: { isOpen: false },
   openDeleteModal: (downloadIds) => set({ 
@@ -493,8 +492,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     pendingAddHeaders: '',
     pendingAddCookies: '',
     pendingAddMediaUrls: [],
-    pendingAddRequestContexts: {},
-    pendingAddLatestUrls: ''
+    pendingAddRequestContexts: {}
   }),
   openAddModalWithUrls: (urls, referer, filename, headers, cookies, media = false) => set((state) => {
     const isAppending = state.isAddModalOpen && Boolean(state.pendingAddUrls);
@@ -512,28 +510,30 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const cleanHeaders = headers?.trim() || '';
     const cleanCookies = cookies?.trim() || '';
     const requestVersion = state.pendingAddRequestVersion + 1;
-    const hasRequestContext = Boolean(cleanReferer || cleanFilename || cleanHeaders || cleanCookies);
     const pendingAddRequestContexts = isAppending
       ? { ...state.pendingAddRequestContexts }
       : {};
-    if (hasRequestContext) {
-      for (const rawUrl of urls.split('\n')) {
-        const trimmedUrl = rawUrl.trim();
-        if (!trimmedUrl) continue;
-        let key = trimmedUrl;
-        try {
-          key = new URL(trimmedUrl).href;
-        } catch {
-          // The Add modal will mark malformed input invalid; retain its original key here.
-        }
-        pendingAddRequestContexts[key] = {
-          version: requestVersion,
-          referer: cleanReferer,
-          filename: cleanFilename,
-          headers: cleanHeaders,
-          cookies: cleanCookies
-        };
+    // Every handoff gets a versioned row context, including an intentionally
+    // empty one. Otherwise a later request for the same URL cannot clear stale
+    // cookies/headers from an earlier capture, and batched React renders can
+    // lose all but the most recent appended URL.
+    for (const rawUrl of urls.split('\n')) {
+      const trimmedUrl = rawUrl.trim();
+      if (!trimmedUrl) continue;
+      let key = trimmedUrl;
+      try {
+        key = new URL(trimmedUrl).href;
+      } catch {
+        // The Add modal will mark malformed input invalid; retain its original key here.
       }
+      pendingAddRequestContexts[key] = {
+        version: requestVersion,
+        referer: cleanReferer,
+        filename: cleanFilename,
+        headers: cleanHeaders,
+        cookies: cleanCookies,
+        media
+      };
     }
     return {
       isAddModalOpen: true,
@@ -544,25 +544,19 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       pendingAddCookies: cleanCookies,
       pendingAddMediaUrls,
       pendingAddRequestContexts,
-      pendingAddRequestVersion: requestVersion,
-      pendingAddLatestUrls: urls
+      pendingAddRequestVersion: requestVersion
     };
   }),
   handleExtensionDownload: async (request) => {
     const urls = [...new Set(request.urls.map(url => url.trim()).filter(Boolean))];
     if (urls.length === 0) return;
 
-    // Explicit media uses yt-dlp and its configured browser-cookie source.
-    // Passing Firefox's complete page Cookie header can exceed YouTube's
-    // request-header limit; ordinary captured file downloads keep it.
-    const cookies = request.media === true ? null : request.cookies;
-
     get().openAddModalWithUrls(
       urls.join('\n'),
       request.referer,
       urls.length === 1 ? request.filename : null,
       request.headers,
-      cookies,
+      request.cookies,
       request.media === true
     );
   },
@@ -687,7 +681,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     syncSystemIntegrations();
   },
   pauseDownload: async (id) => {
-    const { generation } = await invalidateDispatch(id);
+    const { generation, pendingDispatch } = await invalidateDispatch(id);
+    if (pendingDispatch) {
+      await pendingDispatch;
+    }
 
     await invoke('pause_download', { id });
 

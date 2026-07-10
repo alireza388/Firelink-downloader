@@ -12,6 +12,7 @@ const CURRENT_SCHEMA_VERSION: i64 = 1;
 const TOKEN_CHANGED_NOTICE: &str = "pairing-token-changed";
 pub const PAIRING_TOKEN_KEYCHAIN_ID: &str = "extension-pairing-token";
 const KEYCHAIN_SERVICE: &str = "com.firelink.app";
+static KEYRING_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct DbState {
     conn: Mutex<Connection>,
@@ -888,16 +889,16 @@ fn ensure_keyring_store() -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        let store = windows_native_keyring_store::Store::new()
-            .map_err(|error| error.to_string())?;
+        let store =
+            windows_native_keyring_store::Store::new().map_err(|error| error.to_string())?;
         keyring_core::set_default_store(store);
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        let store = zbus_secret_service_keyring_store::Store::new()
-            .map_err(|error| error.to_string())?;
+        let store =
+            zbus_secret_service_keyring_store::Store::new().map_err(|error| error.to_string())?;
         keyring_core::set_default_store(store);
         Ok(())
     }
@@ -934,29 +935,98 @@ fn keychain_entry(id: &str) -> Result<keyring_core::Entry, String> {
     keychain_entry_with_target(id, None)
 }
 
+fn lock_keyring_operations() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    KEYRING_OPERATION_LOCK
+        .lock()
+        .map_err(|_| "keyring operation lock is unavailable".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn legacy_linux_keychain_entries(id: &str) -> Result<Vec<keyring_core::Entry>, String> {
+    ensure_keyring_store()?;
+    let entries = keyring_core::Entry::search(&std::collections::HashMap::from([
+        ("service", KEYCHAIN_SERVICE),
+        ("username", id),
+    ]))
+    .map_err(|error| error.to_string())?;
+    let mut legacy = Vec::new();
+    for entry in entries {
+        let attributes = entry.get_attributes().map_err(|error| error.to_string())?;
+        if !attributes.contains_key("target") {
+            legacy.push(entry);
+        }
+    }
+    Ok(legacy)
+}
+
+#[cfg(target_os = "linux")]
+fn unique_legacy_linux_keychain_entry(id: &str) -> Result<Option<keyring_core::Entry>, String> {
+    let mut entries = legacy_linux_keychain_entries(id)?;
+    match entries.len() {
+        0 => Ok(None),
+        1 => Ok(entries.pop()),
+        count => Err(format!(
+            "Entry is matched by {count} legacy Linux credentials"
+        )),
+    }
+}
+
 pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
+    let _guard = lock_keyring_operations()?;
     let entry = keychain_entry(id)?;
+
+    #[cfg(target_os = "linux")]
+    if let Err(error) = entry.get_credential() {
+        match error {
+            keyring_core::Error::NoEntry => {
+                if let Some(legacy) = unique_legacy_linux_keychain_entry(id)? {
+                    return legacy
+                        .set_password(password)
+                        .map_err(|error| error.to_string());
+                }
+            }
+            error => return Err(error.to_string()),
+        }
+    }
+
     entry
         .set_password(password)
         .map_err(|error| error.to_string())
 }
 
 pub fn get_keychain_password(id: &str) -> Result<String, String> {
+    let _guard = lock_keyring_operations()?;
     let entry = keychain_entry(id)?;
     match entry.get_password() {
         Ok(password) => Ok(password),
         #[cfg(target_os = "linux")]
-        Err(_) => keychain_entry_with_target(id, None)?
+        Err(keyring_core::Error::NoEntry) => unique_legacy_linux_keychain_entry(id)?
+            .ok_or_else(|| keyring_core::Error::NoEntry.to_string())?
             .get_password()
             .map_err(|error| error.to_string()),
+        #[cfg(target_os = "linux")]
+        Err(error) => Err(error.to_string()),
         #[cfg(not(target_os = "linux"))]
         Err(error) => Err(error.to_string()),
     }
 }
 
 pub fn delete_keychain_password(id: &str) -> Result<(), String> {
+    let _guard = lock_keyring_operations()?;
     let entry = keychain_entry(id)?;
-    let _ = entry.delete_credential();
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+
+    #[cfg(target_os = "linux")]
+    for legacy in legacy_linux_keychain_entries(id)? {
+        match legacy.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
     Ok(())
 }
 

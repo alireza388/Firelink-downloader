@@ -27,6 +27,7 @@ export interface AddDownloadDraftRow {
   status: MetadataStatus;
   generation: number;
   requestContextVersion?: number;
+  requestCookiesOmitted?: boolean;
   isMedia: boolean;
   resumable?: boolean;
   formats?: AddMediaFormat[];
@@ -93,6 +94,7 @@ export const reconcileDownloadRows = (
           status: 'loading',
           generation: preserved.generation + 1,
           requestContextVersion,
+          requestCookiesOmitted: false,
           isMedia: preserved.isMedia || forcedMedia,
           formats: preserved.isMedia || forcedMedia ? undefined : preserved.formats,
           selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat
@@ -118,6 +120,35 @@ export const reconcileDownloadRows = (
       isMedia: input.valid && (forceMediaUrls.has(input.sourceUrl) || isMediaUrl(input.sourceUrl))
     };
   });
+};
+
+const comparableUrl = (rawUrl: string): string => {
+  try {
+    return new URL(rawUrl).href;
+  } catch {
+    return rawUrl.trim();
+  }
+};
+
+export const appendRequestUrlsAfterVersion = (
+  rawText: string,
+  requestContexts: Readonly<Record<string, { version: number }>>,
+  observedVersion: number
+): string => {
+  const lines = rawText.split('\n').map(line => line.trim()).filter(Boolean);
+  const seen = new Set(lines.map(comparableUrl));
+  const additions = Object.entries(requestContexts)
+    .filter(([, context]) => context.version > observedVersion)
+    .sort(([, left], [, right]) => left.version - right.version);
+
+  for (const [url] of additions) {
+    const identity = comparableUrl(url);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    lines.push(url);
+  }
+
+  return lines.join('\n');
 };
 
 export const updateRowIfCurrent = (

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendRequestUrlsAfterVersion,
   canSubmitMetadataRows,
   mediaFormatSelectorForRow,
   mediaFileNameForSelectedFormat,
@@ -93,6 +94,7 @@ describe('add download metadata workflow', () => {
       status: 'ready',
       generation: 4,
       requestContextVersion: 1,
+      requestCookiesOmitted: true,
       formats: [{
         name: '1080p MP4',
         selector: '137+140',
@@ -119,9 +121,28 @@ describe('add download metadata workflow', () => {
       status: 'loading',
       generation: 5,
       requestContextVersion: 2,
+      requestCookiesOmitted: false,
       formats: undefined,
       selectedFormat: undefined
     });
+  });
+
+  it('appends every unseen handoff after the observed version', () => {
+    const merged = appendRequestUrlsAfterVersion(
+      'https://existing.example/file.zip',
+      {
+        'https://first.example/file.zip': { version: 2 },
+        'https://second.example/file.zip': { version: 3 },
+        'https://existing.example/file.zip': { version: 4 }
+      },
+      1
+    );
+
+    expect(merged).toBe(
+      'https://existing.example/file.zip\n' +
+      'https://first.example/file.zip\n' +
+      'https://second.example/file.zip'
+    );
   });
 
   it('upgrades an existing normal row when the user explicitly fetches it as media', () => {

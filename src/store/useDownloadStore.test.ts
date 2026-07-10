@@ -90,7 +90,6 @@ describe('useDownloadStore', () => {
       pendingAddMediaUrls: [],
       pendingAddRequestContexts: {},
       pendingAddRequestVersion: 0,
-      pendingAddLatestUrls: '',
     });
   });
 
@@ -315,6 +314,15 @@ describe('useDownloadStore', () => {
       );
     });
     const pause = useDownloadStore.getState().pauseDownload('paused');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'cancel_enqueue_generation',
+        expect.objectContaining({ id: 'paused' })
+      );
+    });
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.some(([command]) => command === 'pause_download')
+    ).toBe(false);
     resolveEnqueue({ id: 'paused', filename: 'paused.bin' });
 
     await expect(pause).resolves.toBeUndefined();
@@ -784,21 +792,22 @@ describe('useDownloadStore', () => {
       'https://first.example/file.zip\nhttps://second.example/file.zip'
     );
     expect(state.pendingAddRequestVersion).toBe(2);
-    expect(state.pendingAddLatestUrls).toBe('https://second.example/file.zip');
     expect(state.pendingAddRequestContexts).toEqual({
       'https://first.example/file.zip': {
         version: 1,
         referer: 'https://first.example/page',
         filename: 'first.zip',
         headers: 'User-Agent: First Browser',
-        cookies: 'first=session'
+        cookies: 'first=session',
+        media: false
       },
       'https://second.example/file.zip': {
         version: 2,
         referer: 'https://second.example/page',
         filename: 'second.zip',
         headers: 'User-Agent: Second Browser',
-        cookies: 'second=session'
+        cookies: 'second=session',
+        media: false
       }
     });
   });
@@ -818,7 +827,38 @@ describe('useDownloadStore', () => {
     expect(state.isAddModalOpen).toBe(true);
     expect(state.pendingAddUrls).toBe('https://adult.example/watch/123');
     expect(state.pendingAddMediaUrls).toEqual(['https://adult.example/watch/123']);
-    expect(state.pendingAddCookies).toBe('');
+    expect(state.pendingAddCookies).toBe('session=secret');
+  });
+
+  it('clears stale request context when the same URL is captured without it later', async () => {
+    const url = 'https://example.com/file.zip';
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: [url],
+      referer: 'https://example.com/private',
+      silent: true,
+      filename: 'private.zip',
+      headers: 'Authorization: secret',
+      cookies: 'session=secret',
+      media: false
+    });
+    await useDownloadStore.getState().handleExtensionDownload({
+      urls: [url],
+      referer: null,
+      silent: true,
+      filename: null,
+      headers: null,
+      cookies: null,
+      media: false
+    });
+
+    expect(useDownloadStore.getState().pendingAddRequestContexts[url]).toEqual({
+      version: 2,
+      referer: '',
+      filename: '',
+      headers: '',
+      cookies: '',
+      media: false
+    });
   });
 
   it('deduplicates forced media URLs and drops stale media intent when opening fresh', async () => {

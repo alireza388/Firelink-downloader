@@ -107,13 +107,52 @@ async fn cancelled_enqueue_generation_cannot_register_after_a_newer_user_action(
     mgr.cancel_enqueue_generation("a", 4).await;
 
     let stale = mgr.push_with_generation(sample_task("a"), 4).await;
-    assert!(stale.is_err(), "cancelled generation must not enter the queue");
+    assert!(
+        stale.is_err(),
+        "cancelled generation must not enter the queue"
+    );
     assert!(!mgr.is_registered("a").await);
 
     mgr.push_with_generation(sample_task("a"), 5)
         .await
         .expect("newer generation should be accepted");
     assert_eq!(mgr.pending_order(None).await, vec!["a".to_string()]);
+}
+
+#[tokio::test]
+async fn cancellation_between_reservation_and_commit_cannot_start_the_task() {
+    let (mgr, _spawner) = make_manager(2);
+    let previous = mgr
+        .reserve_enqueue_generation("a", 7)
+        .await
+        .expect("reservation should succeed");
+    mgr.cancel_enqueue_generation("a", 7).await;
+
+    let committed = mgr.commit_reserved_enqueue(sample_task("a"), 7).await;
+    assert!(committed.is_err(), "cancelled reservation must not commit");
+    mgr.rollback_enqueue_reservation("a", 7, previous).await;
+
+    assert!(!mgr.is_registered("a").await);
+    assert!(mgr.pending_order(None).await.is_empty());
+    assert!(mgr.push_with_generation(sample_task("a"), 7).await.is_err());
+    mgr.push_with_generation(sample_task("a"), 8)
+        .await
+        .expect("a newer generation should remain startable");
+}
+
+#[tokio::test]
+async fn accepted_generation_cannot_be_replayed_after_registry_release() {
+    let (mgr, _spawner) = make_manager(2);
+    mgr.push_with_generation(sample_task("a"), 3)
+        .await
+        .expect("first enqueue should succeed");
+    assert!(mgr.remove_from_pending("a").await);
+    mgr.release_registered_id("a").await;
+
+    assert!(mgr.push_with_generation(sample_task("a"), 3).await.is_err());
+    mgr.push_with_generation(sample_task("a"), 4)
+        .await
+        .expect("only a newer lifecycle may reuse the id");
 }
 
 #[tokio::test]

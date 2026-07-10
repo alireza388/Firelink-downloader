@@ -37,6 +37,20 @@ const waitForSettingsHydration = (): Promise<void> => {
   });
 };
 
+let downloadStateInitialization: Promise<void> | null = null;
+const initializeDownloadState = (): Promise<void> => {
+  if (!downloadStateInitialization) {
+    downloadStateInitialization = (async () => {
+      await waitForSettingsHydration();
+      await useDownloadStore.getState().initDB();
+    })().catch(error => {
+      downloadStateInitialization = null;
+      throw error;
+    });
+  }
+  return downloadStateInitialization;
+};
+
 const getScheduledQueueIds = () => {
   const downloadState = useDownloadStore.getState();
   const availableQueueIds = new Set(downloadState.queues.map(queue => queue.id));
@@ -227,10 +241,11 @@ function App() {
     let active = true;
     const initialize = async () => {
       try {
-        await waitForSettingsHydration();
-        await useDownloadStore.getState().initDB();
-        if (active) setCoreReady(true);
+        await initializeDownloadState();
+        if (!active) return;
+        setCoreReady(true);
       } catch (error) {
+        if (!active) return;
         console.error('Failed to initialize Firelink state:', error);
         addToast({
           message: `Could not initialize saved downloads: ${String(error)}`,

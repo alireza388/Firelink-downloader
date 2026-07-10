@@ -3,7 +3,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use regex::Regex;
 use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -312,36 +312,48 @@ fn is_excluded_yt_dlp_format(value: &serde_json::Value) -> bool {
 }
 
 fn format_height(value: &serde_json::Value) -> Option<u64> {
-    if let Some(height) = json_u64(value, "height") {
+    if let Some(height) = json_u64(value, "height").filter(|height| *height > 0) {
         return Some(height);
     }
 
     if let Some(resolution) = json_str(value, "resolution") {
-        if let Some((_, height)) = resolution.split_once('x') {
-            if let Ok(parsed) = height.parse::<u64>() {
-                return Some(parsed);
+        if let Some((_, height)) = resolution
+            .split_once('x')
+            .or_else(|| resolution.split_once('X'))
+        {
+            if let Ok(parsed) = height.trim().parse::<u64>() {
+                if parsed > 0 {
+                    return Some(parsed);
+                }
             }
         }
     }
 
     let note = json_lower(value, "format_note");
-    for height in [4320_u64, 2160, 1440, 1080, 720, 480, 360, 240, 144] {
-        if note.contains(&format!("{height}p")) {
-            return Some(height);
+    let bytes = note.as_bytes();
+    let mut heights = Vec::new();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte != b'p' || index == 0 {
+            continue;
+        }
+        let mut start = index;
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        if start < index {
+            if let Ok(height) = note[start..index].parse::<u64>() {
+                if height > 0 {
+                    heights.push(height);
+                }
+            }
         }
     }
-
-    None
+    heights.into_iter().max()
 }
 
 fn matches_media_height(value: &serde_json::Value, target: u64) -> bool {
     if !has_video_stream(value) {
         return false;
-    }
-
-    let note = json_lower(value, "format_note");
-    if note.contains(&format!("{target}p")) {
-        return true;
     }
 
     format_height(value) == Some(target)
@@ -536,13 +548,13 @@ fn build_media_format_options(
     let mut options = Vec::new();
 
     if has_video {
-        let available_heights: Vec<u64> = [4320_u64, 2160, 1440, 1080, 720, 480, 360, 240, 144]
+        let available_heights: Vec<u64> = clean_formats
+            .iter()
+            .filter(|format| has_video_stream(format))
+            .filter_map(|format| format_height(format))
+            .collect::<BTreeSet<_>>()
             .into_iter()
-            .filter(|height| {
-                clean_formats
-                    .iter()
-                    .any(|format| matches_media_height(format, *height))
-            })
+            .rev()
             .collect();
 
         for height in available_heights {
@@ -2882,11 +2894,11 @@ pub(crate) async fn start_media_download_internal(
 
     let max_retries = max_tries.unwrap_or(0).max(0) as usize;
     let mut strike = 0_usize;
-    let mut processing_started = false;
     let mut effective_cookie_source = cookie_source.clone();
     let mut browser_cookie_fallback_used = false;
 
     while strike <= max_retries {
+        let mut processing_started = false;
         let ytdlp_path = resolve_bundled_binary_path(&app_handle, "yt-dlp")?;
         let mut cmd = app_handle.shell().command(&ytdlp_path);
         for arg in media_progress_args() {
@@ -2986,6 +2998,16 @@ pub(crate) async fn start_media_download_internal(
         let (mut rx, child) = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn yt-dlp: {}", e))?;
+        if strike > 0 {
+            // The backoff path emits `Retrying`. Restore the live transfer
+            // state when the replacement process actually starts so React
+            // accepts progress from this attempt instead of staying stuck.
+            progress_state.speed_sampler.reset();
+            let _ = app_handle.emit(
+                "download-state",
+                DownloadStateEvent::new(id, crate::ipc::DownloadStatus::Downloading),
+            );
+        }
         log::info!("yt-dlp spawned for id: {} (strike {})", id, strike);
 
         let mut stderr_tail = String::new();
@@ -3101,7 +3123,6 @@ pub(crate) async fn start_media_download_internal(
                                     );
                                 }
                                 if !processing_started && is_media_processing_line(&line) {
-                                    processing_started = true;
                                     let _ = app_handle.emit(
                                         "download-state",
                                         DownloadStateEvent::new(
@@ -3946,6 +3967,18 @@ async fn get_pending_order(
     Ok(state.queue_manager.pending_order(queue_id.as_deref()).await)
 }
 
+fn enqueue_lifecycle_generation(item: &queue::EnqueueItem) -> Result<u64, String> {
+    item.lifecycle_generation
+        .as_deref()
+        .map(|generation| {
+            generation
+                .parse::<u64>()
+                .map_err(|_| "Invalid enqueue lifecycle generation".to_string())
+        })
+        .transpose()
+        .map(|generation| generation.unwrap_or_default())
+}
+
 #[tauri::command]
 async fn enqueue_download(
     app_handle: tauri::AppHandle,
@@ -3955,30 +3988,35 @@ async fn enqueue_download(
     let id = item.id.clone();
     item.filename = crate::download_ownership::canonical_download_filename(&item.filename);
     let accepted_filename = item.filename.clone();
-    crate::download_ownership::register_expected(
+    let lifecycle_generation = enqueue_lifecycle_generation(&item).map_err(AppError::Internal)?;
+    let previous_generation = state
+        .queue_manager
+        .reserve_enqueue_generation(&id, lifecycle_generation)
+        .await
+        .map_err(AppError::Internal)?;
+    if let Err(error) = crate::download_ownership::register_expected(
         &app_handle,
         &item.id,
         &item.destination,
         &item.filename,
-    )?;
-    let lifecycle_generation = item
-        .lifecycle_generation
-        .as_deref()
-        .map(|generation| {
-            generation
-                .parse::<u64>()
-                .map_err(|_| AppError::Internal("Invalid enqueue lifecycle generation".to_string()))
-        })
-        .transpose()?
-        .unwrap_or_default();
-    if let Err(e) = state
+    ) {
+        state
+            .queue_manager
+            .rollback_enqueue_reservation(&id, lifecycle_generation, previous_generation)
+            .await;
+        return Err(AppError::Internal(error));
+    }
+    if let Err(error) = state
         .queue_manager
-        .push_with_generation(item.into_task(), lifecycle_generation)
+        .commit_reserved_enqueue(item.into_task(), lifecycle_generation)
         .await
     {
         let _ = crate::download_ownership::remove(&app_handle, &id);
-        state.queue_manager.release_registered_id(&id).await;
-        return Err(AppError::Internal(e));
+        state
+            .queue_manager
+            .rollback_enqueue_reservation(&id, lifecycle_generation, previous_generation)
+            .await;
+        return Err(AppError::Internal(error));
     }
     Ok(crate::ipc::EnqueueAccepted {
         id,
@@ -4006,30 +4044,83 @@ async fn cancel_enqueue_generation(
 async fn enqueue_many(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    mut items: Vec<queue::EnqueueItem>,
+    items: Vec<queue::EnqueueItem>,
 ) -> Result<Vec<crate::ipc::EnqueueResult>, AppError> {
-    for item in &mut items {
+    let mut results = Vec::with_capacity(items.len());
+    for mut item in items {
         item.filename = crate::download_ownership::canonical_download_filename(&item.filename);
-    }
-    for item in &items {
-        crate::download_ownership::register_expected(
+        let id = item.id.clone();
+        let filename = item.filename.clone();
+        let lifecycle_generation = match enqueue_lifecycle_generation(&item) {
+            Ok(generation) => generation,
+            Err(error) => {
+                results.push(crate::ipc::EnqueueResult {
+                    id,
+                    success: false,
+                    filename: None,
+                    error: Some(error),
+                });
+                continue;
+            }
+        };
+        let previous_generation = match state
+            .queue_manager
+            .reserve_enqueue_generation(&id, lifecycle_generation)
+            .await
+        {
+            Ok(previous) => previous,
+            Err(error) => {
+                results.push(crate::ipc::EnqueueResult {
+                    id,
+                    success: false,
+                    filename: None,
+                    error: Some(error),
+                });
+                continue;
+            }
+        };
+        if let Err(error) = crate::download_ownership::register_expected(
             &app_handle,
             &item.id,
             &item.destination,
             &item.filename,
-        )?;
-    }
-    let tasks = items
-        .into_iter()
-        .map(queue::EnqueueItem::into_task)
-        .collect();
-    let results = state.queue_manager.enqueue_many(tasks).await;
-
-    for result in &results {
-        if !result.success {
-            let _ = crate::download_ownership::remove(&app_handle, &result.id);
-            state.queue_manager.release_registered_id(&result.id).await;
+        ) {
+            state
+                .queue_manager
+                .rollback_enqueue_reservation(&id, lifecycle_generation, previous_generation)
+                .await;
+            results.push(crate::ipc::EnqueueResult {
+                id,
+                success: false,
+                filename: None,
+                error: Some(error),
+            });
+            continue;
         }
+        if let Err(error) = state
+            .queue_manager
+            .commit_reserved_enqueue(item.into_task(), lifecycle_generation)
+            .await
+        {
+            let _ = crate::download_ownership::remove(&app_handle, &id);
+            state
+                .queue_manager
+                .rollback_enqueue_reservation(&id, lifecycle_generation, previous_generation)
+                .await;
+            results.push(crate::ipc::EnqueueResult {
+                id,
+                success: false,
+                filename: None,
+                error: Some(error),
+            });
+            continue;
+        }
+        results.push(crate::ipc::EnqueueResult {
+            id,
+            success: true,
+            filename: Some(filename),
+            error: None,
+        });
     }
 
     Ok(results)
@@ -5048,7 +5139,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_low_and_ultra_high_available_video_qualities() {
+    fn keeps_every_available_video_height_including_nonstandard_qualities() {
         let formats = vec![
             json!({
                 "format_id": "401",
@@ -5063,12 +5154,28 @@ mod tests {
                 "height": 144,
                 "vcodec": "avc1.42E01E",
                 "acodec": "mp4a.40.2"
-            })
+            }),
+            json!({
+                "format_id": "five-k",
+                "ext": "webm",
+                "resolution": "5120X2880",
+                "vcodec": "av01.0.17M.08",
+                "acodec": "none"
+            }),
+            json!({
+                "format_id": "pal",
+                "ext": "mp4",
+                "format_note": "Premium 576p",
+                "vcodec": "avc1.4d401f",
+                "acodec": "none"
+            }),
         ];
 
         let options = build_media_format_options(&formats, Some(60.0));
 
         assert!(options.iter().any(|format| format.resolution == "4320p"));
+        assert!(options.iter().any(|format| format.resolution == "2880p"));
+        assert!(options.iter().any(|format| format.resolution == "576p"));
         assert!(options.iter().any(|format| format.resolution == "144p"));
     }
 

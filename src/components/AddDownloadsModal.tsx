@@ -23,6 +23,7 @@ import { isTransferLocked } from '../utils/downloadActions';
 import { useToast } from '../contexts/ToastContext';
 import {
   canSubmitMetadataRows,
+  appendRequestUrlsAfterVersion,
   mediaFileNameForSelectedFormat,
   mediaFormatSelectorForRow,
   metadataSummaryMessage,
@@ -65,7 +66,6 @@ export const AddDownloadsModal = () => {
     pendingAddMediaUrls,
     pendingAddRequestContexts,
     pendingAddRequestVersion,
-    pendingAddLatestUrls,
     toggleAddModal,
     addDownload,
     queues
@@ -120,8 +120,9 @@ export const AddDownloadsModal = () => {
     if (context) return extensionHeaders(context).trim();
     return hasExtensionRequestContext ? '' : headers.trim();
   };
-  const cookiesForRow = (sourceUrl: string) => {
+  const cookiesForRow = (sourceUrl: string, omitRequestCookies = false) => {
     if (cookiesManuallyEditedRef.current) return cookies.trim();
+    if (omitRequestCookies) return '';
     const context = requestContextForUrl(sourceUrl);
     if (context) return context.cookies.trim();
     return hasExtensionRequestContext ? '' : cookies.trim();
@@ -189,14 +190,14 @@ export const AddDownloadsModal = () => {
   useEffect(() => {
     if (!isAddModalOpen || !modalSessionRef.current
       || observedRequestVersionRef.current === pendingAddRequestVersion) return;
+    const observedVersion = observedRequestVersionRef.current;
     observedRequestVersionRef.current = pendingAddRequestVersion;
-    const additions = pendingAddLatestUrls
-      .split('\n')
-      .map(url => url.trim())
-      .filter(Boolean);
-    if (additions.length === 0) return;
-    setUrls(current => current.trim() ? `${current.trim()}\n${additions.join('\n')}` : additions.join('\n'));
-  }, [isAddModalOpen, pendingAddRequestVersion, pendingAddLatestUrls]);
+    setUrls(current => appendRequestUrlsAfterVersion(
+      current,
+      pendingAddRequestContexts,
+      observedVersion
+    ));
+  }, [isAddModalOpen, pendingAddRequestContexts, pendingAddRequestVersion]);
 
   useEffect(() => {
     if (!isQueueMenuOpen) return;
@@ -302,7 +303,25 @@ export const AddDownloadsModal = () => {
               cookies: rowCookies || null,
               proxy
             };
-            const mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
+            let requestCookiesOmitted = false;
+            let mediaData;
+            try {
+              mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
+            } catch (error) {
+              const capturedCookies = requestContextForUrl(row.sourceUrl)?.cookies.trim();
+              if (!rowCookies || !capturedCookies || cookiesManuallyEditedRef.current) {
+                throw error;
+              }
+              console.warn(
+                'Media metadata rejected the captured Cookie header; retrying without request cookies',
+                error
+              );
+              mediaData = await fetchMediaMetadataDeduped({
+                ...mediaMetadataArgs,
+                cookies: null
+              });
+              requestCookiesOmitted = true;
+            }
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
                 const quality = f.resolution || 'Video';
@@ -334,6 +353,7 @@ export const AddDownloadsModal = () => {
                   size: mappedFormats[0].bytes ? mappedFormats[0].detail : undefined,
                   sizeBytes: mappedFormats[0].bytes || undefined,
                   status: 'ready',
+                  requestCookiesOmitted,
                   formats: mappedFormats,
                   selectedFormat: 0
                 })
@@ -709,7 +729,7 @@ export const AddDownloadsModal = () => {
           checksum: checksumEnabled && checksumValue.trim()
             ? `${checksumAlgo}=${checksumValue.trim()}`
             : undefined,
-          cookies: cookiesForRow(item.sourceUrl) || undefined,
+          cookies: cookiesForRow(item.sourceUrl, item.requestCookiesOmitted) || undefined,
           mirrors: mirrors.trim() || undefined,
           destination: useSharedDestination
             ? finalLocation
@@ -1128,6 +1148,11 @@ export const AddDownloadsModal = () => {
                         className="add-download-control w-full px-3 py-1.5 text-xs font-mono"
                         aria-label="Cookies"
                       />
+                      {!cookiesManuallyEditedRef.current && parsedItems.some(item => item.requestCookiesOmitted) && (
+                        <p className="mt-1 text-[10px] text-amber-400">
+                          Media metadata only worked without the captured cookies, so they will be omitted for affected rows. Edit this field to force a manual value.
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold tracking-wider text-text-muted mb-1">Mirrors</label>

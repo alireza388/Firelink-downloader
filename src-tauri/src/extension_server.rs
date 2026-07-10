@@ -315,13 +315,10 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         silent: payload.silent,
         filename,
         headers: payload.headers.filter(|value| !value.trim().is_empty()),
-        // A full browser Cookie header can exceed upstream request-header
-        // limits. Media uses yt-dlp's configured browser-cookie source
-        // instead; regular captured downloads retain their exact cookies.
-        cookies: (!payload.media)
-            .then_some(payload.cookies)
-            .flatten()
-            .filter(|value| !value.trim().is_empty()),
+        // Keep the exact tab/container cookie context. The Add modal may retry
+        // public media without this header when an upstream rejects its size,
+        // but authenticated and container-scoped media must not lose it here.
+        cookies: payload.cookies.filter(|value| !value.trim().is_empty()),
         media: payload.media,
     })
 }
@@ -499,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_media_drops_the_extension_cookie_header() {
+    fn explicit_media_preserves_the_extension_cookie_header() {
         let download = normalize_download(ExtensionRequest {
             urls: vec!["https://www.youtube.com/watch?v=example".to_string()],
             referer: None,
@@ -512,7 +509,10 @@ mod tests {
         .expect("valid media handoff");
 
         assert!(download.media);
-        assert!(download.cookies.is_none());
+        assert_eq!(
+            download.cookies.as_deref(),
+            Some("large=browser-cookie-header")
+        );
         assert_eq!(download.headers.as_deref(), Some("User-Agent: Firefox"));
     }
 

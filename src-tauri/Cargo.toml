@@ -50,7 +50,7 @@ sysproxy = "0.3.0"
 semver = "1.0.28"
 keepawake = "0.6.0"
 system_shutdown = "4.1.0"
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 futures-util = { version = "0.3.32", features = ["sink"] }
 chrono = "0.4.38"
 url = "2"

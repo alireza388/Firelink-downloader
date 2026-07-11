@@ -33,10 +33,17 @@ function compareVersions(left, right) {
 }
 
 function npmOutdated(cwd) {
+  if (!fs.existsSync(path.join(cwd, 'package.json'))) {
+    throw new Error(`npm workspace is missing package.json: ${cwd}`);
+  }
   try {
     execFileSync('npm', ['outdated', '--json'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return {};
   } catch (error) {
+    if (error.status !== 1) {
+      const details = error.stderr?.toString().trim();
+      throw new Error(details || `npm outdated failed in ${cwd}`);
+    }
     const output = error.stdout?.toString() || '{}';
     return JSON.parse(output || '{}');
   }
@@ -149,8 +156,8 @@ async function main() {
 
   outdatedCount += printNpmReport('root npm', npmOutdated(repoRoot));
   outdatedCount += printNpmReport(
-    'Firefox extension npm',
-    npmOutdated(path.join(repoRoot, 'Extensions', 'Firefox'))
+    'Browser extension npm',
+    npmOutdated(path.join(repoRoot, 'Extensions', 'Browser'))
   );
 
   const [

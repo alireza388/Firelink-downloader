@@ -496,6 +496,20 @@ html[data-list-density="relaxed"] {
   .app-modal-backdrop {
     background: hsl(0 0% 0% / 0.2);
     animation: fade-in 150ms ease-out;
+    overflow: auto;
+    padding: 16px;
+  }
+
+  .app-shell--window-chrome .app-modal-backdrop {
+    padding-top: 56px;
+  }
+
+  .app-modal-backdrop > .app-modal,
+  .app-modal-backdrop > .window-safe-modal {
+    max-width: 100%;
+    max-height: 100%;
+    min-width: 0;
+    min-height: 0;
   }
 
   .app-modal {
@@ -510,6 +524,10 @@ html[data-list-density="relaxed"] {
 
   /* Add Download window */
   .add-download-modal {
+    width: min(900px, 100%);
+    height: min(650px, 100%);
+    min-width: 0;
+    min-height: 0;
     --add-surface: hsl(var(--surface-raised) / 0.72);
     --add-highlight: hsl(0 0% 100% / 0.08);
     background:
@@ -525,12 +543,16 @@ html[data-list-density="relaxed"] {
   }
 
   .add-download-left {
+    min-width: 0;
+    min-height: 0;
     background:
       radial-gradient(circle at 18% 0%, hsl(var(--accent-color) / 0.055), transparent 34%),
       hsl(var(--main-bg) / 0.56);
   }
 
   .add-download-settings {
+    min-width: 0;
+    min-height: 0;
     background: hsl(var(--bg-modal) / 0.7);
   }
 

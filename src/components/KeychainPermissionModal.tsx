@@ -56,9 +56,9 @@ export const KeychainPermissionModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 animate-fade-in">
+    <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div
-        className="bg-bg-modal rounded-xl w-full max-w-md overflow-hidden flex flex-col shadow-2xl border border-border-modal scale-in"
+        className="window-safe-modal bg-bg-modal rounded-xl w-full max-w-md overflow-hidden flex flex-col shadow-2xl border border-border-modal scale-in"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b border-border-modal flex items-center gap-3">
@@ -68,7 +68,7 @@ export const KeychainPermissionModal: React.FC = () => {
           <h2 className="text-lg font-semibold text-text-primary m-0">Credential Storage Access Needed</h2>
         </div>
 
-        <div className="px-5 py-6 flex-1 text-sm text-text-secondary leading-relaxed space-y-4">
+        <div className="px-5 py-6 flex-1 min-h-0 overflow-y-auto text-sm text-text-secondary leading-relaxed space-y-4">
           <p>
             Firelink uses the browser extension to capture downloads. To keep the extension paired after restarts,
             Firelink stores its pairing token in {storeName}.

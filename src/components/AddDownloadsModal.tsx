@@ -94,6 +94,7 @@ export const AddDownloadsModal = () => {
   const [speedLimitEnabled, setSpeedLimitEnabled] = useState(false);
   const [speedLimit, setSpeedLimit] = useState('1024');
   const [freeSpace, setFreeSpace] = useState('Unknown');
+  const freeSpaceRequestRef = useRef(0);
 
   const [useAuth, setUseAuth] = useState(false);
   const [username, setUsername] = useState('');
@@ -156,6 +157,7 @@ export const AddDownloadsModal = () => {
     setPendingUseSharedDestination(false);
     setPendingDestinationOverrides({});
     setConnections(perServerConnections);
+    setFreeSpace('Unknown');
     setSpeedLimitEnabled(false);
     setSpeedLimit('1024');
     setUseAuth(false);
@@ -224,10 +226,20 @@ export const AddDownloadsModal = () => {
   }, [isQueueMenuOpen, showingDuplicates]);
 
   useEffect(() => {
-    if (!saveLocation) return;
+    const requestId = ++freeSpaceRequestRef.current;
+    if (!isAddModalOpen || !saveLocation) return;
+
     invoke('get_free_space', { path: saveLocation })
-      .then(space => setFreeSpace(space))
-      .catch(() => setFreeSpace('Unknown'));
+      .then(space => {
+        if (freeSpaceRequestRef.current === requestId) {
+          setFreeSpace(space);
+        }
+      })
+      .catch(() => {
+        if (freeSpaceRequestRef.current === requestId) {
+          setFreeSpace('Unknown');
+        }
+      });
   }, [saveLocation, isAddModalOpen]);
 
   useEffect(() => {
@@ -826,7 +838,7 @@ export const AddDownloadsModal = () => {
         />
       )}
     <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center">
-      <div className="app-modal add-download-modal w-[900px] h-[650px] flex flex-col overflow-hidden text-sm">
+      <div className="app-modal add-download-modal flex flex-col overflow-hidden text-sm">
 
         {/* Main Content Split */}
         <div className="flex flex-1 overflow-hidden">

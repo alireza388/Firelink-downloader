@@ -132,6 +132,10 @@ function App() {
   const { addToast } = useToast();
   const isMacUserAgent = navigator.userAgent.includes('Mac');
   const usesCustomWindowControls = !isMacUserAgent && platform.os !== 'macos';
+  // Keep dialogs out of the titlebar area while platform detection is still
+  // resolving. The conservative fallback prevents a startup handoff from
+  // briefly rendering underneath native or custom window controls.
+  const hasWindowChrome = isMacUserAgent || ['macos', 'windows', 'linux', 'unknown'].includes(platform.os);
 
   const acknowledgePairingTokenChange = () => {
     invoke('acknowledge_pairing_token_change').catch(error => {
@@ -669,7 +673,9 @@ function App() {
   }, [coreReady]);
 
   return (
-    <div className="app-shell flex h-screen w-screen overflow-hidden text-text-primary">
+    <div className={`app-shell flex h-screen w-screen overflow-hidden text-text-primary ${
+      hasWindowChrome ? 'app-shell--window-chrome' : ''
+    }`}>
       {(platform.os === 'windows' || platform.os === 'linux') && <WindowControls />}
       <div
         className={`app-sidebar-shell relative z-20 shrink-0 transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${

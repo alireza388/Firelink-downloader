@@ -484,7 +484,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     } 
   }),
   closeDeleteModal: () => set({ deleteModalState: { isOpen: false } }),
-  toggleAddModal: (isOpen) => set({
+  toggleAddModal: (isOpen) => set((state) => ({
     isAddModalOpen: isOpen,
     pendingAddUrls: '',
     pendingAddReferer: '',
@@ -492,8 +492,11 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     pendingAddHeaders: '',
     pendingAddCookies: '',
     pendingAddMediaUrls: [],
-    pendingAddRequestContexts: {}
-  }),
+    pendingAddRequestContexts: {},
+    // Invalidate any in-flight Add-modal handoff even when the modal is
+    // opened or closed without URLs.
+    pendingAddRequestVersion: state.pendingAddRequestVersion + 1
+  })),
   openAddModalWithUrls: (urls, referer, filename, headers, cookies, media = false) => set((state) => {
     const isAppending = state.isAddModalOpen && Boolean(state.pendingAddUrls);
     const existingUrls = isAppending ? state.pendingAddUrls : '';

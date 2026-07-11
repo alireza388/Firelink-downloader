@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -18,6 +18,7 @@ import {
   startActionLabel
 } from '../utils/downloadActions';
 import { isActiveDownloadStatus } from '../utils/downloads';
+import { readClipboardDownloadUrls } from '../utils/clipboard';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -27,9 +28,19 @@ const DEFAULT_COLUMN_WIDTHS = [340, 100, 220, 100, 80, 170];
 const COLUMN_WIDTHS_STORAGE_KEY = 'firelink-download-column-widths';
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, queues, assignToQueue, toggleAddModal, openDeleteModal, redownload } = useDownloadStore();
+  const { downloads, queues, assignToQueue, openDeleteModal, redownload } = useDownloadStore();
   const { addToast } = useToast();
   const isMac = navigator.userAgent.includes('Mac');
+  const [isReadingClipboard, setIsReadingClipboard] = useState(false);
+  const clipboardReadInFlightRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [animationParent] = useAutoAnimate<HTMLDivElement>();
@@ -355,6 +366,52 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
 
   const contextItem = contextMenu ? downloads.find(d => d.id === contextMenu.id) : null;
 
+  const handleAddDownload = async () => {
+    if (clipboardReadInFlightRef.current) return;
+
+    clipboardReadInFlightRef.current = true;
+    setIsReadingClipboard(true);
+    const store = useDownloadStore.getState();
+    const initialModalState = {
+      isOpen: store.isAddModalOpen,
+      requestVersion: store.pendingAddRequestVersion,
+    };
+
+    try {
+      const urls = await readClipboardDownloadUrls();
+      if (!isMountedRef.current) return;
+      const currentStore = useDownloadStore.getState();
+
+      // Do not append a late clipboard result to a newer extension, deep-link,
+      // paste, or modal request that arrived while the OS clipboard was read.
+      if (
+        currentStore.isAddModalOpen !== initialModalState.isOpen ||
+        currentStore.pendingAddRequestVersion !== initialModalState.requestVersion
+      ) {
+        return;
+      }
+
+      if (urls.length > 0) {
+        currentStore.openAddModalWithUrls(urls.join('\n'));
+      } else {
+        currentStore.toggleAddModal(true);
+      }
+    } catch (error) {
+      console.warn('Could not read clipboard for Add Download:', error);
+      if (!isMountedRef.current) return;
+      const currentStore = useDownloadStore.getState();
+      if (
+        currentStore.isAddModalOpen === initialModalState.isOpen &&
+        currentStore.pendingAddRequestVersion === initialModalState.requestVersion
+      ) {
+        currentStore.toggleAddModal(true);
+      }
+    } finally {
+      clipboardReadInFlightRef.current = false;
+      if (isMountedRef.current) setIsReadingClipboard(false);
+    }
+  };
+
 
   const getCategoryIcon = (category: string) => {
     switch(category) {
@@ -378,7 +435,13 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
         <div className="main-titlebar-title cursor-default" data-tauri-drag-region>Firelink</div>
 
         <div className="main-control-group">
-          <button className="main-control-button primary" onClick={() => toggleAddModal(true)} title="Add Download">
+          <button
+            className="main-control-button primary"
+            onClick={() => void handleAddDownload()}
+            disabled={isReadingClipboard}
+            aria-busy={isReadingClipboard}
+            title="Add Download"
+          >
             <Plus size={16} />
           </button>
 

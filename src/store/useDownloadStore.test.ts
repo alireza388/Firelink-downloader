@@ -93,6 +93,16 @@ describe('useDownloadStore', () => {
     });
   });
 
+  it('invalidates in-flight Add-modal handoffs when the modal is toggled', () => {
+    const initialVersion = useDownloadStore.getState().pendingAddRequestVersion;
+
+    useDownloadStore.getState().toggleAddModal(true);
+    expect(useDownloadStore.getState().pendingAddRequestVersion).toBe(initialVersion + 1);
+
+    useDownloadStore.getState().toggleAddModal(false);
+    expect(useDownloadStore.getState().pendingAddRequestVersion).toBe(initialVersion + 2);
+  });
+
   it('normalizes proxy settings for download dispatch', async () => {
     expect(normalizeCustomProxy('127.0.0.1', 8080)).toBe('http://127.0.0.1:8080');
     expect(normalizeCustomProxy('http://proxy.local:9000', 8080)).toBe('http://proxy.local:9000');

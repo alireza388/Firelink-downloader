@@ -36,6 +36,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 uuid = { version = "1", features = ["v4"] }
 ts-rs = { version = "12", features = ["serde-compat", "uuid-impl"] }
 tauri-plugin-notification = "2.3.3"
+tauri-plugin-clipboard-manager = "2.3.2"
 sysinfo = "0.39.3"
 hmac = "0.13"
 sha2 = "0.11"

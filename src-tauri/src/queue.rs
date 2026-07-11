@@ -1248,6 +1248,8 @@ impl SidecarSpawner for ProductionSpawner {
         options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
         options.insert("retry-wait".to_string(), serde_json::json!("2"));
         options.insert("continue".to_string(), serde_json::json!("true"));
+        options.insert("always-resume".to_string(), serde_json::json!("true"));
+        options.insert("auto-file-renaming".to_string(), serde_json::json!("false"));
         if let Some(speed) = payload
             .speed_limit
             .as_deref()

@@ -3,6 +3,7 @@ import {
   Inbox, Zap, CheckCircle2, CircleDashed,
   Film, Music, FileText, Box, Image as ImageIcon, Archive, FileQuestion,
   List, CalendarClock, Gauge, Bug, Settings, Plus, Play, Pause, Edit2, Trash2, PanelLeft,
+  ChevronDown,
   type LucideIcon
 } from 'lucide-react';
 import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadStore';
@@ -28,6 +29,11 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   const [renamingQueueId, setRenamingQueueId] = useState<string | null>(null);
   const [editingQueueName, setEditingQueueName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [foldersCollapsed, setFoldersCollapsed] = useState(() =>
+    window.localStorage.getItem('firelink-folders-collapsed') === 'true'
+  );
+  const foldersToggleRef = useRef<HTMLButtonElement>(null);
+  const foldersListRef = useRef<HTMLDivElement>(null);
 
   const addInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +58,16 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
   useEffect(() => {
     if (renamingQueueId) renameInputRef.current?.focus();
   }, [renamingQueueId]);
+
+  useEffect(() => {
+    window.localStorage.setItem('firelink-folders-collapsed', String(foldersCollapsed));
+  }, [foldersCollapsed]);
+
+  useEffect(() => {
+    if (foldersCollapsed && foldersListRef.current?.contains(document.activeElement)) {
+      foldersToggleRef.current?.focus();
+    }
+  }, [foldersCollapsed]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -214,14 +230,38 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         </section>
 
         <section className="sidebar-section">
-          <div className="sidebar-section-label">Folders</div>
-          <NavItem icon={Music} label="Musics" filter="Musics" />
-          <NavItem icon={Film} label="Movies" filter="Movies" />
-          <NavItem icon={Archive} label="Compressed" filter="Compressed" />
-          <NavItem icon={FileText} label="Documents" filter="Documents" />
-          <NavItem icon={ImageIcon} label="Pictures" filter="Pictures" />
-          <NavItem icon={Box} label="Applications" filter="Applications" />
-          <NavItem icon={FileQuestion} label="Other" filter="Other" />
+          <button
+            type="button"
+            ref={foldersToggleRef}
+            className="sidebar-section-label sidebar-section-label-toggle"
+            aria-expanded={!foldersCollapsed}
+            aria-controls="sidebar-folders-list"
+            onClick={() => setFoldersCollapsed(collapsed => !collapsed)}
+          >
+            <span>Folders</span>
+            <ChevronDown
+              aria-hidden="true"
+              size={13}
+              className={`sidebar-section-chevron ${foldersCollapsed ? 'is-collapsed' : ''}`}
+            />
+          </button>
+          <div
+            ref={foldersListRef}
+            id="sidebar-folders-list"
+            className={`sidebar-collapse-grid ${foldersCollapsed ? 'is-collapsed' : ''}`}
+            aria-hidden={foldersCollapsed}
+            inert={foldersCollapsed}
+          >
+            <div className="sidebar-collapse-content">
+              <NavItem icon={Music} label="Musics" filter="Musics" />
+              <NavItem icon={Film} label="Movies" filter="Movies" />
+              <NavItem icon={Archive} label="Compressed" filter="Compressed" />
+              <NavItem icon={FileText} label="Documents" filter="Documents" />
+              <NavItem icon={ImageIcon} label="Pictures" filter="Pictures" />
+              <NavItem icon={Box} label="Applications" filter="Applications" />
+              <NavItem icon={FileQuestion} label="Other" filter="Other" />
+            </div>
+          </div>
         </section>
 
         <section className="sidebar-section">

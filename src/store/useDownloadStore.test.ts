@@ -681,6 +681,23 @@ describe('useDownloadStore', () => {
       .toEqual(['active']);
   });
 
+  it('asks the backend to preserve resumable assets during replacement removal', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'paused', url: 'https://example.com/file', fileName: 'file', status: 'paused', category: 'Other', dateAdded: '' }
+      ] as any[]
+    });
+    vi.mocked(ipc.invokeCommand).mockResolvedValue(undefined as never);
+
+    await useDownloadStore.getState().removeDownload('paused', true, true);
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith('remove_download', {
+      id: 'paused',
+      deleteAssets: true,
+      preserveResumable: true
+    });
+  });
+
   it('starts staged queue items in their persisted queue order', async () => {
     useDownloadStore.setState({
       downloads: [

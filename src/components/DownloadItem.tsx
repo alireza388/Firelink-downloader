@@ -177,6 +177,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         
         <div
           className="hidden group-hover:flex items-center justify-end gap-0.5 w-full ml-auto"
+          onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
         >
           {(download.status === 'queued' || download.status === 'staged') && queueIndex !== -1 && (

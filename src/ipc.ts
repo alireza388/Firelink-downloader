@@ -32,7 +32,7 @@ type CommandMap = {
   open_downloaded_file: { args: { path: string }; result: void };
   pause_download: { args: { id: string }; result: void };
   resume_download: { args: { id: string }; result: boolean };
-  remove_download: { args: { id: string; deleteAssets: boolean }; result: void };
+  remove_download: { args: { id: string; deleteAssets: boolean; preserveResumable?: boolean }; result: void };
   detach_download_for_reconfigure: { args: { id: string }; result: void };
   update_dock_badge: { args: { count: number }; result: void };
   get_platform_info: { args: undefined; result: PlatformInfo };

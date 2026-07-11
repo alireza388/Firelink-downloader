@@ -3475,8 +3475,10 @@ async fn remove_download(
     state: tauri::State<'_, AppState>,
     id: String,
     delete_assets: bool,
+    preserve_resumable: Option<bool>,
 ) -> Result<(), String> {
     log::info!("remove_download called for id: {}", id);
+    let preserve_resumable = preserve_resumable.unwrap_or(false);
     let primary_path = crate::download_ownership::primary_path_for_id(&app_handle, &id)?;
 
     let active_kind = state.queue_manager.active_kind(&id).await;
@@ -3535,8 +3537,13 @@ async fn remove_download(
         crate::ipc::DownloadStateEvent::new(id.clone(), crate::ipc::DownloadStatus::Paused),
     );
 
+    let preserve_assets = preserve_resumable
+        && primary_path
+            .as_deref()
+            .is_some_and(has_resumable_download_assets);
+
     let cleanup_result = async {
-        if delete_assets {
+        if delete_assets && !preserve_assets {
             if let Some(path) = primary_path.as_deref() {
                 remove_download_assets(path, &app_handle).await?;
             }
@@ -3548,6 +3555,14 @@ async fn remove_download(
 
     state.queue_manager.release_registered_id(&id).await;
     cleanup_result
+}
+
+fn has_resumable_download_assets(primary: &std::path::Path) -> bool {
+    [".aria2", ".part", ".ytdl"].iter().any(|suffix| {
+        let mut candidate = primary.as_os_str().to_os_string();
+        candidate.push(suffix);
+        std::path::PathBuf::from(candidate).exists()
+    })
 }
 
 pub(crate) async fn remove_download_assets<R: tauri::Runtime>(
@@ -4802,7 +4817,8 @@ mod tests {
         normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, redact_log_line_for_output, sanitize_ytdlp_config_value,
-        should_cleanup_media_artifacts_after_failure, FirelinkDeepLink, MediaProgress,
+        has_resumable_download_assets, should_cleanup_media_artifacts_after_failure,
+        FirelinkDeepLink, MediaProgress,
         MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
@@ -4823,6 +4839,18 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn recognizes_resume_sidecars_without_treating_the_primary_file_as_partial() {
+        let directory = tempfile::tempdir().unwrap();
+        let primary = directory.path().join("download.bin");
+        std::fs::write(&primary, b"partial").unwrap();
+
+        assert!(!has_resumable_download_assets(&primary));
+
+        std::fs::write(directory.path().join("download.bin.aria2"), b"control").unwrap();
+        assert!(has_resumable_download_assets(&primary));
     }
 
     #[test]

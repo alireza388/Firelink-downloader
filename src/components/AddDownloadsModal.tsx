@@ -519,8 +519,7 @@ export const AddDownloadsModal = () => {
               itemLocation,
               finalFile,
               platform.os
-            ) &&
-            download.status !== 'failed'
+            )
           ) {
             fileExistsInStore = true;
             break;
@@ -662,8 +661,7 @@ export const AddDownloadsModal = () => {
               itemLocation,
               finalFile,
               platform.os
-            ) &&
-            download.status !== 'failed'
+            )
           ) {
             existingItem = download;
             break;
@@ -677,7 +675,11 @@ export const AddDownloadsModal = () => {
                  if (!existingItem) {
                    throw new Error(`Cannot replace ${finalFile}: file is not owned by a Firelink download.`);
                  }
-                 await store.removeDownload(existingItem.id, true);
+                 // Let the backend decide whether resumable sidecars still
+                 // exist after stopping the old transfer. This avoids a race
+                 // where a paused item finishes while the replacement is
+                 // being prepared.
+                 await store.removeDownload(existingItem.id, true, existingItem.status !== 'completed');
              }
          }
       }

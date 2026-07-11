@@ -356,7 +356,7 @@ interface DownloadState {
   setSelectedPropertiesDownloadId: (id: string | null) => void;
   addDownload: (item: DownloadDraft, action: AddDownloadAction) => Promise<boolean>;
   updateDownload: (id: string, updates: Partial<DownloadItem>) => void;
-  removeDownload: (id: string, deleteFile?: boolean) => Promise<void>;
+  removeDownload: (id: string, deleteFile?: boolean, preserveResumable?: boolean) => Promise<void>;
   pauseDownload: (id: string) => Promise<void>;
   redownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<boolean>;
@@ -670,12 +670,16 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       syncSystemIntegrations();
     }
   },
-  removeDownload: async (id, deleteFile = false) => {
+  removeDownload: async (id, deleteFile = false, preserveResumable = false) => {
     await invalidateDispatch(id);
     const item = get().downloads.find(d => d.id === id);
 
     if (item) {
-      await invoke('remove_download', { id, deleteAssets: deleteFile });
+      await invoke('remove_download', {
+        id,
+        deleteAssets: deleteFile,
+        preserveResumable
+      });
     }
 
     set((state) => ({

@@ -57,9 +57,11 @@ Download desktop builds from [GitHub Releases](https://github.com/nimbold/Fireli
 | --- | --- | --- |
 | **macOS Apple silicon** | `.dmg` | Not notarized. If macOS blocks the first launch, approve Firelink in **System Settings -> Privacy & Security**. |
 | **Windows x64** | NSIS `.exe` installer | Unsigned. Windows SmartScreen may warn until code signing is added. |
-| **Linux x64** | `.AppImage` | Make executable before launching if your desktop environment does not do that automatically. |
+| **Linux x64** | `.deb`, `.rpm`, or `.AppImage` | Use `.deb` for Debian-family systems, `.rpm` for Fedora/RPM-family systems, or AppImage as the portable fallback. AppImage may need executable permission. |
 
 Bundles include the required engines. Users do not need aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or another package manager.
+
+The native packages use the distribution's normal desktop runtime dependencies, while AppImage remains the portable installation option.
 
 ## Browser Extension
 
@@ -91,7 +93,7 @@ The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-
 | --- | --- |
 | **macOS arm64** | Supported. Native build, engine checks, launch smoke test, ad-hoc-signed DMG workflow. |
 | **Windows x64** | Supported. Native build, engine checks, silent installer smoke test, NSIS installer. |
-| **Linux x64** | Supported. Native build, engine checks, xvfb launch smoke test, AppImage. |
+| **Linux x64** | Supported. Native build, bundled-engine checks, package/AppImage launch smoke tests, `.deb`, `.rpm`, and AppImage. |
 
 ## Development
 

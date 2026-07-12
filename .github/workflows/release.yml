@@ -61,16 +61,38 @@ jobs:
             libdbus-1-dev \
             pkg-config \
             xvfb \
-            libtinfo5
+            libtinfo5 \
+            rpm \
+            cpio \
+            desktop-file-utils \
+            xdg-utils
       - run: npm ci
       - name: Provision locked engines
         if: runner.os != 'macOS'
         run: node scripts/provision-engines.js --target ${{ matrix.target }}
       - name: Build package
+        if: runner.os != 'Linux'
         run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-          FIRELINK_OMIT_ENGINE_DIST_FOR_TAURI_BUNDLE: ${{ runner.os == 'Linux' && '1' || '' }}
+      - name: Build Linux native packages
+        if: runner.os == 'Linux'
+        run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles deb,rpm
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+      - name: Verify and preserve Linux native packages
+        if: runner.os == 'Linux'
+        run: |
+          node scripts/verify-linux-packages.js --target ${{ matrix.target }}
+          mkdir -p "$RUNNER_TEMP/firelink-native-packages/deb" "$RUNNER_TEMP/firelink-native-packages/rpm"
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb "$RUNNER_TEMP/firelink-native-packages/deb/"
+          cp src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm "$RUNNER_TEMP/firelink-native-packages/rpm/"
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        run: npm run tauri build -- -vv --target ${{ matrix.target }} --bundles appimage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          FIRELINK_OMIT_ENGINE_DIST_FOR_TAURI_BUNDLE: '1'
       - name: Install pinned appimagetool (Linux only)
         if: runner.os == 'Linux'
         env:
@@ -128,6 +150,20 @@ jobs:
           path: ${{ matrix.artifact }}
           if-no-files-found: error
           retention-days: 3
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        with:
+          name: Firelink-Linux-x64-Deb-${{ github.ref_name }}
+          path: ${{ runner.temp }}/firelink-native-packages/deb/*.deb
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        with:
+          name: Firelink-Linux-x64-RPM-${{ github.ref_name }}
+          path: ${{ runner.temp }}/firelink-native-packages/rpm/*.rpm
+          if-no-files-found: error
+          retention-days: 3
 
   publish:
     name: Publish GitHub release
@@ -169,6 +205,8 @@ jobs:
 
           rename_asset '*.dmg' "Firelink_${VERSION}_macOS-ARM64.dmg"
           rename_asset '*.AppImage' "Firelink_${VERSION}_Linux-x64.AppImage"
+          rename_asset '*.deb' "Firelink_${VERSION}_Linux-x64.deb"
+          rename_asset '*.rpm' "Firelink_${VERSION}_Linux-x64.rpm"
           rename_asset '*.exe' "Firelink_${VERSION}_Windows-x64-setup.exe"
       - name: Generate checksums
         run: |

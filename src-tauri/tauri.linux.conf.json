@@ -13,11 +13,23 @@
     ]
   },
   "bundle": {
-    "targets": ["appimage"],
+    "targets": ["appimage", "deb", "rpm"],
     "linux": {
       "appimage": {
         "files": {
           "usr/share/metainfo/com.nimbold.firelink.metainfo.xml": "linux/com.nimbold.firelink.metainfo.xml"
+        }
+      },
+      "deb": {
+        "recommends": ["desktop-file-utils", "xdg-utils"],
+        "files": {
+          "/usr/share/metainfo/com.nimbold.firelink.metainfo.xml": "linux/com.nimbold.firelink.metainfo.xml"
+        }
+      },
+      "rpm": {
+        "recommends": ["desktop-file-utils", "xdg-utils"],
+        "files": {
+          "/usr/share/metainfo/com.nimbold.firelink.metainfo.xml": "linux/com.nimbold.firelink.metainfo.xml"
         }
       }
     }

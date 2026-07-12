@@ -303,26 +303,31 @@ fn sanitize_legacy_source(path: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("invalid legacy store path '{}'", path.display()))?;
-    let temporary = path.with_file_name(format!(".{file_name}.portable-sanitized.tmp"));
-    fs::write(&temporary, sanitized).map_err(|error| {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("legacy store path has no parent: '{}'", path.display()))?;
+    use std::io::Write;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|error| {
         format!(
-            "failed to write temporary sanitized legacy store '{}': {error}",
-            temporary.display()
+            "failed to create temporary sanitized legacy store beside '{}': {error}",
+            path.display()
         )
     })?;
-    if let Err(rename_error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(path);
-        fs::rename(&temporary, path).map_err(|error| {
+    temporary
+        .write_all(sanitized.as_bytes())
+        .and_then(|_| temporary.flush())
+        .map_err(|error| {
             format!(
-                "failed to replace legacy store '{}' after rename error ({rename_error}): {error}",
+                "failed to write temporary sanitized legacy store beside '{}': {error}",
                 path.display()
             )
         })?;
-    }
+    temporary.persist(path).map_err(|error| {
+        format!(
+            "failed to replace legacy store '{}' without losing the original: {}",
+            path.display(), error.error
+        )
+    })?;
     Ok(())
 }
 
@@ -1071,12 +1076,17 @@ pub fn save_pairing_token_to_settings(
     let state = if value.get("state").is_some() {
         value
             .get_mut("state")
-            .expect("state is an object")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| "persisted settings state must be an object".to_string())?
     } else {
-        &mut value
+        value
+            .as_object_mut()
+            .ok_or_else(|| "persisted settings must be an object".to_string())?
     };
-    state["extensionPairingToken"] =
-        serde_json::Value::String(token.to_string());
+    state.insert(
+        "extensionPairingToken".to_string(),
+        serde_json::Value::String(token.to_string()),
+    );
     let updated = serde_json::to_string(&value)
         .map_err(|error| format!("failed to encode settings: {error}"))?;
     save_settings(connection, &updated)
@@ -1570,6 +1580,25 @@ mod tests {
         let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
         assert!(saved.get("password").is_none());
         assert!(!saved.to_string().contains("PORTABLE_EXISTING_QUERY_TOKEN"));
+    }
+
+    #[test]
+    fn rejects_malformed_settings_state_without_panicking() {
+        let temp = TempDir::new().unwrap();
+        let state = init_at_path(temp.path()).unwrap();
+        let connection = state.lock().unwrap();
+        save_settings(
+            &connection,
+            &json!({ "state": "corrupted", "version": 3 }).to_string(),
+        )
+        .unwrap();
+
+        let result = save_pairing_token_to_settings(&connection, "token", true);
+
+        assert_eq!(
+            result.unwrap_err(),
+            "persisted settings state must be an object"
+        );
     }
 
     #[test]

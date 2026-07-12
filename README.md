@@ -60,11 +60,11 @@ Download desktop builds from [GitHub Releases](https://github.com/nimbold/Fireli
 | **macOS Apple silicon** | `.dmg` | Not notarized. If macOS blocks the first launch, approve Firelink in **System Settings -> Privacy & Security**. |
 | **Windows x64** | NSIS `.exe` installer | Unsigned. Windows SmartScreen may warn until code signing is added. |
 | **Windows x64 portable** | `.zip` archive | Extract to a writable folder and launch `firelink.exe`. App data stays under the archive's `data/` directory. |
-| **Linux x64** | `.deb`, `.rpm`, or `.AppImage` | Use `.deb` for Debian-family systems, `.rpm` for Fedora/RPM-family systems, or AppImage as the portable fallback. AppImage may need executable permission. |
+| **Linux x64** | `.deb`, `.rpm`, or `.AppImage` | Use `.deb` for Debian-family systems, `.rpm` for Fedora/RPM-family systems, or AppImage as the self-contained package. AppImage may need executable permission. |
 
 Bundles include the required engines. Users do not need aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or another package manager.
 
-The native packages use the distribution's normal desktop runtime dependencies. AppImage and the Windows portable ZIP are the portable distribution options for their respective platforms.
+The native packages use the distribution's normal desktop runtime dependencies. The Windows portable ZIP keeps its application data beside the executable; AppImage is self-contained but uses the normal per-user application-data locations.
 
 The Windows portable archive is an opt-in secondary distribution. Keep the extracted folder writable; `Program Files`, read-only media, and some network or synchronized folders can prevent SQLite and WebView data from being saved. Close Firelink before copying or moving the folder. Only one Firelink instance can run at a time, so close the installed app before launching the portable copy. Portable mode keeps application settings, queues, logs, and WebView data beside the executable. Credentials, browser cookies, and URL query/fragment data are not persisted in portable queue records; active downloads that depend on those URL components are marked failed and must be added again after restart. Saved site passwords remain in the Windows credential store and are intentionally not copied into the archive. The portable folder contains the extension pairing credential needed to preserve extension integration, so treat the folder as sensitive and do not share it. Saved absolute download locations may need to be selected again if the folder is moved to a different drive. The installer remains the supported path for `firelink://` browser launch registration.
 

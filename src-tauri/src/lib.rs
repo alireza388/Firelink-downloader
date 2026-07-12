@@ -4350,6 +4350,7 @@ fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, 
 
 #[tauri::command]
 fn set_keychain_password(
+    database: tauri::State<'_, crate::db::DbState>,
     state: tauri::State<'_, AppState>,
     id: String,
     password: String,
@@ -4357,6 +4358,8 @@ fn set_keychain_password(
     if state.storage_layout.is_portable()
         && id == crate::db::PAIRING_TOKEN_KEYCHAIN_ID
     {
+        let connection = database.lock()?;
+        crate::db::save_pairing_token_to_settings(&connection, &password, true)?;
         return Ok(());
     }
     crate::db::set_keychain_password(&id, &password)

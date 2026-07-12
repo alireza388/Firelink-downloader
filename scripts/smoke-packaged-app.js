@@ -176,21 +176,25 @@ async function terminateChild() {
   return waitForChildExit(5000);
 }
 
-function assertPortableStorage() {
+async function assertPortableStorage() {
   const portableRoot = path.dirname(executable);
   const marker = path.join(portableRoot, 'portable.flag');
   const database = path.join(portableRoot, 'data', 'firelink.sqlite');
   const webviewData = path.join(portableRoot, 'data', 'webview');
 
-  if (!fs.statSync(marker, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(`Portable marker was not found at ${marker}`);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const markerReady = fs.statSync(marker, { throwIfNoEntry: false })?.isFile();
+    const databaseReady = fs.statSync(database, { throwIfNoEntry: false })?.isFile();
+    const webviewReady = fs.statSync(webviewData, { throwIfNoEntry: false })?.isDirectory();
+    if (markerReady && databaseReady && webviewReady) {
+      return;
+    }
+    await sleep(250);
   }
-  if (!fs.statSync(database, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(`Portable database was not created at ${database}`);
-  }
-  if (!fs.statSync(webviewData, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error(`Portable WebView data directory was not created at ${webviewData}`);
-  }
+
+  throw new Error(
+    `Portable storage was not ready: marker=${marker}, database=${database}, webview=${webviewData}`,
+  );
 }
 
 try {
@@ -212,7 +216,7 @@ try {
     assertNoVisibleWindows(child.pid);
   }
   if (assertPortableData) {
-    assertPortableStorage();
+    await assertPortableStorage();
   }
 
   if (childExit) {

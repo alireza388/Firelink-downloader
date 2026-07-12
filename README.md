@@ -5,7 +5,7 @@
 
   **A fast, focused desktop download manager for macOS, Windows, and Linux.**
 
-  [![Version](https://img.shields.io/badge/version-1.0.3-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
+  [![Version](https://img.shields.io/badge/version-1.0.4-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
   [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
   [![Windows](.github/badges/windows.svg)](#platforms)
   [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
@@ -37,14 +37,16 @@ Firelink is a desktop download manager for fast transfers, browser capture, medi
 
 It is now a cross-platform Rust/Tauri app with a React and TypeScript interface. A native backend coordinates downloads with aria2, yt-dlp, FFmpeg, Deno, and SQLite.
 
+The current desktop release is **1.0.4**, paired with Firelink Companion **2.0.3**.
+
 ## Features
 
 - **Segmented downloads** with aria2, retries, speed limits, and connection controls.
 - **Media downloads** with yt-dlp, FFmpeg, Deno, live progress, speed, and ETA.
-- **Add window** for metadata, duplicates, location choices, and captured links.
+- **Add window** for metadata, duplicates, location choices, captured links, and clipboard-prefilled URLs.
 - **Persistent queues** with pause, resume, retry, redownload, sorting, multi-select, and bulk actions.
 - **Scheduling** with start/stop windows, speed rules, and post-queue actions.
-- **File organization** with categories, default folders, per-download overrides, and reveal/trash actions.
+- **File organization** with categories, default folders, a collapsible Folders section, per-download overrides, and reveal/trash actions.
 - **Browser handoff** through local pairing, signed requests, Add window review, replay protection, and server checks.
 - **Desktop integration** with tray controls, notifications, sounds, sleep prevention, and secure credential storage.
 - **Diagnostics** with engine health checks, structured logs, and package verification.
@@ -83,7 +85,7 @@ What it adds:
 - Fallback to the browser download when Firelink is closed or rejects a handoff.
 - Captured links always open Firelink's Add window before anything is added to the download list.
 
-Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.2 is the matching extension release for Firelink 1.0.3.
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.3 is the matching extension release for Firelink 1.0.4.
 
 The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Browser` submodule.
 

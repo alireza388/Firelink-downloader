@@ -5,6 +5,26 @@ All notable changes to Firelink will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-07-12
+
+### New
+- Automatically fill the Add window with valid links from the clipboard when you choose **Add link**, addressing [#10](https://github.com/nimbold/Firelink/issues/10).
+- Add a persistent, accessible collapse control for the **Folders** section so the sidebar can stay tidy, addressing [#13](https://github.com/nimbold/Firelink/issues/13).
+- Add verified Linux `.deb` and `.rpm` packages alongside the portable AppImage, completing the Linux packaging request in [#3](https://github.com/nimbold/Firelink/issues/3).
+
+### Improved
+- Make queue actions safer: rapid clicks no longer open item properties by accident, and replacing an existing download preserves resumable progress instead of starting from zero, addressing [#11](https://github.com/nimbold/Firelink/issues/11) and [#12](https://github.com/nimbold/Firelink/issues/12).
+- Improve browser-captured batches so each link keeps its own metadata, headers, cookies, and destination instead of sharing stale request details.
+- Make media downloads more reliable with custom or system proxies, clearer metadata errors, more accurate quality choices, and steadier retry, speed, ETA, and progress updates, continuing the work reported in [#5](https://github.com/nimbold/Firelink/issues/5) and [#8](https://github.com/nimbold/Firelink/issues/8).
+- Keep the Logs view responsive while it is open and redact local paths and usernames from diagnostic output before it is shown or exported.
+- Keep dialogs and controls clear of macOS, Windows, and Linux window controls, and strengthen pause, resume, retry, and removal behavior during rapid actions.
+- Clarify incomplete-download handling: aria2 sidecar files show when a download is unfinished, preserve resume information, and are removed after completion, addressing [#14](https://github.com/nimbold/Firelink/issues/14).
+
+### Fixed
+- Prevent stale background queue work from resurrecting, duplicating, or restarting downloads after a newer pause, remove, or edit action wins.
+- Keep explicit media requests on Firelink's configured browser-cookie source instead of forwarding raw browser cookies, while preserving the browser session for ordinary captured downloads.
+- Make final HTTP errors visible during metadata requests and prevent internal retry limits from multiplying unexpectedly.
+
 ## [1.0.3] - 2026-07-09
 
 ### Improved

@@ -308,13 +308,14 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         matches!(url.scheme(), "http" | "https").then(|| url.to_string())
     });
     let filename = payload.filename.and_then(|value| sanitize_filename(&value));
+    let headers = normalize_headers(payload.headers, payload.media);
 
     Some(ExtensionDownload {
         urls,
         referer,
         silent: payload.silent,
         filename,
-        headers: payload.headers.filter(|value| !value.trim().is_empty()),
+        headers,
         // Explicit media is resolved by yt-dlp, which must use Firelink's
         // configured browser-cookie source. Forwarding a browser's complete
         // Cookie header can exceed upstream limits and makes old extension
@@ -326,6 +327,24 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
             .filter(|value| !value.trim().is_empty()),
         media: payload.media,
     })
+}
+
+fn normalize_headers(headers: Option<String>, media: bool) -> Option<String> {
+    let headers = headers?;
+    if !media {
+        return (!headers.trim().is_empty()).then_some(headers);
+    }
+
+    let filtered = headers
+        .lines()
+        .filter(|line| {
+            line.split_once(':')
+                .map(|(name, _)| !name.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(true)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!filtered.trim().is_empty()).then_some(filtered)
 }
 
 fn normalize_url(raw_url: &str) -> Option<String> {
@@ -507,7 +526,10 @@ mod tests {
             referer: None,
             silent: false,
             filename: None,
-            headers: Some("User-Agent: Firefox".to_string()),
+            headers: Some(format!(
+                "Cookie: stale={};\nUser-Agent: Firefox",
+                "x".repeat(64 * 1024)
+            )),
             cookies: Some(format!("large={}", "x".repeat(64 * 1024))),
             media: true,
         })

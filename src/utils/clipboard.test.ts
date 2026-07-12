@@ -13,12 +13,13 @@ describe('clipboard URL extraction', () => {
 
   it('reads only supported, unique download URLs from clipboard text', async () => {
     vi.mocked(readText).mockResolvedValue(
-      'https://example.com/file.zip\nhttps://example.com/file.zip ftp://example.com/file.bin mailto:user@example.com'
+      'https://example.com/file.zip\nhttps://example.com/file.zip ftp://example.com/file.bin sftp://example.com/file.iso mailto:user@example.com'
     );
 
     await expect(readClipboardDownloadUrls()).resolves.toEqual([
       'https://example.com/file.zip',
       'ftp://example.com/file.bin',
+      'sftp://example.com/file.iso',
     ]);
   });
 

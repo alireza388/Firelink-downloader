@@ -126,6 +126,16 @@ fn metadata_filename_from_response(
         .unwrap_or_else(|| "download".to_string())
 }
 
+fn metadata_response_error(status: reqwest::StatusCode) -> Option<String> {
+    (!status.is_success()).then(|| {
+        format!(
+            "Metadata request failed with HTTP {} ({})",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("unknown status")
+        )
+    })
+}
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct MetadataResponse {
@@ -1365,6 +1375,10 @@ async fn fetch_metadata(
                     }
                 }
             }
+        }
+
+        if let Some(error) = metadata_response_error(current_res.status()) {
+            return Err(error);
         }
 
         res = current_res;
@@ -4814,6 +4828,7 @@ mod tests {
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
         media_output_template, media_progress_args, media_progress_speed,
+        metadata_response_error,
         normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, redact_log_line_for_output, sanitize_ytdlp_config_value,
@@ -4839,6 +4854,15 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn metadata_rejects_final_http_errors_but_accepts_partial_content() {
+        assert!(metadata_response_error(reqwest::StatusCode::PARTIAL_CONTENT).is_none());
+        assert_eq!(
+            metadata_response_error(reqwest::StatusCode::NOT_FOUND).as_deref(),
+            Some("Metadata request failed with HTTP 404 (Not Found)")
+        );
     }
 
     #[test]

@@ -515,6 +515,55 @@ async fn aria2_permit_survives_rpc_return() {
 }
 
 #[tokio::test]
+async fn transient_aria2_error_reissues_after_backoff() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    let mut task = aria2_task("retry");
+    task.payload.max_tries = Some(1);
+    manager.push(task).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 1);
+
+    manager
+        .handle_aria2_event(
+            "gid-1",
+            PendingOutcome::Error("Timeout.".to_string()),
+        )
+        .await;
+
+    timeout(Duration::from_secs(4), async {
+        loop {
+            if spawner.add_uri_calls.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("transient aria2 errors must retry after backoff");
+
+    manager
+        .handle_aria2_event(
+            "gid-2",
+            PendingOutcome::Error("Timeout.".to_string()),
+        )
+        .await;
+    assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 2);
+    assert!(manager.aria2_gid_for_download("retry").is_none());
+    assert_eq!(manager.available_permits(), 1);
+
+    manager.release_permit("retry").await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
 async fn gid_completion_before_store_buffers_and_reconciles() {
     use firelink_lib::queue::PendingOutcome;
 

@@ -11,7 +11,7 @@ export function extractValidDownloadUrls(text: string): string[] {
     for (const part of parts) {
       try {
         const url = new URL(part);
-        if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ftp:') {
+        if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'ftp:' || url.protocol === 'sftp:') {
           urls.push(url.toString());
         }
       } catch (e) {

@@ -49,9 +49,25 @@ const normalizeComparableUrl = (rawUrl: string) => {
   }
 };
 
+const urlsHaveDifferentHosts = (sourceUrl: string, targetUrl: string) => {
+  try {
+    return new URL(sourceUrl).hostname.toLowerCase() !== new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+};
+
 const extensionHeaders = (context: PendingAddRequestContext | undefined) => [
   context?.referer ? `Referer: ${context.referer.replace(/[\r\n]/g, '')}` : '',
-  context?.headers
+  context?.media
+    ? (context.headers || '')
+        .split(/\r?\n/)
+        .filter(line => {
+          const separator = line.indexOf(':');
+          return separator < 0 || line.slice(0, separator).trim().toLowerCase() !== 'cookie';
+        })
+        .join('\n')
+    : context?.headers
 ].filter(Boolean).join('\n');
 
 export const AddDownloadsModal = () => {
@@ -121,9 +137,12 @@ export const AddDownloadsModal = () => {
     if (context) return extensionHeaders(context).trim();
     return hasExtensionRequestContext ? '' : headers.trim();
   };
-  const cookiesForRow = (sourceUrl: string) => {
+  const cookiesForRow = (sourceUrl: string, targetUrl = sourceUrl) => {
     if (cookiesManuallyEditedRef.current) return cookies.trim();
     const context = requestContextForUrl(sourceUrl);
+    if (context && context.cookies && urlsHaveDifferentHosts(sourceUrl, targetUrl)) {
+      return '';
+    }
     if (context) return context.cookies.trim();
     return hasExtensionRequestContext ? '' : cookies.trim();
   };
@@ -723,7 +742,7 @@ export const AddDownloadsModal = () => {
           checksum: checksumEnabled && checksumValue.trim()
             ? `${checksumAlgo}=${checksumValue.trim()}`
             : undefined,
-          cookies: cookiesForRow(item.sourceUrl) || undefined,
+          cookies: cookiesForRow(item.sourceUrl, item.downloadUrl) || undefined,
           mirrors: mirrors.trim() || undefined,
           destination: useSharedDestination
             ? finalLocation

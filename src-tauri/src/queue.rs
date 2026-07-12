@@ -93,7 +93,6 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     target_capacity: AtomicUsize,
     slots_to_retire: AtomicUsize,
     notify: Notify,
-    notify_permit_released: Notify,
 
     /// aria2 gid -> download id map (shared with the WS poller).
     pub aria2_gids: Arc<std::sync::RwLock<HashMap<String, String>>>,
@@ -110,6 +109,8 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
 
     /// Download ids whose aria2 retry loop must not create another job.
     aria2_retry_cancelled: Mutex<HashSet<String>>,
+    /// Wakes retry backoff workers when a pause/remove action cancels them.
+    aria2_retry_cancel_notify: Notify,
 
     /// Monotonic per-download aria2 control generation. Long-running queued
     /// resume tasks capture this and abort when a later pause/remove wins.
@@ -145,12 +146,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
             target_capacity: AtomicUsize::new(capacity),
             slots_to_retire: AtomicUsize::new(0),
             notify: Notify::new(),
-            notify_permit_released: Notify::new(),
             aria2_gids: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_completion: Arc::new(Mutex::new(HashMap::new())),
             aria2_payloads: Mutex::new(HashMap::new()),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
             aria2_retry_cancelled: Mutex::new(HashSet::new()),
+            aria2_retry_cancel_notify: Notify::new(),
             aria2_control_epochs: Mutex::new(HashMap::new()),
             spawner,
             app_handle,
@@ -384,7 +385,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let removed = self.active_permits.lock().await.remove(id).is_some();
         self.active_kinds.lock().await.remove(id);
         if removed {
-            self.notify_permit_released.notify_waiters();
             self.notify.notify_one();
         }
     }
@@ -644,6 +644,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .lock()
             .await
             .insert(id.to_string());
+        self.aria2_retry_cancel_notify.notify_waiters();
     }
 
     pub async fn allow_aria2_retries(&self, id: &str) {
@@ -684,22 +685,6 @@ impl<R: tauri::Runtime> QueueManager<R> {
             log::info!("aria2 gid transition [{}]: forgot {}", id, gid);
         }
         removed.last().cloned()
-    }
-
-    async fn wait_permit_released(self: &Arc<Self>, id: &str) {
-        loop {
-            if !self.active_permits.lock().await.contains_key(id) {
-                return;
-            }
-            let notified = self.notify_permit_released.notified();
-            if !self.active_permits.lock().await.contains_key(id) {
-                return;
-            }
-            tokio::select! {
-                _ = notified => {}
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
-            }
-        }
     }
 
     /// Intercept transient `onDownloadError` events: backoff, re-issue
@@ -774,10 +759,24 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let id_for_task = id.clone();
         let error_for_emit = error.clone();
         tauri::async_runtime::spawn(async move {
+            let retry_cancel = async {
+                loop {
+                    if this.is_aria2_retry_cancelled(&id_for_task).await {
+                        break;
+                    }
+                    let notified = this.aria2_retry_cancel_notify.notified();
+                    tokio::pin!(notified);
+                    notified.as_mut().enable();
+                    if this.is_aria2_retry_cancelled(&id_for_task).await {
+                        break;
+                    }
+                    notified.await;
+                }
+            };
             let outcome = backoff_and_emit(
                 strike,
                 error_for_emit,
-                this.wait_permit_released(&id_for_task),
+                retry_cancel,
                 |reason| {
                     use tauri::Emitter;
                     let _ = this.app_handle.emit(
@@ -938,7 +937,11 @@ fn automatic_retry_limit(max_tries: Option<i32>) -> usize {
 }
 
 fn aria2_attempt_limit(max_tries: Option<i32>) -> u32 {
-    (automatic_retry_limit(max_tries) + 1) as u32
+    // Firelink owns the retry budget and performs the backoff/GID rotation.
+    // Keep each aria2 GID to one attempt so `max_tries` is not multiplied by
+    // aria2's own internal retry loop.
+    let _ = max_tries;
+    1
 }
 
 fn is_retryable_aria2_error(error: &str) -> bool {
@@ -1513,5 +1516,11 @@ mod tests {
         assert!(!is_aria2_rpc_unavailable(
             "aria2 error code 3: Resource not found"
         ));
+    }
+
+    #[test]
+    fn aria2_internal_attempts_do_not_multiply_firelink_retry_budget() {
+        assert_eq!(aria2_attempt_limit(Some(0)), 1);
+        assert_eq!(aria2_attempt_limit(Some(10)), 1);
     }
 }

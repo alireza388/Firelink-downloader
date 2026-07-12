@@ -67,6 +67,16 @@ const removeStaleBackendDispatch = async (id: string): Promise<void> => {
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const stripCookieHeaders = (value: string | null | undefined): string =>
+  (value || '')
+    .split(/\r?\n/)
+    .filter(line => {
+      const separator = line.indexOf(':');
+      return separator < 0 || line.slice(0, separator).trim().toLowerCase() !== 'cookie';
+    })
+    .join('\n')
+    .trim();
+
 const speedLimitForDispatch = (itemSpeedLimit: string | undefined, globalSpeedLimit: string): string | null => {
   const explicitLimit = itemSpeedLimit?.trim();
   if (explicitLimit) {
@@ -558,12 +568,15 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     // cookie source. Keep this frontend guard for events from older desktop or
     // extension builds; ordinary captured downloads retain their cookies.
     const cookies = request.media === true ? null : request.cookies;
+    const headers = request.media === true
+      ? stripCookieHeaders(request.headers) || null
+      : request.headers;
 
     get().openAddModalWithUrls(
       urls.join('\n'),
       request.referer,
       urls.length === 1 ? request.filename : null,
-      request.headers,
+      headers,
       cookies,
       request.media === true
     );

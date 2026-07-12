@@ -845,7 +845,7 @@ describe('useDownloadStore', () => {
       referer: 'https://adult.example/watch/123',
       silent: false,
       filename: null,
-      headers: 'User-Agent: Firefox Test',
+      headers: `Cookie: stale=${'x'.repeat(64 * 1024)}\nUser-Agent: Firefox Test`,
       cookies: `oversized=${'x'.repeat(64 * 1024)}`,
       media: true
     });
@@ -855,6 +855,7 @@ describe('useDownloadStore', () => {
     expect(state.pendingAddUrls).toBe('https://adult.example/watch/123');
     expect(state.pendingAddMediaUrls).toEqual(['https://adult.example/watch/123']);
     expect(state.pendingAddCookies).toBe('');
+    expect(state.pendingAddHeaders).toBe('User-Agent: Firefox Test');
   });
 
   it('preserves extension cookies for ordinary captured downloads', async () => {

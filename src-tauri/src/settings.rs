@@ -77,6 +77,41 @@ pub fn preserve_scheduler_runtime_keys(
         .map_err(|error| format!("failed to encode persisted settings: {error}"))
 }
 
+pub fn preserve_portable_pairing_token(
+    existing: Option<&str>,
+    incoming: &str,
+) -> Result<String, String> {
+    let Some(existing) = existing else {
+        return Ok(incoming.to_string());
+    };
+
+    let existing_document = decode_document(&Value::String(existing.to_string()))?;
+    let existing_state = settings_state(&existing_document)?;
+    let Some(token) = existing_state
+        .get("extensionPairingToken")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(incoming.to_string());
+    };
+
+    let mut incoming_document = decode_document(&Value::String(incoming.to_string()))?;
+    let incoming_state = settings_state_mut(&mut incoming_document)?;
+    let incoming_token_present = incoming_state
+        .get("extensionPairingToken")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if !incoming_token_present {
+        incoming_state.insert(
+            "extensionPairingToken".to_string(),
+            Value::String(token.to_string()),
+        );
+    }
+
+    serde_json::to_string(&incoming_document)
+        .map_err(|error| format!("failed to encode portable settings: {error}"))
+}
+
 fn decode_document(stored: &Value) -> Result<Value, String> {
     match stored {
         Value::String(text) => serde_json::from_str(text)
@@ -320,7 +355,9 @@ fn default_settings() -> PersistedSettings {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_stored_settings, preserve_scheduler_runtime_keys};
+    use super::{
+        decode_stored_settings, preserve_portable_pairing_token, preserve_scheduler_runtime_keys,
+    };
     use serde_json::{json, Value};
 
     #[test]
@@ -510,11 +547,12 @@ mod tests {
 
     #[test]
     fn ignores_legacy_extension_pairing_token_field() {
-        // Older versions persisted `extensionPairingToken` as plaintext inside
-        // the settings document. It now lives in the OS keychain and is no
-        // longer part of PersistedSettings. serde ignores the unknown field so
-        // existing installs decode without error; the plaintext value is
-        // simply dropped and a fresh token is minted by the frontend.
+        // Older standard installs persisted `extensionPairingToken` as
+        // plaintext inside the settings document. It now lives in the OS
+        // keychain and is no longer part of PersistedSettings; portable mode
+        // deliberately keeps its token in the portable settings document.
+        // serde ignores the unknown field so existing installs decode without
+        // error; standard-mode migration drops the plaintext value.
         let stored = json!({
             "state": {
                 "extensionPairingToken": "plaintext-leaked-secret",
@@ -526,5 +564,33 @@ mod tests {
         let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
 
         assert_eq!(settings.max_concurrent_downloads, 5);
+    }
+
+    #[test]
+    fn preserves_portable_pairing_token_when_startup_save_races() {
+        let existing = json!({
+            "state": {
+                "extensionPairingToken": "portable-token",
+                "maxConcurrentDownloads": 3
+            },
+            "version": 3
+        })
+        .to_string();
+        let incoming = json!({
+            "state": {
+                "extensionPairingToken": "",
+                "maxConcurrentDownloads": 5
+            },
+            "version": 3
+        })
+        .to_string();
+
+        let merged = preserve_portable_pairing_token(Some(&existing), &incoming).unwrap();
+        let document: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            document["state"]["extensionPairingToken"],
+            "portable-token"
+        );
+        assert_eq!(document["state"]["maxConcurrentDownloads"], 5);
     }
 }

@@ -17,14 +17,20 @@ export const KeychainPermissionModal: React.FC = () => {
 
   const isMac = platform.os === 'macos';
   const storeName =
-    platform.os === 'windows'
+    platform.portable
+      ? 'the portable Firelink data folder'
+      : platform.os === 'windows'
       ? 'Windows Credential Manager'
       : platform.os === 'linux'
         ? 'your Linux credential store'
         : platform.os === 'macos'
           ? 'macOS Keychain'
           : "this system's credential store";
-  const grantLabel = isMac ? 'Grant Access' : 'Enable Secure Storage';
+  const grantLabel = platform.portable
+    ? 'Enable Portable Pairing'
+    : isMac
+      ? 'Grant Access'
+      : 'Enable Secure Storage';
 
   const handleGrant = async () => {
     setIsGranting(true);
@@ -75,14 +81,18 @@ export const KeychainPermissionModal: React.FC = () => {
           </p>
 
           <p>
-            {isMac
+            {platform.portable
+              ? 'The pairing token is portable with this folder. Treat the folder as sensitive and do not share it.'
+              : isMac
               ? 'macOS may show a Keychain prompt after you grant access.'
               : 'This usually completes silently. If the credential service is unavailable, Firelink will show the error here and the extension will stay paired for this session only.'}
           </p>
 
           <p>
-            <strong>Note:</strong> Firelink only writes its own dedicated credential entry. It cannot access other
-            saved passwords or credential items on your system.
+            <strong>Note:</strong>{' '}
+            {platform.portable
+              ? 'Portable mode stores only the pairing token in this folder. It does not copy site passwords or browser credentials.'
+              : 'Firelink only writes its own dedicated credential entry. It cannot access other saved passwords or credential items on your system.'}
           </p>
 
           {error && (
@@ -93,8 +103,11 @@ export const KeychainPermissionModal: React.FC = () => {
           )}
 
           <div className="bg-bg-modal-accent p-3 rounded-lg border border-border-modal text-xs">
-            <strong>Hint:</strong> If you select Later, the extension will only work for this session.
-            You can enable secure storage anytime from <strong>Settings &gt; Integrations</strong>.
+            <strong>Hint:</strong>{' '}
+            {platform.portable
+              ? 'The portable pairing token is already stored with this folder; you can enable it here or select Later.'
+              : 'If you select Later, the extension will only work for this session.'}
+            You can enable storage anytime from <strong>Settings &gt; Integrations</strong>.
           </div>
         </div>
 

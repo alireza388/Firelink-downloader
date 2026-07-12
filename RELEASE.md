@@ -4,6 +4,7 @@ Targets:
 
 - macOS arm64 DMG
 - Windows x64 NSIS installer
+- Windows x64 portable ZIP
 - Linux x64 AppImage
 - Linux x64 Debian package
 - Linux x64 RPM package

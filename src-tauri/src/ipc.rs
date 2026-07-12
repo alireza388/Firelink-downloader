@@ -297,6 +297,7 @@ pub struct PlatformInfo {
     pub os: String,
     pub arch: String,
     pub target_triple: String,
+    pub portable: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, TS)]

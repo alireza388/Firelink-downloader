@@ -53,7 +53,9 @@ const tauriStorage: StateStorage = {
  * Keychain identifier for the browser-extension pairing token. The token is an
  * HMAC shared secret and is therefore persisted via the OS keychain rather
  * than the user-data database. Legacy plaintext values are migrated into the
- * Keychain before being removed from persisted settings.
+ * Keychain before being removed from persisted settings. Portable mode is the
+ * explicit exception: its pairing token is persisted with the portable folder
+ * so extension pairing follows that folder.
  */
 const PAIRING_TOKEN_KEYCHAIN_ID = 'extension-pairing-token';
 

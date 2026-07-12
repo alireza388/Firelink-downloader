@@ -30,6 +30,7 @@ const PROTOCOL_VERSION_HEADER: &str = "x-firelink-protocol-version";
 const CLIENT_NONCE_HEADER: &str = "x-firelink-client-nonce";
 const SERVER_PROOF_HEADER: &str = "x-firelink-server-proof";
 const SERVER_PORT_HEADER: &str = "x-firelink-server-port";
+const SMOKE_PROCESS_ID_HEADER: &str = "x-firelink-smoke-process-id";
 const SERVER_PROOF_PREFIX: &[u8] = b"firelink-server-proof\n";
 const PROTOCOL_VERSION: &str = "4";
 
@@ -140,6 +141,13 @@ async fn add_server_identity(request: Request<Body>, next: Next) -> Response {
         PROTOCOL_VERSION_HEADER,
         HeaderValue::from_static(PROTOCOL_VERSION),
     );
+    if std::env::var_os("FIRELINK_SMOKE_TEST").is_some() {
+        if let Ok(process_id) = HeaderValue::from_str(&std::process::id().to_string()) {
+            response
+                .headers_mut()
+                .insert(SMOKE_PROCESS_ID_HEADER, process_id);
+        }
+    }
     response
 }
 

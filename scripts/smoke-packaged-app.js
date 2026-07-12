@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 function argValue(name) {
@@ -15,6 +16,7 @@ if (!executableArg) {
 
 const executable = path.resolve(executableArg);
 const assertNoVisibleChildWindows = process.argv.includes('--assert-no-visible-child-windows');
+const assertPortableData = process.argv.includes('--assert-portable-data');
 const child = spawn(executable, [], {
   cwd: process.env.RUNNER_TEMP || process.env.TMPDIR || process.cwd(),
   detached: process.platform !== 'win32',
@@ -30,12 +32,14 @@ const child = spawn(executable, [], {
 let stderr = '';
 let spawnError = null;
 let readyPort = null;
+let childExit = null;
 
 child.on('error', error => {
   spawnError = error;
 });
 
 child.on('exit', (code, signal) => {
+  childExit = { code, signal };
   if (readyPort === null) {
     console.error(`Child exited prematurely with code ${code} signal ${signal}`);
   }
@@ -44,6 +48,7 @@ child.on('exit', (code, signal) => {
 child.stderr.on('data', data => {
   stderr += data.toString();
 });
+child.stdout.on('data', () => {});
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -51,14 +56,17 @@ function sleep(ms) {
 
 async function findReadyPort() {
   for (let attempt = 0; attempt < 200 && readyPort === null; attempt += 1) {
-    if (spawnError) {
+    if (spawnError || childExit) {
       break;
     }
 
     for (let port = 6412; port <= 6422; port += 1) {
       try {
         const response = await fetch(`http://127.0.0.1:${port}/ping`);
-        if (response.headers.get('x-firelink-server') === '1') {
+        if (
+          response.headers.get('x-firelink-server') === '1'
+          && response.headers.get('x-firelink-smoke-process-id') === String(child.pid)
+        ) {
           readyPort = port;
           break;
         }
@@ -120,17 +128,35 @@ if ($visible.Count -gt 0) {
   }
 }
 
-function terminateChild() {
-  if (!child.pid) {
-    return;
+function waitForChildExit(timeoutMs) {
+  if (childExit) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      resolve(false);
+    }, timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+async function terminateChild() {
+  if (!child.pid || childExit) {
+    return true;
   }
 
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    return;
+    try {
+      execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch {}
+    return waitForChildExit(10000);
   }
 
   try {
@@ -138,25 +164,68 @@ function terminateChild() {
   } catch {
     child.kill('SIGTERM');
   }
+  if (await waitForChildExit(5000)) {
+    return true;
+  }
+
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    child.kill('SIGKILL');
+  }
+  return waitForChildExit(5000);
 }
 
-await findReadyPort();
+function assertPortableStorage() {
+  const portableRoot = path.dirname(executable);
+  const marker = path.join(portableRoot, 'portable.flag');
+  const database = path.join(portableRoot, 'data', 'firelink.sqlite');
+  const webviewData = path.join(portableRoot, 'data', 'webview');
+
+  if (!fs.statSync(marker, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Portable marker was not found at ${marker}`);
+  }
+  if (!fs.statSync(database, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Portable database was not created at ${database}`);
+  }
+  if (!fs.statSync(webviewData, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`Portable WebView data directory was not created at ${webviewData}`);
+  }
+}
 
 try {
+  await findReadyPort();
+
   if (readyPort === null) {
     if (spawnError) {
-      console.error(`Packaged Firelink failed to start: ${spawnError.message}`);
+      throw new Error(`Packaged Firelink failed to start: ${spawnError.message}`);
+    } else if (childExit) {
+      throw new Error(
+        `Packaged Firelink exited before exposing extension ping endpoint with code ${childExit.code} signal ${childExit.signal}.`,
+      );
     } else {
-      console.error(`Packaged Firelink did not expose extension ping endpoint. Stderr:\n${stderr.slice(-1000)}`);
+      throw new Error(`Packaged Firelink did not expose extension ping endpoint. Stderr:\n${stderr.slice(-1000)}`);
     }
-    process.exit(1);
   }
 
   if (assertNoVisibleChildWindows) {
     assertNoVisibleWindows(child.pid);
   }
+  if (assertPortableData) {
+    assertPortableStorage();
+  }
+
+  if (childExit) {
+    throw new Error(`Packaged Firelink exited after exposing extension ping endpoint with code ${childExit.code} signal ${childExit.signal}.`);
+  }
 
   console.log(`Packaged Firelink smoke passed on 127.0.0.1:${readyPort}`);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 } finally {
-  terminateChild();
+  if (!await terminateChild()) {
+    console.error('Packaged Firelink could not be terminated cleanly; refusing to report smoke success.');
+    process.exitCode = 1;
+  }
 }

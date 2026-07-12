@@ -125,6 +125,52 @@ jobs:
           Remove-Item -Recurse -Force $extractRoot -ErrorAction SilentlyContinue
           7z x $installer.FullName "-o$extractRoot" -y
           node scripts/verify-binaries.js --search-root "$extractRoot" --target ${{ matrix.target }}
+
+          $portableRoot = "$env:RUNNER_TEMP/firelink-portable-payload"
+          $portableArtifactDir = "$env:RUNNER_TEMP/firelink-portable"
+          Remove-Item -Recurse -Force $portableRoot -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $portableArtifactDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $portableRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $portableArtifactDir -Force | Out-Null
+          $payloadExe = Get-ChildItem $extractRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ieq "firelink.exe" } |
+            Sort-Object FullName |
+            Select-Object -First 1
+          if (-not $payloadExe) { throw "firelink.exe was not found in the extracted installer payload." }
+          Copy-Item (Join-Path $payloadExe.Directory.FullName '*') $portableRoot -Recurse -Force
+          Set-Content -Path (Join-Path $portableRoot 'portable.flag') -Value 'portable' -NoNewline
+          @"
+          Firelink portable
+
+          Extract this folder to a writable location and launch firelink.exe.
+          Close Firelink before copying or moving this folder.
+          Settings, queues, logs, and WebView data are stored under data\.
+          Only one Firelink instance can run at a time; close the installed app before launching this copy.
+          Credentials, browser cookies, and URL query/fragment data are not persisted in portable queue records.
+          Saved site passwords remain in the Windows credential store and are not portable.
+          The portable folder contains the extension pairing credential; treat it as sensitive and do not share it.
+          Saved absolute download locations may need to be selected again after moving to another drive.
+          The portable archive does not register the firelink:// protocol; use the installer for browser launch integration.
+          "@ | Set-Content -Path (Join-Path $portableRoot 'PORTABLE_README.txt')
+          New-Item -ItemType Directory -Path (Join-Path $portableRoot 'data') -Force | Out-Null
+          $portableExe = Join-Path $portableRoot 'firelink.exe'
+          node scripts/verify-binaries.js --search-root "$portableRoot" --target ${{ matrix.target }}
+          node scripts/smoke-packaged-app.js --executable $portableExe --assert-no-visible-child-windows --assert-portable-data
+          Get-ChildItem $portableRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(unins|Uninstall).*\.exe$' } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+          $portableDataDir = Join-Path $portableRoot 'data'
+          for ($attempt = 1; $attempt -le 10; $attempt++) {
+            Remove-Item -Recurse -Force $portableDataDir -ErrorAction SilentlyContinue
+            if (-not (Test-Path $portableDataDir)) { break }
+            Start-Sleep -Milliseconds (200 * $attempt)
+          }
+          if (Test-Path $portableDataDir) {
+            throw "Portable test data could not be removed after smoke; refusing to package a ZIP containing runtime data."
+          }
+          $portableZip = "$portableArtifactDir/Firelink_${{ github.ref_name }}_Windows-x64-portable.zip"
+          7z a -tzip $portableZip "$portableRoot\*" -y
+
           $installRoot = "$env:RUNNER_TEMP\FirelinkSmoke"
           Remove-Item -Recurse -Force $installRoot -ErrorAction SilentlyContinue
           $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installRoot") -Wait -PassThru
@@ -149,6 +195,13 @@ jobs:
         with:
           name: Firelink-${{ matrix.label }}-${{ github.ref_name }}
           path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Windows'
+        with:
+          name: Firelink-Windows-x64-portable-${{ github.ref_name }}
+          path: ${{ runner.temp }}/firelink-portable/*.zip
           if-no-files-found: error
           retention-days: 3
       - uses: actions/upload-artifact@v7
@@ -209,6 +262,7 @@ jobs:
           rename_asset '*.deb' "Firelink_${VERSION}_Linux-x64.deb"
           rename_asset '*.rpm' "Firelink_${VERSION}_Linux-x64.rpm"
           rename_asset '*.exe' "Firelink_${VERSION}_Windows-x64-setup.exe"
+          rename_asset '*.zip' "Firelink_${VERSION}_Windows-x64-portable.zip"
       - name: Generate checksums
         run: |
           cd release-assets

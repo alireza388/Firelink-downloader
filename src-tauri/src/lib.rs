@@ -1959,6 +1959,7 @@ pub mod queue;
 pub mod process;
 pub mod retry;
 mod settings;
+mod storage;
 pub use error::AppError;
 
 // Retained only for compatibility with the optional aria2 diagnostic monitor.
@@ -1970,6 +1971,7 @@ pub enum TaskHandle {
 
 pub struct AppState {
     pub download_coordinator: download::DownloadCoordinator,
+    pub storage_layout: crate::storage::StorageLayout,
     pub extension_pairing_token: extension_server::SharedExtensionToken,
     pub extension_frontend_ready: extension_server::SharedFrontendReady,
     pub extension_server_port: extension_server::SharedServerPort,
@@ -3818,11 +3820,12 @@ fn update_dock_badge(app_handle: tauri::AppHandle, count: i32) {
 }
 
 #[tauri::command]
-fn get_platform_info() -> crate::ipc::PlatformInfo {
+fn get_platform_info(state: tauri::State<'_, AppState>) -> crate::ipc::PlatformInfo {
     crate::ipc::PlatformInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         target_triple: crate::platform::target_triple(),
+        portable: state.storage_layout.is_portable(),
     }
 }
 
@@ -4346,17 +4349,42 @@ fn get_free_space(app_handle: tauri::AppHandle, path: String) -> Result<String, 
 }
 
 #[tauri::command]
-fn set_keychain_password(id: String, password: String) -> Result<(), String> {
+fn set_keychain_password(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    password: String,
+) -> Result<(), String> {
+    if state.storage_layout.is_portable()
+        && id == crate::db::PAIRING_TOKEN_KEYCHAIN_ID
+    {
+        return Ok(());
+    }
     crate::db::set_keychain_password(&id, &password)
 }
 
 #[tauri::command]
-fn get_keychain_password(id: String) -> Result<String, String> {
+fn get_keychain_password(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    if state.storage_layout.is_portable()
+        && id == crate::db::PAIRING_TOKEN_KEYCHAIN_ID
+    {
+        return Err("portable pairing token is stored in portable settings".to_string());
+    }
     crate::db::get_keychain_password(&id)
 }
 
 #[tauri::command]
-fn delete_keychain_password(id: String) -> Result<(), String> {
+fn delete_keychain_password(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    if state.storage_layout.is_portable()
+        && id == crate::db::PAIRING_TOKEN_KEYCHAIN_ID
+    {
+        return Ok(());
+    }
     crate::db::delete_keychain_password(&id)
 }
 
@@ -4399,17 +4427,23 @@ fn hydrate_extension_pairing_token(
         });
     }
 
-    // No token in the DB yet — generate one and save it so future launches
-    // find it without prompting.
+    // No token in the DB yet — generate one. Portable mode initializes the
+    // settings row immediately so the pairing secret travels with the folder;
+    // standard mode remains session-only until the user grants credential-store
+    // access when settings have not been persisted yet.
     let generated = crate::db::generate_pairing_token();
-    crate::db::save_pairing_token_to_settings(&connection, &generated)?;
+    crate::db::save_pairing_token_to_settings(
+        &connection,
+        &generated,
+        app_state.storage_layout.is_portable(),
+    )?;
     if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
         *pairing_token = generated.clone();
     }
     Ok(PairingTokenHydration {
         token: generated,
         token_changed: false,
-        persistent: false,
+        persistent: app_state.storage_layout.is_portable(),
         error: None,
     })
 }
@@ -4421,6 +4455,26 @@ fn grant_keychain_access(
 ) -> Result<PairingTokenHydration, String> {
     let mut connection = database.lock()?;
 
+    if app_state.storage_layout.is_portable() {
+        let token = if let Some(existing) = crate::db::load_pairing_token_from_settings(&connection)?
+        {
+            existing
+        } else {
+            let generated = crate::db::generate_pairing_token();
+            crate::db::save_pairing_token_to_settings(&connection, &generated, true)?;
+            generated
+        };
+        if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+            *pairing_token = token.clone();
+        }
+        return Ok(PairingTokenHydration {
+            token,
+            token_changed: false,
+            persistent: true,
+            error: None,
+        });
+    }
+
     // Explicitly force migration of any legacy token to the keychain.
     // This is the ONLY code path that touches the OS keychain and it is
     // reached exclusively through the frontend's "Grant Access" button,
@@ -4431,7 +4485,7 @@ fn grant_keychain_access(
         Ok((token, token_changed)) => {
             // Persist the token to the settings DB so future startups
             // can read it without touching the keychain at all.
-            let _ = crate::db::save_pairing_token_to_settings(&connection, &token);
+            let _ = crate::db::save_pairing_token_to_settings(&connection, &token, false);
             if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
                 *pairing_token = token.clone();
             }
@@ -4475,6 +4529,11 @@ fn db_save_settings(
     let connection = state.lock()?;
     let existing = crate::db::load_settings(&connection)?;
     let merged = crate::settings::preserve_scheduler_runtime_keys(existing.as_deref(), &data)?;
+    let merged = if state.is_portable() {
+        crate::settings::preserve_portable_pairing_token(existing.as_deref(), &merged)?
+    } else {
+        merged
+    };
     crate::db::save_settings(&connection, &merged)?;
     let decoded = crate::settings::decode_stored_settings(&serde_json::Value::String(merged))?;
     if let Ok(mut cached) = app_state.scheduler_settings.write() {
@@ -4502,8 +4561,9 @@ fn db_replace_downloads(
     state: tauri::State<'_, crate::db::DbState>,
     data: String,
 ) -> Result<(), String> {
+    let portable = state.is_portable();
     let mut connection = state.lock()?;
-    crate::db::replace_downloads(&mut connection, &data)
+    crate::db::replace_downloads(&mut connection, &data, portable)
 }
 
 #[tauri::command]
@@ -4531,8 +4591,11 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
 }
 
 async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
-    use tauri::Manager;
-    let log_dir = app_handle.path().app_log_dir().map_err(|e| e.to_string())?;
+    let log_dir = app_handle
+        .state::<AppState>()
+        .storage_layout
+        .log_dir()
+        .to_path_buf();
     let mut files = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
@@ -5563,6 +5626,20 @@ fn set_log_stream_active(active: bool) {
 pub fn run() {
     ensure_reqwest_crypto_provider();
 
+    let storage_mode = crate::storage::StorageMode::detect();
+    let setup_storage_mode = storage_mode.clone();
+    let log_target = match &storage_mode {
+        crate::storage::StorageMode::Standard => tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::LogDir { file_name: None },
+        ),
+        crate::storage::StorageMode::Portable { root } => tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::Folder {
+                path: root.join("data").join("logs"),
+                file_name: None,
+            },
+        ),
+    };
+
     let extension_pairing_token = Arc::new(RwLock::new(String::new()));
     let server_pairing_token = extension_pairing_token.clone();
     let extension_frontend_ready = Arc::new(AtomicBool::new(false));
@@ -5587,11 +5664,26 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .manage(Aria2DaemonGuard::new())
         .setup(move |app| {
-            #[cfg(target_os = "windows")]
-            if let Some(window) = app.get_webview_window("main") {
-                window
-                    .set_decorations(false)
-                    .map_err(|error| format!("failed to disable Windows native frame: {error}"))?;
+            let storage_layout = crate::storage::StorageLayout::resolve(
+                app.handle(),
+                setup_storage_mode.clone(),
+            )?;
+            let main_window_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|window| window.label == "main")
+                .cloned()
+                .ok_or_else(|| "main window configuration is missing".to_string())?;
+            let mut main_window_builder = tauri::WebviewWindowBuilder::from_config(
+                app.handle(),
+                &main_window_config,
+            )
+            .map_err(|error| format!("failed to prepare main window: {error}"))?;
+            if storage_layout.is_portable() {
+                main_window_builder =
+                    main_window_builder.data_directory(storage_layout.webview_dir().to_path_buf());
             }
 
             let mut sys = sysinfo::System::new_all();
@@ -5607,7 +5699,7 @@ pub fn run() {
             build_main_tray(app.handle())
                 .map_err(|error| format!("failed to create tray menu: {error}"))?;
 
-            let database = crate::db::init(app.handle())
+            let database = crate::db::init(&storage_layout)
                 .map_err(|error| format!("failed to initialize persistence: {error}"))?;
             let initial_pairing_token = {
                 // Generate a temporary session token for the extension server on startup.
@@ -5671,6 +5763,7 @@ pub fn run() {
 
             app.manage(AppState {
                 download_coordinator: download::DownloadCoordinator::spawn(app.handle().clone()),
+                storage_layout,
                 extension_pairing_token,
                 extension_frontend_ready,
                 extension_server_port,
@@ -5682,6 +5775,20 @@ pub fn run() {
                 scheduler_settings: Arc::clone(&scheduler_settings),
                 queue_manager,
             });
+
+            // Build the window only after all command state is registered. This
+            // prevents the frontend from racing startup and invoking IPC before
+            // the database and portable storage layout are available.
+            main_window_builder
+                .build()
+                .map_err(|error| format!("failed to create main window: {error}"))?;
+
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                window
+                    .set_decorations(false)
+                    .map_err(|error| format!("failed to disable Windows native frame: {error}"))?;
+            }
 
             let deep_link_app = app.handle().clone();
             #[cfg(target_os = "linux")]
@@ -5970,9 +6077,7 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: None,
-                    }),
+                    log_target,
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview)
                         .filter(|_| {
                             LOG_STREAM_ACTIVE.load(std::sync::atomic::Ordering::Acquire)

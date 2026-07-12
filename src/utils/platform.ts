@@ -5,7 +5,8 @@ import { invokeCommand as invoke } from '../ipc';
 const fallback: PlatformInfo = {
   os: 'unknown',
   arch: 'unknown',
-  targetTriple: 'unknown'
+  targetTriple: 'unknown',
+  portable: false
 };
 
 let cached: PlatformInfo | null = null;

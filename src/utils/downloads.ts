@@ -121,11 +121,10 @@ const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
  * progress fields (`fraction`, `speed`, `eta`) are also dropped as in the
  * existing persistence path.
  *
- * Note: `url` is intentionally retained even though it may contain signed
- * query parameters — redacting it would break resume/retry since the URL is
- * the download source. Ad-hoc credentials entered in the Add Downloads modal
- * are therefore session-scoped; site-login passwords (Keychain-backed) are
- * unaffected by this redaction.
+ * Note: standard persistence intentionally retains `url` because it is the
+ * download source. The backend applies a stricter portable-mode policy: URL
+ * userinfo, query, and fragment components are removed before portable data
+ * is written, and affected active records are not auto-resumed.
  */
 export const redactDownloadForPersistence = (item: DownloadItem): DownloadItem => {
   const copy: DownloadItem = { ...item };

@@ -724,6 +724,13 @@ fn remove_persisted_transfer_secrets(value: &mut Value) {
         object.remove(key);
     }
 
+    if let Some(last_error) = object.get("lastError").and_then(Value::as_str) {
+        object.insert(
+            "lastError".to_string(),
+            Value::String(crate::redact_sensitive_text(last_error)),
+        );
+    }
+
     if let Some(url) = object.get("url").and_then(Value::as_str) {
         if let Ok(mut parsed) = url::Url::parse(url) {
             let had_userinfo = !parsed.username().is_empty() || parsed.password().is_some();
@@ -1483,6 +1490,45 @@ mod tests {
     }
 
     #[test]
+    fn portable_download_persistence_redacts_error_secrets_but_preserves_safe_errors_and_standard_details() {
+        let temp = TempDir::new().unwrap();
+        let state = init_at_path(temp.path()).unwrap();
+        let mut connection = state.lock().unwrap();
+        let data = json!([
+            {
+                "id": "download-secret-error",
+                "status": "failed",
+                "queueId": "main",
+                "url": "https://example.com/file",
+                "lastError": "HTTP 500 for https://example.com/file?token=PORTABLE_TEST_QUERY_TOKEN"
+            },
+            {
+                "id": "download-safe-error",
+                "status": "failed",
+                "queueId": "main",
+                "url": "https://example.com/other-file",
+                "lastError": "connection refused"
+            }
+        ])
+        .to_string();
+
+        replace_downloads(&mut connection, &data, true).unwrap();
+
+        let saved = load_downloads(&connection).unwrap();
+        let secret_error: Value = serde_json::from_str(&saved[0]).unwrap();
+        let safe_error: Value = serde_json::from_str(&saved[1]).unwrap();
+        assert!(!secret_error
+            .to_string()
+            .contains("PORTABLE_TEST_QUERY_TOKEN"));
+        assert_eq!(safe_error["lastError"], "connection refused");
+
+        replace_downloads(&mut connection, &data, false).unwrap();
+        let standard: Value =
+            serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
+        assert!(standard.to_string().contains("PORTABLE_TEST_QUERY_TOKEN"));
+    }
+
+    #[test]
     fn portable_persistence_redacts_unparseable_download_urls() {
         let temp = TempDir::new().unwrap();
         let state = init_at_path(temp.path()).unwrap();
@@ -1511,7 +1557,8 @@ mod tests {
             "id": "download-1",
             "status": "queued",
             "url": "https://example.com/file",
-            "password": "secret"
+            "password": "secret",
+            "lastError": "request failed with token=PORTABLE_EXISTING_QUERY_TOKEN"
         }])
         .to_string();
         replace_downloads(&mut connection, &data, false).unwrap();
@@ -1522,6 +1569,7 @@ mod tests {
         let connection = state.lock().unwrap();
         let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
         assert!(saved.get("password").is_none());
+        assert!(!saved.to_string().contains("PORTABLE_EXISTING_QUERY_TOKEN"));
     }
 
     #[test]

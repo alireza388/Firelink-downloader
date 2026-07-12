@@ -4613,13 +4613,15 @@ async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathB
     Ok(files)
 }
 
-fn redact_log_line(line: &str) -> String {
+pub(crate) fn redact_sensitive_text(line: &str) -> String {
     use std::sync::OnceLock;
     static SECRET: OnceLock<regex::Regex> = OnceLock::new();
     static HEADER: OnceLock<regex::Regex> = OnceLock::new();
     static QUERY: OnceLock<regex::Regex> = OnceLock::new();
     let secret = SECRET.get_or_init(|| {
-        regex::Regex::new(r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\s,;]+)")
+        regex::Regex::new(
+            r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\r\n,;]+)",
+        )
             .expect("valid secret redaction regex")
     });
     let header = HEADER.get_or_init(|| {
@@ -4627,11 +4629,16 @@ fn redact_log_line(line: &str) -> String {
             .expect("valid sensitive header redaction regex")
     });
     let query = QUERY.get_or_init(|| {
-        regex::Regex::new(r"(https?://[^\s?]+)\?[^\s]+").expect("valid URL query redaction regex")
+        regex::Regex::new(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s?]+)\?[^\s]+")
+            .expect("valid URL query redaction regex")
     });
     let redacted = header.replace_all(line, "$1: [redacted]");
     let redacted = secret.replace_all(&redacted, "$1=[redacted]");
     query.replace_all(&redacted, "$1?[redacted]").into_owned()
+}
+
+fn redact_log_line(line: &str) -> String {
+    redact_sensitive_text(line)
 }
 
 fn redact_log_line_for_output(line: &str) -> String {
@@ -5114,6 +5121,17 @@ mod tests {
         assert!(!redacted.contains("session=abc"));
         assert!(!redacted.contains("token=secret"));
         assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_spaced_credentials_and_non_http_url_queries() {
+        let line =
+            "token: Bearer spaced secret; ftp://example.com/file?credential=spaced-secret";
+        let redacted = redact_log_line(line);
+        assert!(!redacted.contains("Bearer spaced secret"));
+        assert!(!redacted.contains("credential=spaced-secret"));
+        assert!(redacted.contains("token=[redacted]"));
+        assert!(redacted.contains("ftp://example.com/file?[redacted]"));
     }
 
     #[test]

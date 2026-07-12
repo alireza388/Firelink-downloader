@@ -97,7 +97,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
 
     let m = message.to_ascii_lowercase();
 
-    const TRANSIENT: [&str; 35] = [
+    const TRANSIENT: [&str; 38] = [
         // socket-layer / HTTP-client phrasing surfaced by aria2 and yt-dlp
         "timed out",
         "timeout",
@@ -113,6 +113,9 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "connection aborted",
         "error sending request", // reqwest wrapper for connect/send failures
         "dns error",             // transient resolver failures
+        "protocol error",        // aria2 read/protocol failures after a link drop
+        "tls handshake failure",
+        "ssl/tls handshake failure",
         // HTTP-level transient
         "http 408",
         "request timeout",
@@ -275,6 +278,12 @@ mod tests {
         assert!(is_transient_network_error("The response status is not successful. status=503"));
         assert!(is_transient_network_error("The response status is not successful. status=502"));
         assert!(is_transient_network_error("Invalid range header. Request: 106954752-361758719/383882118, Response: 106954752-383882117/383882118"));
+        assert!(is_transient_network_error(
+            "aria2 error code 1: Failed to receive data, cause: protocol error"
+        ));
+        assert!(is_transient_network_error(
+            "SSL/TLS handshake failure: protocol error"
+        ));
     }
 
     // --- transient classification: negative cases -------------------------

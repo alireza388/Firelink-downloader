@@ -110,6 +110,8 @@ pub struct DownloadItem {
     pub has_been_dispatched: Option<bool>,
     #[ts(optional)]
     pub last_error: Option<String>,
+    #[ts(optional)]
+    pub last_try: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

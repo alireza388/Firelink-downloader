@@ -71,7 +71,7 @@ type CommandMap = {
     args: { baseFolder: string; subfolders: Record<string, string> };
     result: void;
   };
-  export_logs: { args: Record<string, never>; result: string };
+  export_logs: { args: { destination?: string }; result: string };
   read_logs: { args: { limit: number }; result: string[] };
   clear_logs: { args: undefined; result: void };
   toggle_log_pause: { args: { pause: boolean }; result: void };

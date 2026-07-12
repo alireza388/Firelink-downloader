@@ -76,6 +76,18 @@ pub trait SidecarSpawner: Send + Sync + 'static {
     /// cancellation.
     async fn remove_uri(&self, gid: &str) -> Result<(), String>;
 
+    /// Recycle the connections for an active aria2 transfer without changing
+    /// its gid or releasing its queue permit. Production uses forcePause /
+    /// unpause; test spawners can leave this unsupported.
+    async fn refresh_uri(&self, _gid: &str) -> Result<(), String> {
+        Err("aria2 connection refresh is unavailable".to_string())
+    }
+
+    /// Leave an aria2 transfer paused after a refresh races with a user pause.
+    async fn pause_uri(&self, _gid: &str) -> Result<(), String> {
+        Err("aria2 pause is unavailable".to_string())
+    }
+
     /// Run a media download to completion. The permit is parked for the full
     /// duration; release is handled by QueueManager on the runner's exit.
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
@@ -297,12 +309,29 @@ impl<R: tauri::Runtime> QueueManager<R> {
             == epoch
     }
 
+    pub async fn current_aria2_control_epoch(&self, id: &str) -> u64 {
+        self.aria2_control_epochs
+            .lock()
+            .await
+            .get(id)
+            .copied()
+            .unwrap_or_default()
+    }
+
     pub async fn is_aria2_retry_cancelled(&self, id: &str) -> bool {
         self.aria2_retry_cancelled.lock().await.contains(id)
     }
 
     pub async fn has_aria2_retry_state(&self, id: &str) -> bool {
         self.aria2_retry_strikes.lock().await.contains_key(id)
+    }
+
+    pub async fn aria2_requested_connections(&self, id: &str) -> Option<i32> {
+        self.aria2_payloads
+            .lock()
+            .await
+            .get(id)
+            .and_then(|payload| payload.connections)
     }
 
     /// Pop the next task, or None if empty.
@@ -657,6 +686,39 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .unwrap()
             .iter()
             .find_map(|(gid, download_id)| (download_id == id).then(|| gid.clone()))
+    }
+
+    pub fn aria2_gid_mappings(&self) -> Vec<(String, String)> {
+        self.aria2_gids
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(gid, id)| (gid.clone(), id.clone()))
+            .collect()
+    }
+
+    /// Recycle an active transfer's connections after the poller observes a
+    /// persistent connection-pool collapse or a true zero-progress stall.
+    /// The transfer keeps its gid, partial file, and queue permit.
+    pub async fn refresh_aria2_connections(&self, id: &str, gid: &str) -> Result<(), String> {
+        if self.aria2_gid_for_download(id).as_deref() != Some(gid)
+            || !self.is_registered(id).await
+            || self.is_aria2_retry_cancelled(id).await
+        {
+            return Ok(());
+        }
+
+        let epoch = self.current_aria2_control_epoch(id).await;
+        self.spawner.refresh_uri(gid).await?;
+
+        let still_current = self.is_registered(id).await
+            && !self.is_aria2_retry_cancelled(id).await
+            && self.is_aria2_control_epoch_current(id, epoch).await
+            && self.aria2_gid_for_download(id).as_deref() == Some(gid);
+        if !still_current {
+            let _ = self.spawner.pause_uri(gid).await;
+        }
+        Ok(())
     }
 
     /// Remove every gid mapping for a download and discard buffered terminal
@@ -1250,6 +1312,8 @@ impl SidecarSpawner for ProductionSpawner {
         let mt = aria2_attempt_limit(payload.max_tries);
         options.insert("max-tries".to_string(), serde_json::json!(mt.to_string()));
         options.insert("retry-wait".to_string(), serde_json::json!("2"));
+        options.insert("connect-timeout".to_string(), serde_json::json!("20"));
+        options.insert("timeout".to_string(), serde_json::json!("60"));
         options.insert("continue".to_string(), serde_json::json!("true"));
         options.insert("always-resume".to_string(), serde_json::json!("true"));
         options.insert("auto-file-renaming".to_string(), serde_json::json!("false"));
@@ -1330,6 +1394,44 @@ impl SidecarSpawner for ProductionSpawner {
             )),
             None => Err("aria2.forceRemove returned a non-string result".to_string()),
         }
+    }
+
+    async fn refresh_uri(&self, gid: &str) -> Result<(), String> {
+        let state = self.app_handle.state::<crate::AppState>();
+        let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
+        let secret = &state.aria2_secret;
+        let paused = crate::rpc_call(
+            port,
+            secret,
+            "aria2.forcePause",
+            serde_json::json!([gid]),
+        )
+        .await
+        .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
+        crate::ensure_aria2_gid_result("forcePause", gid, &paused)?;
+
+        let resumed = crate::rpc_call(
+            port,
+            secret,
+            "aria2.unpause",
+            serde_json::json!([gid]),
+        )
+        .await
+        .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
+        crate::ensure_aria2_gid_result("unpause", gid, &resumed)
+    }
+
+    async fn pause_uri(&self, gid: &str) -> Result<(), String> {
+        let state = self.app_handle.state::<crate::AppState>();
+        let result = crate::rpc_call(
+            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+            &state.aria2_secret,
+            "aria2.forcePause",
+            serde_json::json!([gid]),
+        )
+        .await
+        .map_err(|error| format!("failed to pause aria2 gid {gid}: {error}"))?;
+        crate::ensure_aria2_gid_result("forcePause", gid, &result)
     }
 
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {

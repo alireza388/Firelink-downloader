@@ -3746,6 +3746,80 @@ async fn aria2_download_status(port: u16, secret: &str, gid: &str) -> Result<Str
         .ok_or_else(|| format!("aria2.tellStatus returned no status for gid {gid}"))
 }
 
+async fn reconcile_aria2_downloads(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
+    let secret = state.aria2_secret.clone();
+    let mappings = state.queue_manager.aria2_gid_mappings();
+
+    for (gid, id) in mappings {
+        let status = match rpc_call(
+            port,
+            &secret,
+            "aria2.tellStatus",
+            serde_json::json!([gid, ["status", "errorCode", "errorMessage"]]),
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                log::debug!(
+                    "aria2 reconnect reconciliation [{}]: could not query gid {}: {}",
+                    id,
+                    gid,
+                    error
+                );
+                continue;
+            }
+        };
+
+        let status_name = status.get("status").and_then(|value| value.as_str());
+        let outcome = match status_name {
+            Some("complete") => Some(crate::queue::PendingOutcome::Complete),
+            Some("error") | Some("removed") => {
+                let error_code = status
+                    .get("errorCode")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty());
+                let error_message = status
+                    .get("errorMessage")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("aria2 download ended while the event channel was disconnected");
+                Some(crate::queue::PendingOutcome::Error(match error_code {
+                    Some(code) => format!("aria2 error code {code}: {error_message}"),
+                    None => error_message.to_string(),
+                }))
+            }
+            _ => None,
+        };
+
+        if let Some(outcome) = outcome {
+            state.queue_manager.handle_aria2_event(&gid, outcome).await;
+        }
+    }
+}
+
+async fn aria2_daemon_is_reachable(port: u16, secret: &str) -> bool {
+    for attempt in 0..2 {
+        if rpc_call(
+            port,
+            secret,
+            "aria2.getVersion",
+            serde_json::json!([]),
+        )
+        .await
+        .is_ok()
+        {
+            return true;
+        }
+        if attempt == 0 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    false
+}
+
 fn aria2_gid_not_found(error: &str) -> bool {
     let lower = error.to_ascii_lowercase();
     lower.contains("gid") && lower.contains("not found")
@@ -4713,6 +4787,7 @@ async fn clear_logs(app_handle: tauri::AppHandle) -> Result<(), String> {
 async fn export_logs(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    destination: Option<String>,
 ) -> Result<String, String> {
     let mut output = format!(
         "Firelink support logs\nVersion: {}\nOS: {} {}\nArchitecture: {}\nGenerated: {}\n\n",
@@ -4772,6 +4847,16 @@ async fn export_logs(
             output.push('\n');
         }
         output.push('\n');
+    }
+
+    if let Some(destination) = destination {
+        let destination = std::path::PathBuf::from(destination.trim());
+        if destination.file_name().is_none() {
+            return Err("log export destination must be a file path".to_string());
+        }
+        tokio::fs::write(&destination, &output)
+            .await
+            .map_err(|error| format!("failed to write exported logs to '{}': {error}", destination.display()))?;
     }
     Ok(output)
 }
@@ -5959,16 +6044,31 @@ pub fn run() {
 
                 let mut ws_retries = 0;
                 loop {
-                    if ws_retries > 10 {
-                        log::error!("Max WebSocket reconnection attempts reached. aria2 integration is disabled.");
+                    if ws_retries == 10 {
+                        log::error!("Aria2 WebSocket is still unavailable after repeated reconnection attempts; continuing to retry.");
                         let guard = app_handle_bg.state::<Aria2DaemonGuard>();
                         *guard.startup_error.lock().unwrap() = Some("Max WebSocket reconnection attempts reached.".to_string());
-                        break;
+                        // Keep retrying. The daemon or local WebSocket can
+                        // recover after a prolonged outage; permanently
+                        // stopping this task strands active transfers.
+                        ws_retries = 0;
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     let ws_url = format!("ws://127.0.0.1:{}/jsonrpc", ws_port);
                     if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(&ws_url).await {
                         ws_retries = 0; // reset on success
+                        if let Ok(mut startup_error) = app_handle_bg
+                            .state::<Aria2DaemonGuard>()
+                            .startup_error
+                            .lock()
+                        {
+                            if startup_error.as_deref()
+                                == Some("Max WebSocket reconnection attempts reached.")
+                            {
+                                *startup_error = None;
+                            }
+                        }
+                        reconcile_aria2_downloads(&app_handle_bg).await;
                         use futures_util::StreamExt;
                         let (_, mut read) = ws_stream.split();
                         while let Some(msg) = read.next().await {
@@ -6025,7 +6125,11 @@ pub fn run() {
                         }
                     }
                     ws_retries += 1;
-                    app_handle_bg.state::<AppState>().queue_manager.clear_aria2_permits().await;
+                    let state = app_handle_bg.state::<AppState>();
+                    let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
+                    if !aria2_daemon_is_reachable(port, &state.aria2_secret).await {
+                        state.queue_manager.clear_aria2_permits().await;
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 }
             });
@@ -6035,19 +6139,99 @@ pub fn run() {
             let poll_secret = aria2_secret.clone();
             let poll_mgr = Arc::clone(&queue_manager_poll);
             tauri::async_runtime::spawn(async move {
+                #[derive(Default)]
+                struct Aria2ConnectionObservation {
+                    gid: String,
+                    saw_multiple_connections: bool,
+                    degraded_since: Option<Instant>,
+                    no_progress_since: Option<Instant>,
+                    refreshed: bool,
+                    last_completed: u64,
+                }
+
+                const RECOVERY_DELAY: Duration = Duration::from_secs(30);
+                const MIN_REMAINING_FOR_CONNECTION_RECOVERY: u64 = 1024 * 1024;
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
+                let mut observations: HashMap<String, Aria2ConnectionObservation> = HashMap::new();
                 loop {
                     interval.tick().await;
-                    let params = serde_json::json!([["gid", "status", "totalLength", "completedLength", "downloadSpeed", "errorMessage"]]);
+                    let params = serde_json::json!([["gid", "status", "totalLength", "completedLength", "downloadSpeed", "connections", "errorMessage"]]);
                     if let Ok(active_list) = rpc_call(poll_port.load(std::sync::atomic::Ordering::Relaxed), &poll_secret, "aria2.tellActive", params).await {
                         if let Some(active_arr) = active_list.as_array() {
+                            let mut seen_ids = std::collections::HashSet::new();
                             for status_info in active_arr {
                                 let gid = status_info.get("gid").and_then(|s| s.as_str()).unwrap_or("");
                                 let id = poll_mgr.aria2_gids.read().unwrap().get(gid).cloned();
                                 if let Some(id) = id {
+                                    seen_ids.insert(id.clone());
+                                    let status = status_info.get("status").and_then(|value| value.as_str()).unwrap_or("");
                                     let total = status_info.get("totalLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let completed = status_info.get("completedLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let speed_bytes = status_info.get("downloadSpeed").and_then(|s| s.as_str()).unwrap_or("0").parse::<f64>().unwrap_or(0.0);
+                                    let active_connections = status_info.get("connections").and_then(|s| s.as_str()).unwrap_or("0").parse::<i32>().unwrap_or(0);
+                                    let requested_connections = poll_mgr
+                                        .aria2_requested_connections(&id)
+                                        .await
+                                        .unwrap_or(1)
+                                        .max(1);
+                                    let now = Instant::now();
+                                    let observation = observations.entry(id.clone()).or_default();
+                                    if observation.gid != gid {
+                                        *observation = Aria2ConnectionObservation {
+                                            gid: gid.to_string(),
+                                            last_completed: completed,
+                                            ..Default::default()
+                                        };
+                                    }
+
+                                    let remaining = total.saturating_sub(completed);
+                                    let mut should_refresh = false;
+                                    if status == "active" && total > completed {
+                                        if completed > observation.last_completed {
+                                            observation.no_progress_since = None;
+                                        } else if speed_bytes <= 0.0 {
+                                            let stalled_since = observation.no_progress_since.get_or_insert(now);
+                                            if now.duration_since(*stalled_since) >= RECOVERY_DELAY
+                                                && !observation.refreshed
+                                            {
+                                                observation.refreshed = true;
+                                                should_refresh = true;
+                                            }
+                                        } else {
+                                            observation.no_progress_since = None;
+                                        }
+
+                                        if requested_connections > 1 && active_connections > 1 {
+                                            observation.saw_multiple_connections = true;
+                                            observation.degraded_since = None;
+                                            if !should_refresh {
+                                                observation.refreshed = false;
+                                            }
+                                        } else if requested_connections > 1
+                                            && observation.saw_multiple_connections
+                                            && active_connections <= 1
+                                            && remaining >= MIN_REMAINING_FOR_CONNECTION_RECOVERY
+                                        {
+                                            let degraded_since = observation.degraded_since.get_or_insert(now);
+                                            if now.duration_since(*degraded_since) >= RECOVERY_DELAY
+                                                && !observation.refreshed
+                                            {
+                                                observation.refreshed = true;
+                                                should_refresh = true;
+                                                log::warn!(
+                                                    "aria2 connection pool degraded [{}]: gid {} has {} connection(s), requested {}; refreshing",
+                                                    id,
+                                                    gid,
+                                                    active_connections,
+                                                    requested_connections
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        observation.degraded_since = None;
+                                        observation.no_progress_since = None;
+                                    }
+                                    observation.last_completed = completed;
 
                                     let fraction = if total > 0 { completed as f64 / total as f64 } else { 0.0 };
                                     let speed = crate::download::format_speed(speed_bytes);
@@ -6064,15 +6248,27 @@ pub fn run() {
 
                                     use tauri::Emitter;
                                     let _ = app_handle_poll.emit("download-progress", DownloadProgressEvent {
-                                        id,
+                                        id: id.clone(),
                                         fraction,
                                         speed,
                                     eta,
                                     size,
-                                    size_is_final: false,
-                                });
+                                        size_is_final: false,
+                                    });
+
+                                    if should_refresh {
+                                        if let Err(error) = poll_mgr.refresh_aria2_connections(&id, gid).await {
+                                            log::warn!(
+                                                "aria2 connection refresh [{}] for gid {} failed: {}",
+                                                id,
+                                                gid,
+                                                error
+                                            );
+                                        }
+                                    }
                                 }
                             }
+                            observations.retain(|id, _| seen_ids.contains(id));
                         }
                     }
                 }

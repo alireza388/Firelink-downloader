@@ -89,7 +89,10 @@ const startDownloadListeners = async () => {
         const updates: Partial<DownloadItem> = {
           status,
           ...(progress ? { fraction: progress.fraction } : {}),
-          ...(payload.error ? { lastError: payload.error } : {})
+          ...(payload.error ? { lastError: payload.error } : {}),
+          ...((status === 'downloading' || status === 'retrying')
+            ? { lastTry: new Date().toISOString() }
+            : {})
         };
         if (!payload.error && status !== 'failed' && status !== 'retrying') {
           updates.lastError = undefined;

@@ -534,7 +534,9 @@ async fn transient_aria2_error_reissues_after_backoff() {
     manager
         .handle_aria2_event(
             "gid-1",
-            PendingOutcome::Error("Timeout.".to_string()),
+            PendingOutcome::Error(
+                "aria2 error code 1: Failed to receive data, cause: protocol error".to_string(),
+            ),
         )
         .await;
 
@@ -552,7 +554,7 @@ async fn transient_aria2_error_reissues_after_backoff() {
     manager
         .handle_aria2_event(
             "gid-2",
-            PendingOutcome::Error("Timeout.".to_string()),
+            PendingOutcome::Error("SSL/TLS handshake failure: protocol error".to_string()),
         )
         .await;
     assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 2);

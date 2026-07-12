@@ -90,6 +90,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
 
   const promise = (async () => {
     let lifecycleGeneration: bigint | null = null;
+    let backendAccepted = false;
     try {
       const state = useDownloadStore.getState();
       const item = state.downloads.find(d => d.id === id);
@@ -139,7 +140,11 @@ export async function dispatchItem(id: string): Promise<boolean> {
         lifecycle_generation: lifecycleGeneration.toString(),
       };
 
+      useDownloadStore.getState().updateDownload(id, {
+        lastTry: new Date().toISOString()
+      });
       const accepted = await invoke('enqueue_download', { item: enqueueItem });
+      backendAccepted = true;
       if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) {
         await removeStaleBackendDispatch(id);
         return false;
@@ -164,6 +169,9 @@ export async function dispatchItem(id: string): Promise<boolean> {
       return true;
     } catch (e) {
       console.error(`Failed to dispatch ${id}:`, e);
+      if (backendAccepted && lifecycleGeneration !== null) {
+        await removeStaleBackendDispatch(id);
+      }
       if (lifecycleGeneration !== null && isCurrentDownloadLifecycle(id, lifecycleGeneration)) {
         useDownloadStore.getState().updateDownload(id, {
           status: 'failed',
@@ -783,14 +791,19 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         status: 'queued', 
         speed: '-', 
         eta: '-',
-        queuePosition: maxPos + 1
+        queuePosition: maxPos + 1,
+        lastTry: new Date().toISOString()
       });
 
-      const resumedExisting = await invoke('resume_download', { id }).catch(() => false);
+      const resumedExisting = await invoke('resume_download', { id });
       
       let dispatchSucceeded = resumedExisting;
       if (!dispatchSucceeded) {
         get().unregisterBackendIds([id]);
+        // A terminal aria2 gid is intentionally re-enqueued as a new
+        // lifecycle. Advance and cancel the old generation before dispatching
+        // so QueueManager does not reject the legitimate user retry as stale.
+        await invalidateAndWaitForDispatch(id);
         dispatchSucceeded = await dispatchItem(id);
       }
 

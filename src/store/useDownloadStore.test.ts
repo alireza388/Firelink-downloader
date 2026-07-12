@@ -347,26 +347,79 @@ describe('useDownloadStore', () => {
   });
 
   it('resumeDownload unregisters ID and re-dispatches if un-resumable', async () => {
+    let enqueueGeneration: string | undefined;
     useDownloadStore.setState({
       downloads: [
-        { id: '1', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'paused', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
+        { id: 'resume-generation', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'paused', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
       ] as any[],
-      backendRegisteredIds: new Set(['1']),
+      backendRegisteredIds: new Set(['resume-generation']),
     });
 
-    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'resume_download') return false; // Not resumable
-      if (cmd === 'get_pending_order') return ['1'];
+      if (cmd === 'enqueue_download') {
+        enqueueGeneration = (args as { item: { lifecycle_generation: string } }).item.lifecycle_generation;
+        return { id: 'resume-generation', filename: 'f1' };
+      }
+      if (cmd === 'get_pending_order') return ['resume-generation'];
       return undefined;
     });
 
-    await useDownloadStore.getState().resumeDownload('1');
+    await useDownloadStore.getState().resumeDownload('resume-generation');
 
     // It should have called resume_download, then unregistered, then enqueue_download
     const calls = vi.mocked(ipc.invokeCommand).mock.calls;
     expect(calls.some(c => c[0] === 'resume_download')).toBe(true);
     expect(calls.some(c => c[0] === 'enqueue_download')).toBe(true);
-    expect(useDownloadStore.getState().backendRegisteredIds.has('1')).toBe(true); // Re-registered by dispatchItem
+    expect(enqueueGeneration).toBe('1');
+    expect(useDownloadStore.getState().downloads[0].lastTry).toEqual(expect.any(String));
+    expect(useDownloadStore.getState().backendRegisteredIds.has('resume-generation')).toBe(true); // Re-registered by dispatchItem
+  });
+
+  it('does not re-enqueue when the existing resume RPC fails', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'resume-rpc-error', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'paused', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: true },
+      ] as any[],
+      backendRegisteredIds: new Set(['resume-rpc-error']),
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'resume_download') throw new Error('aria2 RPC unavailable');
+      return undefined;
+    });
+
+    await expect(useDownloadStore.getState().resumeDownload('resume-rpc-error')).resolves.toBe(false);
+
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.some(([command]) => command === 'enqueue_download')
+    ).toBe(false);
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'paused',
+      lastTry: expect.any(String),
+    });
+  });
+
+  it('cleans an accepted backend enqueue when queue reconciliation fails', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'enqueue-reconcile-error', url: 'http://test1', fileName: 'f1', destination: '/tmp', status: 'queued', category: 'Other', dateAdded: '', queueId: 'MAIN', hasBeenDispatched: false },
+      ] as any[],
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'enqueue_download') return { id: 'enqueue-reconcile-error', filename: 'f1' };
+      if (cmd === 'get_pending_order') throw new Error('queue state unavailable');
+      return undefined;
+    });
+
+    await expect(useDownloadStore.getState().startQueue('MAIN')).resolves.toEqual([]);
+
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.some(([command]) => command === 'remove_download')
+    ).toBe(true);
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'failed',
+      lastError: 'queue state unavailable',
+    });
   });
 
 

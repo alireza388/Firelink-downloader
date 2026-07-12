@@ -13,6 +13,14 @@ import {
 
 type LoginMode = 'matching' | 'custom' | 'none';
 
+const formatLastTry = (value?: string): string => {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '-'
+    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
 export const PropertiesModal = () => {
   const selectedPropertiesDownloadId = useDownloadStore(state => state.selectedPropertiesDownloadId);
   const setSelectedPropertiesDownloadId = useDownloadStore(state => state.setSelectedPropertiesDownloadId);
@@ -204,7 +212,7 @@ export const PropertiesModal = () => {
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Connections</span><span className="text-text-secondary truncate">{item.connections || perServerConnections || '-'}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[60px] shrink-0">Speed cap</span><span className="text-text-secondary truncate">{item.speedLimit || '-'}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[55px] shrink-0">Category</span><span className="text-text-secondary truncate">{item.category}</span></div>
-            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[50px]">Last try</span><span className="text-text-secondary truncate">-</span></div>
+            <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[50px]">Last try</span><span className="text-text-secondary truncate">{formatLastTry(item.lastTry)}</span></div>
             
               <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[90px]">Date added</span><span className="text-text-secondary truncate">{new Date(item.dateAdded).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span></div>
               <div className="flex gap-1.5 col-span-2"><span className="text-text-muted font-medium w-[70px]">Destination</span><span className="text-text-secondary truncate" title={saveLocation}>{saveLocation || baseDownloadFolder}</span></div>

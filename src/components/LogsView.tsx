@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { attachLogger, setLogPaused, initLogger } from '../utils/logger';
 import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
@@ -162,8 +161,7 @@ export default function LogsView() {
         filters: [{ name: 'Log Files', extensions: ['log'] }],
       });
       if (!path) return;
-      const logsContent = await invoke('export_logs', {});
-      await writeTextFile(path, logsContent);
+      await invoke('export_logs', { destination: path });
       addToast({ message: 'Support logs exported', variant: 'success' });
     } catch (e) {
       console.error('Export failed:', e);

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { collectRegularFiles, sha256 } from './engine-payload-integrity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(__dirname, '..');
 
 function argValue(name) {
@@ -87,13 +88,23 @@ function assertPackageRecommendations(packageFile, packageType) {
   }
 }
 
+export function parseDebianPackagePath(line) {
+  const match = line.match(/^\S+\s+\S+\s+\S+\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+(.*)$/);
+  if (!match) {
+    throw new Error(`Could not parse a Debian package path: ${line}`);
+  }
+  return match[1].replace(/^\.\//, '');
+}
+
 function assertSafePackageListing(listing, packageType) {
   const lines = listing.split('\n').filter(Boolean);
   const paths = packageType === 'deb'
     ? lines.map(line => {
-      const marker = line.indexOf('./');
-      if (marker < 0) fail(`Could not parse a Debian package path: ${line}`);
-      return line.slice(marker + 2);
+      try {
+        return parseDebianPackagePath(line);
+      } catch (error) {
+        fail(error.message);
+      }
     })
     : lines.map(line => line.replace(/^\/+/, ''));
 
@@ -214,28 +225,34 @@ function verifyExtractedPackage(packageType, packageFile, target, root) {
   ], { env: { APPDIR: root } });
 }
 
-const target = argValue('--target');
-if (!target) fail('Pass --target <Rust target triple>.');
-if (os.platform() !== 'linux') fail('Linux package verification must run on Linux.');
+function main() {
+  const target = argValue('--target');
+  if (!target) fail('Pass --target <Rust target triple>.');
+  if (os.platform() !== 'linux') fail('Linux package verification must run on Linux.');
 
-const bundleRoot = path.join(repoRoot, 'src-tauri', 'target', target, 'release', 'bundle');
-const deb = findSingle(path.join(bundleRoot, 'deb'), '.deb', 'Debian package');
-const rpm = findSingle(path.join(bundleRoot, 'rpm'), '.rpm', 'RPM package');
-const extractionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'firelink-linux-packages-'));
-const debRoot = path.join(extractionRoot, 'deb');
-const rpmRoot = path.join(extractionRoot, 'rpm');
+  const bundleRoot = path.join(repoRoot, 'src-tauri', 'target', target, 'release', 'bundle');
+  const deb = findSingle(path.join(bundleRoot, 'deb'), '.deb', 'Debian package');
+  const rpm = findSingle(path.join(bundleRoot, 'rpm'), '.rpm', 'RPM package');
+  const extractionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'firelink-linux-packages-'));
+  const debRoot = path.join(extractionRoot, 'deb');
+  const rpmRoot = path.join(extractionRoot, 'rpm');
 
-try {
-  assertPackageListing(deb, 'deb', 'usr/share/metainfo/com.nimbold.firelink.metainfo.xml');
-  assertPackageRecommendations(deb, 'deb');
-  extractDeb(deb, debRoot);
-  verifyExtractedPackage('deb', deb, target, debRoot);
+  try {
+    assertPackageListing(deb, 'deb', 'usr/share/metainfo/com.nimbold.firelink.metainfo.xml');
+    assertPackageRecommendations(deb, 'deb');
+    extractDeb(deb, debRoot);
+    verifyExtractedPackage('deb', deb, target, debRoot);
 
-  assertPackageListing(rpm, 'rpm', 'usr/share/metainfo/com.nimbold.firelink.metainfo.xml');
-  assertPackageRecommendations(rpm, 'rpm');
-  extractRpm(rpm, rpmRoot);
-  verifyExtractedPackage('rpm', rpm, target, rpmRoot);
-  console.log('Linux .deb and .rpm payload and launch verification passed.');
-} finally {
-  fs.rmSync(extractionRoot, { recursive: true, force: true });
+    assertPackageListing(rpm, 'rpm', 'usr/share/metainfo/com.nimbold.firelink.metainfo.xml');
+    assertPackageRecommendations(rpm, 'rpm');
+    extractRpm(rpm, rpmRoot);
+    verifyExtractedPackage('rpm', rpm, target, rpmRoot);
+    console.log('Linux .deb and .rpm payload and launch verification passed.');
+  } finally {
+    fs.rmSync(extractionRoot, { recursive: true, force: true });
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
 }

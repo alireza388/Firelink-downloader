@@ -64,6 +64,7 @@ jobs:
             libtinfo5 \
             rpm \
             cpio \
+            libarchive-tools \
             desktop-file-utils \
             xdg-utils
       - run: npm ci

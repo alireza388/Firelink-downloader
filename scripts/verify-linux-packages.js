@@ -123,7 +123,13 @@ function extractDeb(packageFile, destination) {
 
 function extractRpm(packageFile, destination) {
   fs.mkdirSync(destination, { recursive: true });
-  run('bash', ['-o', 'pipefail', '-c', 'rpm2cpio "$1" | (cd "$2" && cpio --no-absolute-filenames -idm --quiet)', '--', packageFile, destination]);
+  run('bsdtar', [
+    '--extract',
+    '--file', packageFile,
+    '--directory', destination,
+    '--no-same-owner',
+    '--no-same-permissions',
+  ]);
 }
 
 function readPayloadManifest(root, label) {

@@ -16,13 +16,29 @@ struct CountingSpawner {
 
 struct DelayedAria2Spawner {
     gid_tx: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    add_uri_calls: AtomicUsize,
     remove_uri_calls: AtomicUsize,
+}
+
+struct FailFirstAria2Spawner {
+    add_uri_calls: AtomicUsize,
+    fail_first: std::sync::atomic::AtomicBool,
+}
+
+impl FailFirstAria2Spawner {
+    fn new() -> Self {
+        Self {
+            add_uri_calls: AtomicUsize::new(0),
+            fail_first: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
 }
 
 impl DelayedAria2Spawner {
     fn new(gid_tx: tokio::sync::oneshot::Sender<()>) -> Self {
         Self {
             gid_tx: tokio::sync::Mutex::new(Some(gid_tx)),
+            add_uri_calls: AtomicUsize::new(0),
             remove_uri_calls: AtomicUsize::new(0),
         }
     }
@@ -31,10 +47,14 @@ impl DelayedAria2Spawner {
 #[async_trait::async_trait]
 impl SidecarSpawner for DelayedAria2Spawner {
     async fn add_uri(&self, _id: &str, _payload: &SpawnPayload) -> Result<String, String> {
-        let tx = self.gid_tx.lock().await.take().expect("gid release sender");
-        let _ = tx.send(());
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        Ok("late-gid".to_string())
+        let call = self.add_uri_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(tx) = self.gid_tx.lock().await.take() {
+            let _ = tx.send(());
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok("late-gid".to_string())
+        } else {
+            Ok(format!("gid-{call}"))
+        }
     }
 
     async fn remove_uri(&self, gid: &str) -> Result<(), String> {
@@ -45,6 +65,29 @@ impl SidecarSpawner for DelayedAria2Spawner {
 
     async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
         unreachable!("media is not used by delayed aria2 tests")
+    }
+}
+
+#[async_trait::async_trait]
+impl SidecarSpawner for FailFirstAria2Spawner {
+    async fn add_uri(&self, _id: &str, _payload: &SpawnPayload) -> Result<String, String> {
+        let call = self.add_uri_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if self
+            .fail_first
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            Err("initial aria2 RPC failure".to_string())
+        } else {
+            Ok(format!("gid-{call}"))
+        }
+    }
+
+    async fn remove_uri(&self, _gid: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+        unreachable!("media is not used by fail-first aria2 tests")
     }
 }
 
@@ -193,6 +236,41 @@ async fn aria2_control_epoch_invalidates_stale_resume_workers() {
     assert_ne!(pause, first_resume);
     assert!(!mgr.is_aria2_control_epoch_current("a", first_resume).await);
     assert!(mgr.is_aria2_control_epoch_current("a", pause).await);
+}
+
+#[tokio::test]
+async fn stale_terminal_event_cannot_complete_a_newer_control_epoch() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, _spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    manager.push(aria2_task("stale-event")).await.unwrap();
+    let permit = manager.acquire_permit().await.expect("permit");
+    manager.park_permit("stale-event", permit).await;
+
+    let old_epoch = manager.next_aria2_control_epoch("stale-event").await;
+    manager
+        .remember_gid("stale-event".to_string(), "gid-old".to_string())
+        .await;
+    manager.next_aria2_control_epoch("stale-event").await;
+
+    manager
+        .handle_aria2_event("gid-old", PendingOutcome::Complete)
+        .await;
+
+    assert!(
+        !manager
+            .is_aria2_control_epoch_current("stale-event", old_epoch)
+            .await
+    );
+    assert_eq!(
+        manager.available_permits(),
+        0,
+        "a terminal event from an older epoch must not release the newer lifecycle permit"
+    );
+    manager.forget_aria2_gid("stale-event").await;
+    manager.release_permit("stale-event").await;
+    manager.release_registered_id("stale-event").await;
 }
 
 #[tokio::test]
@@ -562,6 +640,296 @@ async fn transient_aria2_error_reissues_after_backoff() {
     assert_eq!(manager.available_permits(), 1);
 
     manager.release_permit("retry").await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn duplicate_transient_events_schedule_only_one_retry_worker() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    let mut task = aria2_task("duplicate-retry");
+    task.payload.max_tries = Some(1);
+    manager.push(task).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let error = PendingOutcome::Error(
+        "aria2 error code 1: Failed to receive data, cause: protocol error".to_string(),
+    );
+    manager.handle_aria2_event("gid-1", error.clone()).await;
+    manager.handle_aria2_event("gid-1", error).await;
+
+    timeout(Duration::from_secs(4), async {
+        loop {
+            if spawner.add_uri_calls.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("one retry should be issued");
+    assert_eq!(
+        spawner.add_uri_calls.load(Ordering::SeqCst),
+        2,
+        "duplicate terminal events must not create duplicate aria2 jobs"
+    );
+
+    manager
+        .handle_aria2_event(
+            "gid-2",
+            PendingOutcome::Error("HTTP 404 Not Found".to_string()),
+        )
+        .await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn stale_retry_worker_cannot_reenter_after_new_control_epoch() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    let mut task = aria2_task("stale-retry");
+    task.payload.max_tries = Some(1);
+    manager.push(task).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    manager
+        .handle_aria2_event(
+            "gid-1",
+            PendingOutcome::Error(
+                "aria2 error code 1: Failed to receive data, cause: protocol error".to_string(),
+            ),
+        )
+        .await;
+
+    // Simulate a newer pause/resume lifecycle while the old worker is in its
+    // cancel-safe backoff. Clearing the reusable cancellation flag must not
+    // revive the worker because its control epoch is stale.
+    manager.next_aria2_control_epoch("stale-retry").await;
+    manager.allow_aria2_retries("stale-retry").await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    assert_eq!(
+        spawner.add_uri_calls.load(Ordering::SeqCst),
+        1,
+        "a retry worker from an older lifecycle must not add a new gid"
+    );
+    manager.release_permit("stale-retry").await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn completion_event_for_retrying_gid_cannot_release_new_lifecycle_permit() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    let mut task = aria2_task("retry-complete-race");
+    task.payload.max_tries = Some(1);
+    manager.push(task).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    manager
+        .handle_aria2_event(
+            "gid-1",
+            PendingOutcome::Error(
+                "aria2 error code 1: Failed to receive data, cause: protocol error".to_string(),
+            ),
+        )
+        .await;
+    manager
+        .handle_aria2_event("gid-1", PendingOutcome::Complete)
+        .await;
+    assert_eq!(
+        manager.available_permits(),
+        0,
+        "a duplicate completion for the retrying gid must not free the permit"
+    );
+
+    timeout(Duration::from_secs(4), async {
+        loop {
+            if spawner.add_uri_calls.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("retry should create the next gid");
+    manager
+        .handle_aria2_event("gid-2", PendingOutcome::Complete)
+        .await;
+    assert_eq!(manager.available_permits(), 1);
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn initial_aria2_add_failure_releases_registry_for_restart() {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let spawner = Arc::new(FailFirstAria2Spawner::new());
+    let manager = Arc::new(QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        spawner.clone(),
+    ));
+    manager
+        .push_with_generation(aria2_task("initial-failure"), 1)
+        .await
+        .unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if !manager.is_registered("initial-failure").await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("failed initial addUri must release the registry id");
+
+    manager
+        .push_with_generation(aria2_task("initial-failure"), 2)
+        .await
+        .expect("the same download must be restartable after initial add failure");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 2);
+    manager.release_permit("initial-failure").await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn late_initial_gid_cannot_attach_to_a_newer_lifecycle() {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let (gid_started_tx, gid_started_rx) = tokio::sync::oneshot::channel();
+    let spawner = Arc::new(DelayedAria2Spawner::new(gid_started_tx));
+    let manager = Arc::new(QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        spawner.clone(),
+    ));
+    manager
+        .push_with_generation(aria2_task("dispatch-race"), 1)
+        .await
+        .unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    gid_started_rx.await.expect("first addUri should start");
+
+    // Model pause while the first addUri is still resolving, followed by a
+    // new enqueue for the same frontend download id.
+    manager.next_aria2_control_epoch("dispatch-race").await;
+    manager.cancel_aria2_retries("dispatch-race").await;
+    manager.clear_aria2_retry_state("dispatch-race").await;
+    manager.release_permit("dispatch-race").await;
+    manager.release_registered_id("dispatch-race").await;
+    manager
+        .push_with_generation(aria2_task("dispatch-race"), 2)
+        .await
+        .unwrap();
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if manager.aria2_gid_for_download("dispatch-race").as_deref() == Some("gid-2") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("new lifecycle should own the mapped gid");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(spawner.add_uri_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        spawner.remove_uri_calls.load(Ordering::SeqCst),
+        1,
+        "the late gid from the old lifecycle must be removed"
+    );
+    assert_eq!(
+        manager.aria2_gid_for_download("dispatch-race").as_deref(),
+        Some("gid-2")
+    );
+    manager.release_permit("dispatch-race").await;
+    dispatcher.abort();
+}
+
+#[tokio::test]
+async fn transient_error_buffered_before_gid_mapping_still_retries() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let (gid_started_tx, gid_started_rx) = tokio::sync::oneshot::channel();
+    let spawner = Arc::new(DelayedAria2Spawner::new(gid_started_tx));
+    let manager = Arc::new(QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        spawner.clone(),
+    ));
+    let mut task = aria2_task("early-error");
+    task.payload.max_tries = Some(1);
+    manager.push(task).await.unwrap();
+
+    let dispatcher = {
+        let manager = Arc::clone(&manager);
+        tokio::spawn(async move { manager.run_dispatcher().await })
+    };
+    gid_started_rx.await.expect("initial addUri should start");
+    manager
+        .handle_aria2_event(
+            "late-gid",
+            PendingOutcome::Error(
+                "aria2 error code 1: Failed to receive data, cause: protocol error".to_string(),
+            ),
+        )
+        .await;
+
+    timeout(Duration::from_secs(4), async {
+        loop {
+            if spawner.add_uri_calls.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the buffered transient error must enter the retry loop");
+
+    manager
+        .handle_aria2_event(
+            "gid-2",
+            PendingOutcome::Error("HTTP 404 Not Found".to_string()),
+        )
+        .await;
     dispatcher.abort();
 }
 

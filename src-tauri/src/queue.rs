@@ -4,15 +4,50 @@ use log;
 use serde::Deserialize;
 use serde_json;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Manager};
-use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
 use ts_rs::TS;
 
 /// Default capacity when no setting is read yet.
 pub const DEFAULT_MAX_CONCURRENT: usize = 3;
 pub const MEDIA_RUN_CANCELLED: &str = "__firelink_media_run_cancelled__";
+
+type Aria2ControlLocks = Arc<StdMutex<HashMap<String, Arc<Mutex<()>>>>>;
+
+#[derive(Debug, Clone)]
+pub struct Aria2GidMapping {
+    pub id: String,
+    pub epoch: u64,
+}
+
+/// Owns one per-download control lock and removes its idle map entry when the
+/// last operation for that download finishes.
+pub struct Aria2ControlGuard {
+    locks: Aria2ControlLocks,
+    id: String,
+    lock: Arc<Mutex<()>>,
+    guard: Option<OwnedMutexGuard<()>>,
+}
+
+impl Drop for Aria2ControlGuard {
+    fn drop(&mut self) {
+        // Release the async mutex before inspecting Arc ownership. The map
+        // entry and this guard are then the only strong references when no
+        // waiter is pending, so the entry can be removed safely.
+        self.guard.take();
+        let mut locks = self.locks.lock().unwrap_or_else(|error| error.into_inner());
+        let should_remove = locks.get(&self.id).is_some_and(|candidate| {
+            Arc::ptr_eq(candidate, &self.lock) && Arc::strong_count(&self.lock) == 2
+        });
+        if should_remove {
+            locks.remove(&self.id);
+        }
+    }
+}
 
 /// Outcome of an aria2 completion that arrived before its gid was stored.
 /// Carries the outcome so the correct state emit survives the race.
@@ -83,11 +118,6 @@ pub trait SidecarSpawner: Send + Sync + 'static {
         Err("aria2 connection refresh is unavailable".to_string())
     }
 
-    /// Leave an aria2 transfer paused after a refresh races with a user pause.
-    async fn pause_uri(&self, _gid: &str) -> Result<(), String> {
-        Err("aria2 pause is unavailable".to_string())
-    }
-
     /// Run a media download to completion. The permit is parked for the full
     /// duration; release is handled by QueueManager on the runner's exit.
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
@@ -107,7 +137,7 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     notify: Notify,
 
     /// aria2 gid -> download id map (shared with the WS poller).
-    pub aria2_gids: Arc<std::sync::RwLock<HashMap<String, String>>>,
+    pub aria2_gids: Arc<std::sync::RwLock<HashMap<String, Aria2GidMapping>>>,
 
     /// gid -> buffered (id_placeholder, outcome) for completions that arrived
     /// before the gid was stored. Drained by `remember_gid`.
@@ -121,8 +151,26 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
 
     /// Download ids whose aria2 retry loop must not create another job.
     aria2_retry_cancelled: Mutex<HashSet<String>>,
+    /// Download ids with a retry worker currently sleeping or re-adding a gid.
+    /// A duplicate aria2 error event must not create a second worker.
+    aria2_retry_inflight: Mutex<HashMap<String, u64>>,
+    /// The gid whose terminal event initiated each in-flight retry.
+    aria2_retrying_gids: Mutex<HashSet<String>>,
+    /// Gids whose terminal events must be ignored after a lifecycle transition.
+    /// This is bounded so a long-lived daemon cannot grow the set indefinitely.
+    aria2_ignored_gids: Mutex<VecDeque<String>>,
     /// Wakes retry backoff workers when a pause/remove action cancels them.
     aria2_retry_cancel_notify: Notify,
+
+    /// Serializes control RPCs for one download (pause, resume, refresh, and
+    /// retry handoff) without blocking control operations for other downloads.
+    aria2_control_locks: Aria2ControlLocks,
+
+    /// Serializes GID mapping transitions with early WebSocket event
+    /// buffering. The RwLock protects individual map access; this lock makes
+    /// map replacement, ignored-GID retirement, and pending-event draining a
+    /// single state transition.
+    aria2_gid_state: Mutex<()>,
 
     /// Monotonic per-download aria2 control generation. Long-running queued
     /// resume tasks capture this and abort when a later pause/remove wins.
@@ -163,7 +211,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
             aria2_payloads: Mutex::new(HashMap::new()),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
             aria2_retry_cancelled: Mutex::new(HashSet::new()),
+            aria2_retry_inflight: Mutex::new(HashMap::new()),
+            aria2_retrying_gids: Mutex::new(HashSet::new()),
+            aria2_ignored_gids: Mutex::new(VecDeque::new()),
             aria2_retry_cancel_notify: Notify::new(),
+            aria2_control_locks: Arc::new(StdMutex::new(HashMap::new())),
+            aria2_gid_state: Mutex::new(()),
             aria2_control_epochs: Mutex::new(HashMap::new()),
             spawner,
             app_handle,
@@ -184,6 +237,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// Explicitly release a backend registry id (e.g. on un-resumable false paths, removals, or detach).
     pub async fn release_registered_id(&self, id: &str) {
         self.registered_ids.lock().await.remove(id);
+        // A released lifecycle cannot be resumed by a delayed retry worker.
+        // Epoch checks remain the authoritative guard; removing this marker
+        // prevents terminal downloads from accumulating cancellation entries.
+        self.aria2_retry_cancelled.lock().await.remove(id);
     }
 
     pub async fn is_registered(&self, id: &str) -> bool {
@@ -322,6 +379,29 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.aria2_retry_cancelled.lock().await.contains(id)
     }
 
+    /// Serialize control RPCs for one download while allowing unrelated
+    /// downloads to pause, resume, or refresh concurrently.
+    pub async fn acquire_aria2_control(&self, id: &str) -> Aria2ControlGuard {
+        let lock = {
+            let mut locks = self
+                .aria2_control_locks
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            Arc::clone(
+                locks
+                    .entry(id.to_string())
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        let guard = lock.clone().lock_owned().await;
+        Aria2ControlGuard {
+            locks: Arc::clone(&self.aria2_control_locks),
+            id: id.to_string(),
+            lock,
+            guard: Some(guard),
+        }
+    }
+
     pub async fn has_aria2_retry_state(&self, id: &str) -> bool {
         self.aria2_retry_strikes.lock().await.contains_key(id)
     }
@@ -430,11 +510,14 @@ impl<R: tauri::Runtime> QueueManager<R> {
         };
 
         for id in ids_to_fail {
-            self.apply_completion(
-                &id,
-                PendingOutcome::Error("Aria2 WebSocket connection lost".to_string()),
-            )
-            .await;
+            let _control_guard = self.acquire_aria2_control(&id).await;
+            if matches!(self.active_kind(&id).await, Some(TaskKind::Aria2)) {
+                self.apply_completion_locked(
+                    &id,
+                    PendingOutcome::Error("Aria2 WebSocket connection lost".to_string()),
+                )
+                .await;
+            }
         }
     }
 
@@ -532,6 +615,11 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
         match task.kind {
             TaskKind::Aria2 => {
+                // Every backend aria2 dispatch starts a new control lifecycle.
+                // This invalidates retry workers left behind by a previous
+                // failed or cancelled lifecycle before retry cancellation is
+                // made reusable for the new task.
+                let lifecycle_epoch = self.next_aria2_control_epoch(&id).await;
                 self.aria2_retry_cancelled.lock().await.remove(&id);
                 self.aria2_payloads
                     .lock()
@@ -540,8 +628,14 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 self.aria2_retry_strikes.lock().await.remove(&id);
                 match self.spawner.add_uri(&id, &task.payload).await {
                     Ok(gid) => {
+                        let control_guard = self.acquire_aria2_control(&id).await;
                         let cancelled = self.aria2_retry_cancelled.lock().await.contains(&id);
-                        if cancelled || !self.is_registered(&id).await {
+                        let current_lifecycle = self
+                            .is_aria2_control_epoch_current(&id, lifecycle_epoch)
+                            .await
+                            && self.is_registered(&id).await;
+                        if cancelled || !current_lifecycle {
+                            drop(control_guard);
                             log::info!(
                                 "aria2 dispatch cancellation [{}]: removing late gid {}",
                                 id,
@@ -555,16 +649,38 @@ impl<R: tauri::Runtime> QueueManager<R> {
                                     error
                                 );
                             }
-                            self.clear_aria2_retry_state(&id).await;
-                            self.release_permit(&id).await;
+                            self.ignore_aria2_gid(&gid).await;
+                            if current_lifecycle {
+                                self.clear_aria2_retry_state(&id).await;
+                                self.release_permit(&id).await;
+                            }
                             return;
                         }
-                        self.remember_gid(id.clone(), gid).await;
+                        let buffered_outcome = self.remember_gid(id.clone(), gid.clone()).await;
+                        drop(control_guard);
+                        if let Some(outcome) = buffered_outcome {
+                            self.handle_aria2_event(&gid, outcome).await;
+                        }
                     }
                     Err(error) => {
-                        self.clear_aria2_retry_state(&id).await;
-                        self.emit_failed(&id, error);
-                        self.release_permit(&id).await;
+                        let _control_guard = self.acquire_aria2_control(&id).await;
+                        let current_lifecycle = self
+                            .is_aria2_control_epoch_current(&id, lifecycle_epoch)
+                            .await
+                            && self.is_registered(&id).await;
+                        if current_lifecycle {
+                            self.next_aria2_control_epoch(&id).await;
+                            self.cancel_aria2_retries(&id).await;
+                            self.clear_aria2_retry_state(&id).await;
+                            self.release_permit(&id).await;
+                            self.release_registered_id(&id).await;
+                            self.emit_failed(&id, error);
+                        } else {
+                            log::info!(
+                                "aria2 dispatch [{}]: ignoring stale addUri failure after a newer lifecycle took ownership",
+                                id
+                            );
+                        }
                     }
                 }
             }
@@ -606,39 +722,73 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .emit("download-state", DownloadStateEvent::failed(id, error));
     }
 
-    /// Store gid -> id, then reconcile any buffered completion for that gid.
-    pub async fn remember_gid(&self, id: String, gid: String) {
-        {
-            let mut gids = self.aria2_gids.write().unwrap();
-            gids.retain(|existing_gid, existing_id| {
-                let keep = existing_id != &id || existing_gid == &gid;
-                if !keep {
-                    log::warn!(
-                        "aria2 gid transition [{}]: dropping stale mapping {} before storing {}",
-                        id,
-                        existing_gid,
-                        gid
-                    );
-                }
-                keep
-            });
-            gids.insert(gid.clone(), id.clone());
-        }
+    /// Store gid -> id and return any buffered terminal event for the caller
+    /// to reconcile against the correct event path. In particular, buffered
+    /// errors must still pass through transient retry classification.
+    pub async fn remember_gid(&self, id: String, gid: String) -> Option<PendingOutcome> {
+        let epoch = self.current_aria2_control_epoch(&id).await;
+        let buffered_outcome = {
+            let _gid_state = self.aria2_gid_state.lock().await;
+            let mut replaced_gids = Vec::new();
+            {
+                let mut gids = self.aria2_gids.write().unwrap();
+                gids.retain(|existing_gid, existing_id| {
+                    let keep = existing_id.id != id.as_str() || existing_gid == &gid;
+                    if !keep {
+                        replaced_gids.push(existing_gid.clone());
+                        log::warn!(
+                            "aria2 gid transition [{}]: dropping stale mapping {} before storing {}",
+                            id,
+                            existing_gid,
+                            gid
+                        );
+                    }
+                    keep
+                });
+                gids.insert(
+                    gid.clone(),
+                    Aria2GidMapping {
+                        id: id.clone(),
+                        epoch,
+                    },
+                );
+            }
+
+            self.unignore_aria2_gid_locked(&gid).await;
+            for replaced_gid in &replaced_gids {
+                self.ignore_aria2_gid_locked(replaced_gid).await;
+            }
+            let mut buffered = self.pending_completion.lock().await;
+            for replaced_gid in &replaced_gids {
+                buffered.remove(replaced_gid);
+            }
+            buffered.remove(&gid).map(|(_buf_id, outcome)| outcome)
+        };
         log::info!("aria2 gid transition [{}]: mapped {}", id, gid);
-        let buffered = self.pending_completion.lock().await.remove(&gid);
-        if let Some((_buf_id, outcome)) = buffered {
-            self.apply_completion(&id, outcome).await;
-        }
+        buffered_outcome
     }
 
     /// Apply an aria2 completion outcome: release permit + emit state.
     pub async fn apply_completion(&self, id: &str, outcome: PendingOutcome) {
+        let _control_guard = self.acquire_aria2_control(id).await;
+        self.apply_completion_locked(id, outcome).await;
+    }
+
+    /// Apply a completion while the caller owns the download control lock.
+    /// Keeping the epoch transition and terminal cleanup under that lock
+    /// prevents an old WebSocket event from completing a newer lifecycle.
+    async fn apply_completion_locked(&self, id: &str, outcome: PendingOutcome) {
+        // A terminal event invalidates every delayed retry or control worker
+        // from the previous lifecycle before releasing its permit.
+        self.next_aria2_control_epoch(id).await;
+        self.cancel_aria2_retries(id).await;
         match outcome {
             PendingOutcome::Complete => {
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
-                self.emit_state(id, DownloadStatus::Completed);
                 self.release_registered_id(id).await;
+                self.release_permit(id).await;
+                self.emit_state(id, DownloadStatus::Completed);
             }
             PendingOutcome::Error(error) => {
                 if error.to_ascii_lowercase().contains("checksum") {
@@ -656,11 +806,11 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
                 self.clear_aria2_retry_state(id).await;
                 self.forget_aria2_gid(id).await;
-                self.emit_failed(id, error);
                 self.release_registered_id(id).await;
+                self.release_permit(id).await;
+                self.emit_failed(id, error);
             }
         }
-        self.release_permit(id).await;
     }
 
     pub async fn clear_aria2_retry_state(&self, id: &str) {
@@ -680,12 +830,55 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.aria2_retry_cancelled.lock().await.remove(id);
     }
 
+    async fn finish_aria2_retry(&self, id: &str, gid: &str, retry_epoch: u64) {
+        self.release_aria2_retry_inflight(id, retry_epoch).await;
+        self.aria2_retrying_gids.lock().await.remove(gid);
+    }
+
+    async fn release_aria2_retry_inflight(&self, id: &str, retry_epoch: u64) {
+        let mut inflight = self.aria2_retry_inflight.lock().await;
+        if inflight.get(id).copied() == Some(retry_epoch) {
+            inflight.remove(id);
+        }
+    }
+
+    async fn ignore_aria2_gid(&self, gid: &str) {
+        let _gid_state = self.aria2_gid_state.lock().await;
+        self.ignore_aria2_gid_locked(gid).await;
+    }
+
+    async fn ignore_aria2_gid_locked(&self, gid: &str) {
+        const MAX_IGNORED_GIDS: usize = 1024;
+        let mut ignored = self.aria2_ignored_gids.lock().await;
+        if !ignored.iter().any(|known| known == gid) {
+            ignored.push_back(gid.to_string());
+        }
+        while ignored.len() > MAX_IGNORED_GIDS {
+            ignored.pop_front();
+        }
+    }
+
+    async fn unignore_aria2_gid_locked(&self, gid: &str) {
+        self.aria2_ignored_gids
+            .lock()
+            .await
+            .retain(|known| known != gid);
+    }
+
+    async fn is_aria2_gid_ignored_locked(&self, gid: &str) -> bool {
+        self.aria2_ignored_gids
+            .lock()
+            .await
+            .iter()
+            .any(|known| known == gid)
+    }
+
     pub fn aria2_gid_for_download(&self, id: &str) -> Option<String> {
         self.aria2_gids
             .read()
             .unwrap()
             .iter()
-            .find_map(|(gid, download_id)| (download_id == id).then(|| gid.clone()))
+            .find_map(|(gid, mapping)| (mapping.id == id).then(|| gid.clone()))
     }
 
     pub fn aria2_gid_mappings(&self) -> Vec<(String, String)> {
@@ -693,7 +886,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .read()
             .unwrap()
             .iter()
-            .map(|(gid, id)| (gid.clone(), id.clone()))
+            .map(|(gid, mapping)| (gid.clone(), mapping.id.clone()))
             .collect()
     }
 
@@ -701,6 +894,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// persistent connection-pool collapse or a true zero-progress stall.
     /// The transfer keeps its gid, partial file, and queue permit.
     pub async fn refresh_aria2_connections(&self, id: &str, gid: &str) -> Result<(), String> {
+        let _control_guard = self.acquire_aria2_control(id).await;
         if self.aria2_gid_for_download(id).as_deref() != Some(gid)
             || !self.is_registered(id).await
             || self.is_aria2_retry_cancelled(id).await
@@ -716,7 +910,11 @@ impl<R: tauri::Runtime> QueueManager<R> {
             && self.is_aria2_control_epoch_current(id, epoch).await
             && self.aria2_gid_for_download(id).as_deref() == Some(gid);
         if !still_current {
-            let _ = self.spawner.pause_uri(gid).await;
+            log::info!(
+                "aria2 connection refresh [{}]: control state changed while refreshing gid {}; leaving the newer action in charge",
+                id,
+                gid
+            );
         }
         Ok(())
     }
@@ -724,11 +922,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// Remove every gid mapping for a download and discard buffered terminal
     /// events for those gids. Returns the most recently encountered gid.
     pub async fn forget_aria2_gid(&self, id: &str) -> Option<String> {
+        let _gid_state = self.aria2_gid_state.lock().await;
         let removed = {
             let mut gids = self.aria2_gids.write().unwrap();
             let removed: Vec<String> = gids
                 .iter()
-                .filter(|(_, download_id)| *download_id == id)
+                .filter(|(_, mapping)| mapping.id == id)
                 .map(|(gid, _)| gid.clone())
                 .collect();
             for gid in &removed {
@@ -739,6 +938,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
         if removed.is_empty() {
             return None;
+        }
+
+        for gid in &removed {
+            self.ignore_aria2_gid_locked(gid).await;
         }
 
         let mut buffered = self.pending_completion.lock().await;
@@ -752,21 +955,66 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// Intercept transient `onDownloadError` events: backoff, re-issue
     /// `addUri`, and rotate the gid mapping. Permanent errors and exhausted
     /// strikes fall through to a hard `Failed` state.
-    async fn handle_aria2_download_error(self: &Arc<Self>, gid: &str, error: String) {
-        let id = {
+    fn handle_aria2_download_error(
+        self: &Arc<Self>,
+        gid: String,
+        error: String,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+        let this = Arc::clone(self);
+        Box::pin(async move {
+            this.handle_aria2_download_error_inner(&gid, error).await;
+        })
+    }
+
+    /// Resolve a WebSocket event against the GID map, or buffer it while the
+    /// map transition is still in flight. The state lock closes the window in
+    /// which an event could be inserted after remember_gid drained it.
+    async fn map_or_buffer_aria2_event(
+        &self,
+        gid: &str,
+        outcome: PendingOutcome,
+    ) -> Option<(Aria2GidMapping, PendingOutcome)> {
+        let _gid_state = self.aria2_gid_state.lock().await;
+        if self.is_aria2_gid_ignored_locked(gid).await {
+            return None;
+        }
+        let mapping = {
             let gids = self.aria2_gids.read().unwrap();
             gids.get(gid).cloned()
         };
-        let id = match id {
-            Some(id) => id,
-            None => {
-                self.pending_completion.lock().await.insert(
-                    gid.to_string(),
-                    (String::new(), PendingOutcome::Error(error)),
-                );
-                return;
-            }
+        if let Some(mapping) = mapping {
+            return Some((mapping, outcome));
+        }
+        self.pending_completion
+            .lock()
+            .await
+            .insert(gid.to_string(), (String::new(), outcome));
+        None
+    }
+
+    async fn handle_aria2_download_error_inner(self: &Arc<Self>, gid: &str, error: String) {
+        let Some((mapping, PendingOutcome::Error(error))) = self
+            .map_or_buffer_aria2_event(gid, PendingOutcome::Error(error))
+            .await
+        else {
+            return;
         };
+
+        let _control_guard = self.acquire_aria2_control(&mapping.id).await;
+        let current_mapping = {
+            let gids = self.aria2_gids.read().unwrap();
+            gids.get(gid).cloned()
+        };
+        if current_mapping
+            .as_ref()
+            .is_none_or(|current| current.id != mapping.id || current.epoch != mapping.epoch)
+            || !self
+                .is_aria2_control_epoch_current(&mapping.id, mapping.epoch)
+                .await
+        {
+            return;
+        }
+        let id = mapping.id;
         if self.aria2_retry_cancelled.lock().await.contains(&id) {
             log::info!(
                 "aria2 retry cancellation [{}]: ignoring error for gid {} during removal",
@@ -776,9 +1024,26 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return;
         }
 
+        if self.aria2_retrying_gids.lock().await.contains(gid) {
+            log::debug!(
+                "aria2 retry [{}]: ignoring duplicate error event for retrying gid {}",
+                id,
+                gid
+            );
+            return;
+        }
+
+        if self.aria2_retry_inflight.lock().await.contains_key(&id) {
+            log::debug!(
+                "aria2 retry [{}]: ignoring duplicate error event while retry handoff is in flight",
+                id
+            );
+            return;
+        }
+
         let payload = self.aria2_payloads.lock().await.get(&id).cloned();
         if payload.is_none() {
-            self.apply_completion(&id, PendingOutcome::Error(error))
+            self.apply_completion_locked(&id, PendingOutcome::Error(error))
                 .await;
             return;
         }
@@ -793,10 +1058,25 @@ impl<R: tauri::Runtime> QueueManager<R> {
         let transient = is_retryable_aria2_error(&error);
         let strikes_left = strike < automatic_retry_limit(payload.max_tries);
         if !(transient && strikes_left) {
-            self.apply_completion(&id, PendingOutcome::Error(error))
+            self.apply_completion_locked(&id, PendingOutcome::Error(error))
                 .await;
             return;
         }
+
+        self.aria2_retrying_gids
+            .lock()
+            .await
+            .insert(gid.to_string());
+        let retry_epoch = self.current_aria2_control_epoch(&id).await;
+        let already_inflight = {
+            let mut inflight = self.aria2_retry_inflight.lock().await;
+            inflight.insert(id.clone(), retry_epoch).is_some()
+        };
+        if already_inflight {
+            self.aria2_retrying_gids.lock().await.remove(gid);
+            return;
+        }
+        let retry_gid = gid.to_string();
 
         if is_aria2_range_mode_error(&error) {
             log::warn!(
@@ -835,44 +1115,46 @@ impl<R: tauri::Runtime> QueueManager<R> {
                     notified.await;
                 }
             };
-            let outcome = backoff_and_emit(
-                strike,
-                error_for_emit,
-                retry_cancel,
-                |reason| {
-                    use tauri::Emitter;
-                    let _ = this.app_handle.emit(
-                        "download-state",
-                        DownloadStateEvent::retrying(&id_for_task, reason),
-                    );
-                },
-            )
+            let outcome = backoff_and_emit(strike, error_for_emit, retry_cancel, |reason| {
+                use tauri::Emitter;
+                let _ = this.app_handle.emit(
+                    "download-state",
+                    DownloadStateEvent::retrying(&id_for_task, reason),
+                );
+            })
             .await;
 
             if outcome == BackoffOutcome::Aborted {
+                this.finish_aria2_retry(&id_for_task, &retry_gid, retry_epoch)
+                    .await;
                 return;
             }
 
-            if !this.active_permits.lock().await.contains_key(&id_for_task) {
-                return;
-            }
-            if this
-                .aria2_retry_cancelled
-                .lock()
-                .await
-                .contains(&id_for_task)
+            if !this.active_permits.lock().await.contains_key(&id_for_task)
+                || this.is_aria2_retry_cancelled(&id_for_task).await
+                || !this
+                    .is_aria2_control_epoch_current(&id_for_task, retry_epoch)
+                    .await
+                || !this.is_registered(&id_for_task).await
+                || this.aria2_gid_for_download(&id_for_task).as_deref() != Some(retry_gid.as_str())
             {
+                this.finish_aria2_retry(&id_for_task, &retry_gid, retry_epoch)
+                    .await;
                 return;
             }
 
             match this.spawner.add_uri(&id_for_task, &payload).await {
                 Ok(new_gid) => {
-                    if this
-                        .aria2_retry_cancelled
-                        .lock()
-                        .await
-                        .contains(&id_for_task)
-                    {
+                    let control_guard = this.acquire_aria2_control(&id_for_task).await;
+                    let stale = this.is_aria2_retry_cancelled(&id_for_task).await
+                        || !this
+                            .is_aria2_control_epoch_current(&id_for_task, retry_epoch)
+                            .await
+                        || !this.is_registered(&id_for_task).await
+                        || this.aria2_gid_for_download(&id_for_task).as_deref()
+                            != Some(retry_gid.as_str());
+                    if stale {
+                        drop(control_guard);
                         if let Err(error) = this.spawner.remove_uri(&new_gid).await {
                             log::error!(
                                 "aria2 retry cancellation [{}]: failed to remove late gid {}: {}",
@@ -882,19 +1164,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
                             );
                         } else {
                             log::info!(
-                                "aria2 retry cancellation [{}]: removed late gid {}",
+                                "aria2 retry cancellation [{}]: removed stale gid {}",
                                 id_for_task,
                                 new_gid
                             );
-                            return;
                         }
-                        let retained_gid = new_gid.clone();
-                        this.remember_gid(id_for_task.clone(), new_gid).await;
-                        log::warn!(
-                            "aria2 retry cancellation [{}]: retained late gid {} mapping for remove retry",
-                            id_for_task,
-                            retained_gid
-                        );
+                        this.finish_aria2_retry(&id_for_task, &retry_gid, retry_epoch)
+                            .await;
                         return;
                     }
                     this.aria2_retry_strikes
@@ -902,10 +1178,36 @@ impl<R: tauri::Runtime> QueueManager<R> {
                         .await
                         .insert(id_for_task.clone(), strike + 1);
                     this.emit_state(&id_for_task, DownloadStatus::Downloading);
-                    this.remember_gid(id_for_task.clone(), new_gid).await;
+                    // Stop suppressing events for the id before exposing the
+                    // new gid. The old gid remains marked as retrying until
+                    // remember_gid atomically replaces its mapping, so a
+                    // duplicate old event is still ignored while a genuine
+                    // new-gid error is allowed through.
+                    this.release_aria2_retry_inflight(&id_for_task, retry_epoch)
+                        .await;
+                    let new_gid_for_event = new_gid.clone();
+                    let buffered_outcome = this.remember_gid(id_for_task.clone(), new_gid).await;
+                    this.aria2_retrying_gids.lock().await.remove(&retry_gid);
+                    drop(control_guard);
+                    if let Some(outcome) = buffered_outcome {
+                        this.handle_aria2_event(&new_gid_for_event, outcome).await;
+                    }
                 }
                 Err(retry_error) => {
-                    this.apply_completion(&id_for_task, PendingOutcome::Error(retry_error))
+                    let control_guard = this.acquire_aria2_control(&id_for_task).await;
+                    let stale = this.is_aria2_retry_cancelled(&id_for_task).await
+                        || !this
+                            .is_aria2_control_epoch_current(&id_for_task, retry_epoch)
+                            .await;
+                    if !stale {
+                        this.apply_completion_locked(
+                            &id_for_task,
+                            PendingOutcome::Error(retry_error),
+                        )
+                        .await;
+                    }
+                    drop(control_guard);
+                    this.finish_aria2_retry(&id_for_task, &retry_gid, retry_epoch)
                         .await;
                 }
             }
@@ -915,28 +1217,33 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// Entry point for the aria2 WS poller. Resolves gid -> id; if not yet
     /// stored, buffers the outcome for reconciliation by remember_gid.
     pub async fn handle_aria2_event(self: &Arc<Self>, gid: &str, outcome: PendingOutcome) {
-        match outcome {
-            PendingOutcome::Error(error) => {
-                self.handle_aria2_download_error(gid, error).await;
-            }
-            other => {
-                let id_opt = {
-                    let gids = self.aria2_gids.read().unwrap();
-                    gids.get(gid).cloned()
-                };
-                match id_opt {
-                    Some(id) => {
-                        self.apply_completion(&id, other).await;
-                    }
-                    None => {
-                        self.pending_completion
-                            .lock()
-                            .await
-                            .insert(gid.to_string(), (String::new(), other));
-                    }
-                }
-            }
+        if let PendingOutcome::Error(error) = outcome {
+            self.handle_aria2_download_error(gid.to_string(), error)
+                .await;
+            return;
         }
+        let Some((mapping, outcome)) = self.map_or_buffer_aria2_event(gid, outcome).await else {
+            return;
+        };
+
+        let _control_guard = self.acquire_aria2_control(&mapping.id).await;
+        if self.aria2_retrying_gids.lock().await.contains(gid) {
+            return;
+        }
+        let current_mapping = {
+            let gids = self.aria2_gids.read().unwrap();
+            gids.get(gid).cloned()
+        };
+        if current_mapping
+            .as_ref()
+            .is_none_or(|current| current.id != mapping.id || current.epoch != mapping.epoch)
+            || !self
+                .is_aria2_control_epoch_current(&mapping.id, mapping.epoch)
+                .await
+        {
+            return;
+        }
+        self.apply_completion_locked(&mapping.id, outcome).await;
     }
 
     /// Reorder a pending task up or down. Returns the new pending order.
@@ -1400,38 +1707,15 @@ impl SidecarSpawner for ProductionSpawner {
         let state = self.app_handle.state::<crate::AppState>();
         let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
         let secret = &state.aria2_secret;
-        let paused = crate::rpc_call(
-            port,
-            secret,
-            "aria2.forcePause",
-            serde_json::json!([gid]),
-        )
-        .await
-        .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
+        let paused = crate::rpc_call(port, secret, "aria2.forcePause", serde_json::json!([gid]))
+            .await
+            .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
         crate::ensure_aria2_gid_result("forcePause", gid, &paused)?;
 
-        let resumed = crate::rpc_call(
-            port,
-            secret,
-            "aria2.unpause",
-            serde_json::json!([gid]),
-        )
-        .await
-        .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
+        let resumed = crate::rpc_call(port, secret, "aria2.unpause", serde_json::json!([gid]))
+            .await
+            .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
         crate::ensure_aria2_gid_result("unpause", gid, &resumed)
-    }
-
-    async fn pause_uri(&self, gid: &str) -> Result<(), String> {
-        let state = self.app_handle.state::<crate::AppState>();
-        let result = crate::rpc_call(
-            state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
-            &state.aria2_secret,
-            "aria2.forcePause",
-            serde_json::json!([gid]),
-        )
-        .await
-        .map_err(|error| format!("failed to pause aria2 gid {gid}: {error}"))?;
-        crate::ensure_aria2_gid_result("forcePause", gid, &result)
     }
 
     async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {

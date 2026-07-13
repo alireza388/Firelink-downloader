@@ -3240,6 +3240,7 @@ async fn pause_download(
 ) -> Result<(), String> {
     log::info!("pause_download called for id: {}", id);
 
+    let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let active_kind = state.queue_manager.active_kind(&id).await;
     let removed_pending = state.queue_manager.remove_from_pending(&id).await;
 
@@ -3306,7 +3307,9 @@ async fn pause_download(
     }
 
     if matches!(active_kind, Some(crate::queue::TaskKind::Aria2)) {
+        state.queue_manager.next_aria2_control_epoch(&id).await;
         state.queue_manager.cancel_aria2_retries(&id).await;
+        state.queue_manager.clear_aria2_retry_state(&id).await;
     }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -3341,11 +3344,16 @@ async fn resume_download(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<bool, String> {
+    let control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let Some(gid) = state.queue_manager.aria2_gid_for_download(&id) else {
         log::info!(
             "aria2 resume [{}]: no mapped gid; re-enqueue is permitted",
             id
         );
+        state.queue_manager.next_aria2_control_epoch(&id).await;
+        state.queue_manager.cancel_aria2_retries(&id).await;
+        state.queue_manager.clear_aria2_retry_state(&id).await;
+        state.queue_manager.release_permit(&id).await;
         state.queue_manager.release_registered_id(&id).await;
         return Ok(false);
     };
@@ -3372,11 +3380,13 @@ async fn resume_download(
             let gid_clone = gid.clone();
 
             let app_handle_clone = app_handle.clone();
+            drop(control_guard);
             tauri::async_runtime::spawn(async move {
                 let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
                 if !acquired {
                     return;
                 }
+                let _control_guard = queue_manager.acquire_aria2_control(&id_clone).await;
                 if queue_manager.is_aria2_retry_cancelled(&id_clone).await
                     || !queue_manager
                         .is_aria2_control_epoch_current(&id_clone, control_epoch)
@@ -3448,18 +3458,42 @@ async fn resume_download(
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
             });
-            return Ok(true);
+            Ok(true)
         }
         "active" | "waiting" => {
+            let resume_epoch = state.queue_manager.current_aria2_control_epoch(&id).await;
+            drop(control_guard);
             state.queue_manager.ensure_aria2_permit(&id).await;
-            log::info!(
-                "aria2 resume [{}]: gid {} already {}; no duplicate job created",
-                id,
-                gid,
-                status
-            );
+            let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
+            let still_current = state.queue_manager.is_registered(&id).await
+                && !state.queue_manager.is_aria2_retry_cancelled(&id).await
+                && state
+                    .queue_manager
+                    .is_aria2_control_epoch_current(&id, resume_epoch)
+                    .await
+                && state.queue_manager.aria2_gid_for_download(&id).as_deref() == Some(gid.as_str());
+            if still_current {
+                log::info!(
+                    "aria2 resume [{}]: gid {} already {}; no duplicate job created",
+                    id,
+                    gid,
+                    status
+                );
+                use tauri::Emitter;
+                let _ = app_handle.emit(
+                    "download-state",
+                    crate::ipc::DownloadStateEvent::new(
+                        id,
+                        crate::ipc::DownloadStatus::Downloading,
+                    ),
+                );
+            }
+            Ok(true)
         }
         "complete" | "error" | "removed" => {
+            drop(control_guard);
+            state.queue_manager.next_aria2_control_epoch(&id).await;
+            state.queue_manager.cancel_aria2_retries(&id).await;
             state.queue_manager.clear_aria2_retry_state(&id).await;
             state.queue_manager.forget_aria2_gid(&id).await;
             state.queue_manager.release_permit(&id).await;
@@ -3470,19 +3504,13 @@ async fn resume_download(
                 gid,
                 status
             );
-            return Ok(false);
+            Ok(false)
         }
         other => {
-            return Err(format!("aria2 gid {gid} returned unknown status {other}"));
+            drop(control_guard);
+            Err(format!("aria2 gid {gid} returned unknown status {other}"))
         }
     }
-
-    use tauri::Emitter;
-    let _ = app_handle.emit(
-        "download-state",
-        crate::ipc::DownloadStateEvent::new(id, crate::ipc::DownloadStatus::Downloading),
-    );
-    Ok(true)
 }
 
 #[tauri::command]
@@ -3496,6 +3524,7 @@ async fn remove_download(
     log::info!("remove_download called for id: {}", id);
     let preserve_resumable = preserve_resumable.unwrap_or(false);
     let primary_path = crate::download_ownership::primary_path_for_id(&app_handle, &id)?;
+    let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
 
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
@@ -3647,6 +3676,7 @@ async fn detach_download_for_reconfigure(
     id: String,
 ) -> Result<(), String> {
     log::info!("detach_download_for_reconfigure called for id: {}", id);
+    let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let active_kind = state.queue_manager.active_kind(&id).await;
     state.queue_manager.remove_from_pending(&id).await;
     state.queue_manager.next_aria2_control_epoch(&id).await;
@@ -6161,7 +6191,12 @@ pub fn run() {
                             let mut seen_ids = std::collections::HashSet::new();
                             for status_info in active_arr {
                                 let gid = status_info.get("gid").and_then(|s| s.as_str()).unwrap_or("");
-                                let id = poll_mgr.aria2_gids.read().unwrap().get(gid).cloned();
+                                let id = poll_mgr
+                                    .aria2_gids
+                                    .read()
+                                    .unwrap()
+                                    .get(gid)
+                                    .map(|mapping| mapping.id.clone());
                                 if let Some(id) = id {
                                     seen_ids.insert(id.clone());
                                     let status = status_info.get("status").and_then(|value| value.as_str()).unwrap_or("");

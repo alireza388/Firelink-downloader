@@ -774,10 +774,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
         self.apply_completion_locked(id, outcome).await;
     }
 
-    /// Apply a completion while the caller owns the download control lock.
-    /// Keeping the epoch transition and terminal cleanup under that lock
-    /// prevents an old WebSocket event from completing a newer lifecycle.
-    async fn apply_completion_locked(&self, id: &str, outcome: PendingOutcome) {
+    /// Apply a terminal outcome while the caller owns the download control
+    /// lock. Keeping the epoch transition and terminal cleanup under that
+    /// lock prevents an old WebSocket event from completing a newer lifecycle
+    /// and lets commands reconcile an Aria2 terminal status without releasing
+    /// the lock first.
+    pub(crate) async fn apply_completion_locked(&self, id: &str, outcome: PendingOutcome) {
         // A terminal event invalidates every delayed retry or control worker
         // from the previous lifecycle before releasing its permit.
         self.next_aria2_control_epoch(id).await;

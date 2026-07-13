@@ -3272,6 +3272,22 @@ async fn pause_download(
                 ensure_aria2_gid_result("forcePause", gid, &result)?;
                 log::info!("aria2 pause [{}]: gid {} paused", id, gid);
             }
+            "complete" => {
+                // Aria2 can reach complete before its terminal event updates
+                // Firelink's row. Treat a pause request in that narrow window
+                // as an idempotent completion reconciliation, not as an
+                // actionable pause failure.
+                log::info!(
+                    "aria2 pause [{}]: gid {} was already complete; reconciling completion",
+                    id,
+                    gid
+                );
+                state
+                    .queue_manager
+                    .apply_completion_locked(&id, crate::queue::PendingOutcome::Complete)
+                    .await;
+                return Ok(());
+            }
             terminal => {
                 let retrying = state.queue_manager.has_aria2_retry_state(&id).await;
                 state.queue_manager.clear_aria2_retry_state(&id).await;

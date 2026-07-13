@@ -274,6 +274,40 @@ async fn stale_terminal_event_cannot_complete_a_newer_control_epoch() {
 }
 
 #[tokio::test]
+async fn resumed_gid_rebinds_to_the_new_control_epoch() {
+    use firelink_lib::queue::PendingOutcome;
+
+    let (mgr, _spawner) = make_manager(1);
+    let manager = Arc::new(mgr);
+    manager.push(aria2_task("resumed-gid")).await.unwrap();
+    let permit = manager.acquire_permit().await.expect("permit");
+    manager.park_permit("resumed-gid", permit).await;
+    manager
+        .remember_gid("resumed-gid".to_string(), "gid-resumed".to_string())
+        .await;
+
+    let resume_epoch = manager.next_aria2_control_epoch("resumed-gid").await;
+    manager
+        .handle_aria2_event("gid-resumed", PendingOutcome::Complete)
+        .await;
+    assert_eq!(
+        manager.available_permits(),
+        0,
+        "the old GID epoch must not complete the resumed lifecycle"
+    );
+
+    assert!(manager
+        .rebind_aria2_gid_epoch("resumed-gid", "gid-resumed", resume_epoch)
+        .await);
+    manager
+        .handle_aria2_event("gid-resumed", PendingOutcome::Complete)
+        .await;
+
+    assert_eq!(manager.available_permits(), 1);
+    assert!(manager.aria2_gid_for_download("resumed-gid").is_none());
+}
+
+#[tokio::test]
 async fn forgetting_aria2_gid_clears_mapping_without_releasing_twice() {
     let (mgr, _spawner) = make_manager(1);
     let permit = mgr.acquire_permit().await;

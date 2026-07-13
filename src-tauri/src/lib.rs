@@ -3399,7 +3399,7 @@ async fn resume_download(
             drop(control_guard);
             tauri::async_runtime::spawn(async move {
                 let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
-                if !acquired {
+                if !acquired && !queue_manager.has_active_permit(&id_clone).await {
                     return;
                 }
                 let _control_guard = queue_manager.acquire_aria2_control(&id_clone).await;
@@ -3414,6 +3414,18 @@ async fn resume_download(
                     queue_manager.release_permit(&id_clone).await;
                     return;
                 }
+                if !queue_manager
+                    .rebind_aria2_gid_epoch(&id_clone, &gid_clone, control_epoch)
+                    .await
+                {
+                    log::warn!(
+                        "aria2 resume [{}]: gid {} disappeared before lifecycle rebind",
+                        id_clone,
+                        gid_clone
+                    );
+                    queue_manager.release_permit(&id_clone).await;
+                    return;
+                }
                 let _ = app_handle_clone.emit(
                     "download-state",
                     crate::ipc::DownloadStateEvent::new(
@@ -3421,7 +3433,7 @@ async fn resume_download(
                         crate::ipc::DownloadStatus::Downloading,
                     ),
                 );
-                let result = match rpc_call(
+                let unpause_error = match rpc_call(
                     aria2_port,
                     &aria2_secret,
                     "aria2.unpause",
@@ -3429,23 +3441,66 @@ async fn resume_download(
                 )
                 .await
                 {
-                    Ok(result) => result,
-                    Err(error) => {
-                        queue_manager.release_permit(&id_clone).await;
-                        log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
-                        let _ = app_handle_clone.emit(
-                            "download-state",
-                            crate::ipc::DownloadStateEvent::new(
-                                &id_clone,
-                                crate::ipc::DownloadStatus::Failed,
-                            ),
-                        );
-                        return;
-                    }
+                    Ok(result) => ensure_aria2_gid_result("unpause", &gid_clone, &result)
+                        .err()
+                        .map(|error| error.to_string()),
+                    Err(error) => Some(format!("failed to resume aria2 gid {gid_clone}: {error}")),
                 };
-                if let Err(error) = ensure_aria2_gid_result("unpause", &gid_clone, &result) {
-                    queue_manager.release_permit(&id_clone).await;
-                    log::error!("failed to resume aria2 gid {}: {}", gid_clone, error);
+                if let Some(unpause_error) = unpause_error {
+                    match aria2_download_status(aria2_port, &aria2_secret, &gid_clone).await {
+                        Ok(status) if matches!(status.as_str(), "active" | "waiting") => {
+                            log::warn!(
+                                "aria2 resume [{}]: {} but daemon reports gid {} as {}; retaining permit",
+                                id_clone,
+                                unpause_error,
+                                gid_clone,
+                                status
+                            );
+                            return;
+                        }
+                        Ok(status) if status == "complete" => {
+                            log::info!(
+                                "aria2 resume [{}]: {} but daemon reports gid {} complete; reconciling completion",
+                                id_clone,
+                                unpause_error,
+                                gid_clone
+                            );
+                            queue_manager
+                                .apply_completion_locked(
+                                    &id_clone,
+                                    crate::queue::PendingOutcome::Complete,
+                                )
+                                .await;
+                            return;
+                        }
+                        Ok(status) => {
+                            queue_manager.release_permit(&id_clone).await;
+                            log::error!(
+                                "aria2 resume [{}]: {}; daemon reports gid {} as {}",
+                                id_clone,
+                                unpause_error,
+                                gid_clone,
+                                status
+                            );
+                        }
+                        Err(status_error) => {
+                            log::error!(
+                                "aria2 resume [{}]: {}; could not verify gid {} after the RPC failure: {}; retaining permit",
+                                id_clone,
+                                unpause_error,
+                                gid_clone,
+                                status_error
+                            );
+                            let _ = app_handle_clone.emit(
+                                "download-state",
+                                crate::ipc::DownloadStateEvent::new(
+                                    &id_clone,
+                                    crate::ipc::DownloadStatus::Failed,
+                                ),
+                            );
+                            return;
+                        }
+                    }
                     let _ = app_handle_clone.emit(
                         "download-state",
                         crate::ipc::DownloadStateEvent::new(

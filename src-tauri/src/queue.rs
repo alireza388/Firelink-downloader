@@ -498,6 +498,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
         }
     }
 
+    pub async fn has_active_permit(&self, id: &str) -> bool {
+        self.active_permits.lock().await.contains_key(id)
+    }
+
     /// Clear all permits belonging to aria2. Useful when aria2 WS connection drops.
     pub async fn clear_aria2_permits(&self) {
         let ids_to_fail: Vec<String> = {
@@ -766,6 +770,22 @@ impl<R: tauri::Runtime> QueueManager<R> {
         };
         log::info!("aria2 gid transition [{}]: mapped {}", id, gid);
         buffered_outcome
+    }
+
+    /// Rebind an existing paused GID to the new lifecycle created by resume.
+    /// The GID remains stable across aria2.pause/unpause, but its previous
+    /// epoch must not be reused after a pause invalidated that lifecycle.
+    pub async fn rebind_aria2_gid_epoch(&self, id: &str, gid: &str, epoch: u64) -> bool {
+        let _gid_state = self.aria2_gid_state.lock().await;
+        let mut gids = self.aria2_gids.write().unwrap();
+        let Some(mapping) = gids.get_mut(gid) else {
+            return false;
+        };
+        if mapping.id != id {
+            return false;
+        }
+        mapping.epoch = epoch;
+        true
     }
 
     /// Apply an aria2 completion outcome: release permit + emit state.

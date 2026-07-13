@@ -136,6 +136,99 @@ fn metadata_response_error(status: reqwest::StatusCode) -> Option<String> {
     })
 }
 
+fn metadata_cookie_header_present(headers: Option<&str>, cookies: Option<&str>) -> bool {
+    cookies.is_some_and(|value| !value.trim().is_empty())
+        || headers.is_some_and(|value| {
+            value.lines().any(|line| {
+                let Some((name, value)) = line.split_once(':') else {
+                    return false;
+                };
+                name.trim().eq_ignore_ascii_case("cookie") && !value.trim().is_empty()
+            })
+        })
+}
+
+fn metadata_headers(
+    headers: Option<&str>,
+    cookies: Option<&str>,
+    include_cookies: bool,
+) -> reqwest::header::HeaderMap {
+    let mut header_map = reqwest::header::HeaderMap::new();
+
+    if let Some(headers) = headers {
+        for line in headers.lines() {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            let Ok(name) = reqwest::header::HeaderName::from_bytes(name.trim().as_bytes()) else {
+                continue;
+            };
+            if name == reqwest::header::COOKIE && !include_cookies {
+                continue;
+            }
+            let value = value.trim();
+            if value.is_empty() {
+                continue;
+            }
+            let Ok(value) = reqwest::header::HeaderValue::from_str(value) else {
+                continue;
+            };
+            header_map.insert(name, value);
+        }
+    }
+
+    if include_cookies {
+        if let Some(cookies) = cookies.map(str::trim).filter(|value| !value.is_empty()) {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(cookies) {
+                header_map.insert(reqwest::header::COOKIE, value);
+            }
+        }
+    }
+
+    header_map
+}
+
+fn should_retry_metadata_with_cookies(
+    status: reqwest::StatusCode,
+    cookies_available: bool,
+    cookie_retry_attempted: bool,
+) -> bool {
+    cookies_available
+        && !cookie_retry_attempted
+        && matches!(
+            status,
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        )
+}
+
+fn retry_metadata_with_cookies(
+    status: reqwest::StatusCode,
+    cookies_available: bool,
+    send_cookies: &mut bool,
+    cookie_retry_attempted: &mut bool,
+    original_url: &str,
+    current_url: &mut String,
+    redirects: &mut usize,
+) -> bool {
+    if !should_retry_metadata_with_cookies(
+        status,
+        cookies_available && !*send_cookies,
+        *cookie_retry_attempted,
+    ) {
+        return false;
+    }
+
+    // A cookie retry is a new, bounded resolution pass. Keep the retry
+    // itself one-shot, while giving the authenticated pass the same redirect
+    // budget as the initial unauthenticated pass.
+    *send_cookies = true;
+    *cookie_retry_attempted = true;
+    current_url.clear();
+    current_url.push_str(original_url);
+    *redirects = 0;
+    true
+}
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub struct MetadataResponse {
@@ -1236,6 +1329,7 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
     Ok(Some((host.to_string(), addr)))
 }
 
+#[allow(clippy::too_many_arguments)] // Keep the metadata IPC fields explicit and independently typed.
 #[tauri::command]
 async fn fetch_metadata(
     url: String,
@@ -1245,12 +1339,17 @@ async fn fetch_metadata(
     headers: Option<String>,
     cookies: Option<String>,
     proxy: Option<String>,
+    defer_cookies: Option<bool>,
 ) -> Result<MetadataResponse, String> {
     ensure_reqwest_crypto_provider();
 
     let mut current_url = url.clone();
     let original_host = reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
     let mut redirects = 0;
+    let cookies_available = metadata_cookie_header_present(headers.as_deref(), cookies.as_deref());
+    let defer_cookies = defer_cookies.unwrap_or(false);
+    let mut send_cookies = !defer_cookies || !cookies_available;
+    let mut cookie_retry_attempted = false;
     let res;
 
     loop {
@@ -1296,34 +1395,19 @@ async fn fetch_metadata(
             }
         }
 
-        let mut header_map = reqwest::header::HeaderMap::new();
-        if should_send_auth {
-            if let Some(ref h_str) = headers {
-                for line in h_str.lines() {
-                    if let Some((k, v)) = line.split_once(':') {
-                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.trim().as_bytes()) {
-                            if let Ok(value) = reqwest::header::HeaderValue::from_str(v.trim()) {
-                                header_map.insert(name, value);
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(ref c_str) = cookies {
-                if !c_str.trim().is_empty() {
-                    if let Ok(value) = reqwest::header::HeaderValue::from_str(c_str.trim()) {
-                        header_map.insert(reqwest::header::COOKIE, value);
-                    }
-                }
-            }
-        }
+        let header_map = if should_send_auth {
+            metadata_headers(headers.as_deref(), cookies.as_deref(), send_cookies)
+        } else {
+            reqwest::header::HeaderMap::new()
+        };
         builder = builder.default_headers(header_map);
 
         let client = builder.build().map_err(|e| e.to_string())?;
+        let request_url = current_url.clone();
 
         let build_get_range = || {
             let mut get_req = client
-                .get(&current_url)
+                .get(&request_url)
                 .header(reqwest::header::RANGE, "bytes=0-0");
             if should_send_auth {
                 if let Some(ref user) = username {
@@ -1335,7 +1419,7 @@ async fn fetch_metadata(
             get_req
         };
 
-        let mut head_req = client.head(&current_url);
+        let mut head_req = client.head(&request_url);
         if should_send_auth {
             if let Some(ref user) = username {
                 if !user.is_empty() {
@@ -1352,6 +1436,23 @@ async fn fetch_metadata(
             })?,
         };
 
+        if retry_metadata_with_cookies(
+            current_res.status(),
+            cookies_available,
+            &mut send_cookies,
+            &mut cookie_retry_attempted,
+            &url,
+            &mut current_url,
+            &mut redirects,
+        ) {
+            // Browser captures may carry a large cookie jar even when the
+            // direct download is public. Probe without it first so a server
+            // or proxy header limit cannot turn harmless metadata into the
+            // generic fallback state. Retry once with the captured cookie
+            // header only when the origin explicitly challenges us.
+            continue;
+        }
+
         let mut needs_fallback = false;
         if (!current_res.status().is_success() && !current_res.status().is_redirection())
             || (current_res.status().is_success() && current_res.headers().get(reqwest::header::CONTENT_LENGTH).is_none())
@@ -1361,6 +1462,20 @@ async fn fetch_metadata(
 
         if needs_fallback {
             current_res = build_get_range().send().await.map_err(|e| e.to_string())?;
+
+            if retry_metadata_with_cookies(
+                current_res.status(),
+                cookies_available,
+                &mut send_cookies,
+                &mut cookie_retry_attempted,
+                &url,
+                &mut current_url,
+                &mut redirects,
+            ) {
+                // HEAD is advisory. Some origins reject it while requiring
+                // the captured session for the ranged GET that follows.
+                continue;
+            }
         }
 
         if current_res.status().is_redirection() {
@@ -5087,12 +5202,13 @@ mod tests {
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
         is_browser_cookie_extraction_error, json_lower, media_metadata_cache_key,
         media_output_template, media_progress_args, media_progress_speed,
-        metadata_response_error,
+        metadata_cookie_header_present, metadata_headers, metadata_response_error,
         normalize_speed_limit_for_aria2,
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, redact_log_line_for_output, sanitize_ytdlp_config_value,
         has_resumable_download_assets, should_cleanup_media_artifacts_after_failure,
-        FirelinkDeepLink, MediaProgress,
+        retry_metadata_with_cookies, should_retry_metadata_with_cookies, FirelinkDeepLink,
+        MediaProgress,
         MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
@@ -5122,6 +5238,83 @@ mod tests {
             metadata_response_error(reqwest::StatusCode::NOT_FOUND).as_deref(),
             Some("Metadata request failed with HTTP 404 (Not Found)")
         );
+    }
+
+    #[test]
+    fn metadata_defers_captured_cookies_until_the_origin_challenges() {
+        let headers = "Cookie: oversized=secret\nReferer: https://example.com/page";
+        assert!(metadata_cookie_header_present(
+            Some(headers),
+            Some("session=secret")
+        ));
+
+        let initial_headers = metadata_headers(Some(headers), Some("session=secret"), false);
+        assert!(initial_headers.get(reqwest::header::COOKIE).is_none());
+        assert_eq!(
+            initial_headers
+                .get(reqwest::header::REFERER)
+                .and_then(|value| value.to_str().ok()),
+            Some("https://example.com/page")
+        );
+
+        let authenticated_headers = metadata_headers(Some(headers), Some("session=secret"), true);
+        assert_eq!(
+            authenticated_headers
+                .get(reqwest::header::COOKIE)
+                .and_then(|value| value.to_str().ok()),
+            Some("session=secret")
+        );
+    }
+
+    #[test]
+    fn metadata_cookie_retry_is_limited_to_one_auth_challenge() {
+        let mut send_cookies = false;
+        let mut cookie_retry_attempted = false;
+        let mut current_url = "https://cdn.example/file".to_string();
+        let mut redirects = 3;
+
+        assert!(should_retry_metadata_with_cookies(
+            reqwest::StatusCode::FORBIDDEN,
+            true,
+            false
+        ));
+        assert!(should_retry_metadata_with_cookies(
+            reqwest::StatusCode::UNAUTHORIZED,
+            true,
+            false
+        ));
+        assert!(!should_retry_metadata_with_cookies(
+            reqwest::StatusCode::OK,
+            true,
+            false
+        ));
+        assert!(!should_retry_metadata_with_cookies(
+            reqwest::StatusCode::FORBIDDEN,
+            true,
+            true
+        ));
+        assert!(retry_metadata_with_cookies(
+            reqwest::StatusCode::FORBIDDEN,
+            true,
+            &mut send_cookies,
+            &mut cookie_retry_attempted,
+            "https://origin.example/file",
+            &mut current_url,
+            &mut redirects,
+        ));
+        assert!(send_cookies);
+        assert!(cookie_retry_attempted);
+        assert_eq!(current_url, "https://origin.example/file");
+        assert_eq!(redirects, 0);
+        assert!(!retry_metadata_with_cookies(
+            reqwest::StatusCode::FORBIDDEN,
+            true,
+            &mut send_cookies,
+            &mut cookie_retry_attempted,
+            "https://origin.example/file",
+            &mut current_url,
+            &mut redirects,
+        ));
     }
 
     #[test]

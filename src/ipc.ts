@@ -17,7 +17,7 @@ import type { PlatformInfo } from './bindings/PlatformInfo';
 
 type CommandMap = {
   fetch_metadata: {
-    args: { url: string; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null; proxy: string | null };
+    args: { url: string; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null; proxy: string | null; deferCookies?: boolean };
     result: MetadataResponse;
   };
   fetch_media_metadata: {

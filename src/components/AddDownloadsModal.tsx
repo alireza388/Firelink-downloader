@@ -146,6 +146,8 @@ export const AddDownloadsModal = () => {
     if (context) return context.cookies.trim();
     return hasExtensionRequestContext ? '' : cookies.trim();
   };
+  const shouldDeferCookiesForRow = (sourceUrl: string) =>
+    !cookiesManuallyEditedRef.current && Boolean(requestContextForUrl(sourceUrl));
   const suggestedFilenameForRow = (sourceUrl: string) => {
     const context = requestContextForUrl(sourceUrl);
     if (context?.filename) return context.filename;
@@ -389,7 +391,8 @@ export const AddDownloadsModal = () => {
               password: useAuth ? password || null : keychainPassword,
               headers: headersForRow(row.sourceUrl) || null,
               cookies: cookiesForRow(row.sourceUrl) || null,
-              proxy
+              proxy,
+              deferCookies: shouldDeferCookiesForRow(row.sourceUrl)
             });
             const nextDownloadUrl = meta.url || row.sourceUrl;
             setParsedItems(current => updateRowIfCurrent(

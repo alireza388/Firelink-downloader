@@ -3,7 +3,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use regex::Regex;
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -6204,7 +6204,8 @@ pub fn run() {
                     let params = serde_json::json!([["gid", "status", "totalLength", "completedLength", "downloadSpeed", "connections", "errorMessage"]]);
                     if let Ok(active_list) = rpc_call(poll_port.load(std::sync::atomic::Ordering::Relaxed), &poll_secret, "aria2.tellActive", params).await {
                         if let Some(active_arr) = active_list.as_array() {
-                            let mut seen_ids = std::collections::HashSet::new();
+                            let mut seen_ids = HashSet::new();
+                            let mut seen_gids = HashSet::new();
                             for status_info in active_arr {
                                 let gid = status_info.get("gid").and_then(|s| s.as_str()).unwrap_or("");
                                 let id = poll_mgr
@@ -6215,6 +6216,7 @@ pub fn run() {
                                     .map(|mapping| mapping.id.clone());
                                 if let Some(id) = id {
                                     seen_ids.insert(id.clone());
+                                    seen_gids.insert(gid.to_string());
                                     let status = status_info.get("status").and_then(|value| value.as_str()).unwrap_or("");
                                     let total = status_info.get("totalLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
                                     let completed = status_info.get("completedLength").and_then(|s| s.as_str()).unwrap_or("0").parse::<u64>().unwrap_or(0);
@@ -6317,6 +6319,69 @@ pub fn run() {
                                             );
                                         }
                                     }
+                                }
+                            }
+
+                            // A completion notification can be lost while the
+                            // WebSocket is reconnecting. Completed GIDs also
+                            // disappear from tellActive, so reconcile mapped
+                            // GIDs that were not present in this active list.
+                            // Paused and waiting downloads are intentionally
+                            // left alone; only terminal statuses are applied.
+                            for (gid, id) in poll_mgr.aria2_gid_mappings() {
+                                if seen_gids.contains(&gid) {
+                                    continue;
+                                }
+                                let status = match rpc_call(
+                                    poll_port.load(std::sync::atomic::Ordering::Relaxed),
+                                    &poll_secret,
+                                    "aria2.tellStatus",
+                                    serde_json::json!([gid, ["status", "errorCode", "errorMessage"]]),
+                                )
+                                .await
+                                {
+                                    Ok(status) => status,
+                                    Err(error) => {
+                                        log::debug!(
+                                            "aria2 poller reconciliation [{}]: could not query gid {}: {}",
+                                            id,
+                                            gid,
+                                            error
+                                        );
+                                        continue;
+                                    }
+                                };
+                                let status_name = status
+                                    .get("status")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or("");
+                                let outcome = match status_name {
+                                    "complete" => Some(crate::queue::PendingOutcome::Complete),
+                                    "error" | "removed" => {
+                                        let error_code = status
+                                            .get("errorCode")
+                                            .and_then(|value| value.as_str())
+                                            .filter(|value| !value.is_empty());
+                                        let error_message = status
+                                            .get("errorMessage")
+                                            .and_then(|value| value.as_str())
+                                            .filter(|value| !value.is_empty())
+                                            .unwrap_or("aria2 download ended outside the active poll");
+                                        Some(crate::queue::PendingOutcome::Error(match error_code {
+                                            Some(code) => format!("aria2 error code {code}: {error_message}"),
+                                            None => error_message.to_string(),
+                                        }))
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(outcome) = outcome {
+                                    log::info!(
+                                        "aria2 poller reconciliation [{}]: gid {} reported terminal status {} outside tellActive",
+                                        id,
+                                        gid,
+                                        status_name
+                                    );
+                                    poll_mgr.handle_aria2_event(&gid, outcome).await;
                                 }
                             }
                             observations.retain(|id, _| seen_ids.contains(id));

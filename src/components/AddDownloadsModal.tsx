@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import {
   useDownloadStore,
   getSiteLogin,
@@ -154,6 +154,15 @@ export const AddDownloadsModal = () => {
     return hasExtensionRequestContext ? '' : pendingAddFilename;
   };
 
+  const closeModalFromDismissAction = useCallback(() => {
+    if (isSubmitting) return;
+    const hasPendingInput = Boolean(
+      urls.trim() || pendingAddUrls.trim() || parsedItems.length || headers.trim() || cookies.trim()
+    );
+    if (hasPendingInput && !window.confirm('Discard this download setup?')) return;
+    toggleAddModal(false);
+  }, [cookies, headers, isSubmitting, parsedItems.length, pendingAddUrls, toggleAddModal, urls]);
+
   useEffect(() => {
     if (!isAddModalOpen) {
       modalSessionRef.current = false;
@@ -233,18 +242,20 @@ export const AddDownloadsModal = () => {
   }, [isQueueMenuOpen]);
 
   useEffect(() => {
-    if (!isQueueMenuOpen && !showingDuplicates) return;
+    if (!isAddModalOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (showingDuplicates) {
         setShowingDuplicates(false);
-      } else {
+      } else if (isQueueMenuOpen) {
         setIsQueueMenuOpen(false);
+      } else {
+        closeModalFromDismissAction();
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [isQueueMenuOpen, showingDuplicates]);
+  }, [closeModalFromDismissAction, isAddModalOpen, isQueueMenuOpen, showingDuplicates]);
 
   useEffect(() => {
     const requestId = ++freeSpaceRequestRef.current;
@@ -859,7 +870,14 @@ export const AddDownloadsModal = () => {
           onCancel={() => setShowingDuplicates(false)} 
         />
       )}
-    <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center">
+    <div
+      className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) closeModalFromDismissAction();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="app-modal add-download-modal flex flex-col overflow-hidden text-sm">
 
         {/* Main Content Split */}

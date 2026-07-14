@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export type DuplicateReason = { type: 'url', msg: string } | { type: 'file', msg: string };
 type DuplicateResolution = 'rename' | 'replace' | 'skip';
@@ -20,12 +20,27 @@ interface Props {
 export const DuplicateResolutionModal = ({ conflicts: initialConflicts, onConfirm, onCancel }: Props) => {
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>(initialConflicts);
 
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onCancel]);
+
   const updateResolution = (id: string, resolution: DuplicateResolution) => {
     setConflicts(conflicts.map(c => c.id === id ? { ...c, resolution } : c));
   };
 
   return (
-    <div className="app-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center">
+    <div
+      className="app-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="app-modal w-[500px] flex flex-col overflow-hidden text-sm">
         <div className="p-4 border-b border-border-modal flex flex-col gap-2">
           <h2 className="text-lg font-semibold text-text-primary">Duplicate Downloads Detected</h2>

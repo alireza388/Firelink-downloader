@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { invokeCommand as invoke } from '../ipc';
 import { KeyRound, ShieldAlert } from 'lucide-react';
@@ -10,6 +10,15 @@ export const KeychainPermissionModal: React.FC = () => {
   const platform = usePlatformInfo();
   const [isGranting, setIsGranting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showKeychainModal || isGranting) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowKeychainModal(false);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [isGranting, setShowKeychainModal, showKeychainModal]);
 
   if (!showKeychainModal) {
     return null;
@@ -62,7 +71,14 @@ export const KeychainPermissionModal: React.FC = () => {
   };
 
   return (
-    <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div
+      className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !isGranting) handleLater();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div
         className="window-safe-modal bg-bg-modal rounded-xl w-full max-w-md overflow-hidden flex flex-col shadow-2xl border border-border-modal scale-in"
         onClick={(e) => e.stopPropagation()}

@@ -83,4 +83,34 @@ describe('useDownloadProgressStore', () => {
     expect(useDownloadStore.getState().downloads[0].status).toBe('completed');
     release();
   });
+
+  it('clears progress when events arrive after a download row was removed', async () => {
+    const handlers: Record<string, (event: any) => void> = {};
+    vi.mocked(ipc.listenEvent).mockImplementation((event, handler) => {
+      handlers[event] = handler as (event: any) => void;
+      return Promise.resolve(vi.fn());
+    });
+    useDownloadProgressStore.getState().updateDownloadProgress('removed', {
+      id: 'removed',
+      fraction: 0.8,
+      speed: '1 MB/s',
+      eta: '2s',
+      size: '8 MB',
+      size_is_final: false
+    });
+    useDownloadStore.setState({ downloads: [] });
+
+    const release = await initDownloadListener();
+    handlers['download-progress']({ payload: {
+      id: 'removed',
+      fraction: 0.9,
+      speed: '2 MB/s',
+      eta: '1s',
+      size: '9 MB',
+      size_is_final: false
+    } });
+
+    expect(useDownloadProgressStore.getState().progressMap).toEqual({});
+    release();
+  });
 });

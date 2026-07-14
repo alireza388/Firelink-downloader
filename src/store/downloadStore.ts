@@ -1,36 +1,13 @@
-import { create } from 'zustand';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { DownloadProgressEvent } from '../bindings/DownloadProgressEvent';
 import type { DownloadStatus } from '../bindings/DownloadStatus';
 import { listenEvent as listen } from '../ipc';
 import type { DownloadItem } from '../bindings/DownloadItem';
 import { categoryForFileName } from '../utils/downloads';
-
-interface DownloadProgressState {
-  progressMap: Record<string, DownloadProgressEvent>;
-  updateDownloadProgress: (id: string, payload: DownloadProgressEvent) => void;
-  clearDownloadProgress: (id: string) => void;
-}
+import { useDownloadProgressStore } from './downloadProgressStore';
 
 import { useDownloadStore } from './useDownloadStore';
 
-export const useDownloadProgressStore = create<DownloadProgressState>((set) => ({
-  progressMap: {},
-  updateDownloadProgress: (id, payload) =>
-    set((state) => ({
-      progressMap: {
-        ...state.progressMap,
-        [id]: payload,
-      },
-    })),
-  clearDownloadProgress: (id) =>
-    set((state) => {
-      if (!(id in state.progressMap)) return state;
-      const next = { ...state.progressMap };
-      delete next[id];
-      return { progressMap: next };
-    }),
-}));
+export { useDownloadProgressStore } from './downloadProgressStore';
 
 let unlistenProgress: UnlistenFn | null = null;
 let unlistenState: UnlistenFn | null = null;
@@ -54,6 +31,12 @@ const startDownloadListeners = async () => {
       const payload = event.payload;
       const mainStore = useDownloadStore.getState();
       const current = mainStore.downloads.find(d => d.id === payload.id);
+      if (!current) {
+        // A removed row can still have one queued sidecar event in flight.
+        // Do not let that event recreate an orphaned progress entry.
+        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
+        return;
+      }
       // A sidecar can flush one last progress chunk after a pause, failure,
       // or completion event. Do not let that stale chunk repopulate the live
       // progress map or overwrite a later lifecycle's first frame.
@@ -61,73 +44,73 @@ const startDownloadListeners = async () => {
         return;
       }
       useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
-      if (current) {
-        const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
-        const updates: Partial<DownloadItem> = {};
-        if (current.status === 'downloading' || current.status === 'processing') {
-          updates.fraction = payload.fraction;
-          updates.speed = payload.speed;
-          updates.eta = payload.eta;
-        }
-        if (shouldUpdateSize && current.size !== payload.size) {
-          updates.size = payload.size!;
-        }
-        if (Object.keys(updates).length > 0) {
-          mainStore.updateDownload(payload.id, updates);
-        }
+      const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
+      const updates: Partial<DownloadItem> = {};
+      if (current.status === 'downloading' || current.status === 'processing') {
+        updates.fraction = payload.fraction;
+        updates.speed = payload.speed;
+        updates.eta = payload.eta;
+      }
+      if (shouldUpdateSize && current.size !== payload.size) {
+        updates.size = payload.size!;
+      }
+      if (Object.keys(updates).length > 0) {
+        mainStore.updateDownload(payload.id, updates);
       }
     }),
     listen('download-state', (event) => {
       const payload = event.payload;
       const mainStore = useDownloadStore.getState();
       const current = mainStore.downloads.find(d => d.id === payload.id);
-      if (current) {
-        const status = payload.status as DownloadStatus;
+      if (!current) {
+        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
+        return;
+      }
+      const status = payload.status as DownloadStatus;
 
-        // Prevent race condition: don't transition backwards from terminal state
-        if ((current.status === 'completed' || current.status === 'failed') &&
-            status !== current.status) {
-          return;
-        }
+      // Prevent race condition: don't transition backwards from terminal state
+      if ((current.status === 'completed' || current.status === 'failed') &&
+          status !== current.status) {
+        return;
+      }
 
-        const progress = useDownloadProgressStore.getState().progressMap[payload.id];
-        const updates: Partial<DownloadItem> = {
-          status,
-          ...(progress ? { fraction: progress.fraction } : {}),
-          ...(payload.error ? { lastError: payload.error } : {}),
-          ...((status === 'downloading' || status === 'retrying')
-            ? { lastTry: new Date().toISOString() }
-            : {})
-        };
-        if (!payload.error && status !== 'failed' && status !== 'retrying') {
-          updates.lastError = undefined;
-        }
-        if (payload.fileName && payload.fileName !== current.fileName) {
-          updates.fileName = payload.fileName;
-          updates.category = categoryForFileName(payload.fileName);
-        }
-        if (status !== 'downloading') {
-          updates.speed = '-';
-          updates.eta = '-';
-        }
-        mainStore.updateDownload(payload.id, updates);
+      const progress = useDownloadProgressStore.getState().progressMap[payload.id];
+      const updates: Partial<DownloadItem> = {
+        status,
+        ...(progress ? { fraction: progress.fraction } : {}),
+        ...(payload.error ? { lastError: payload.error } : {}),
+        ...((status === 'downloading' || status === 'retrying')
+          ? { lastTry: new Date().toISOString() }
+          : {})
+      };
+      if (!payload.error && status !== 'failed' && status !== 'retrying') {
+        updates.lastError = undefined;
+      }
+      if (payload.fileName && payload.fileName !== current.fileName) {
+        updates.fileName = payload.fileName;
+        updates.category = categoryForFileName(payload.fileName);
+      }
+      if (status !== 'downloading') {
+        updates.speed = '-';
+        updates.eta = '-';
+      }
+      mainStore.updateDownload(payload.id, updates);
 
-        if (status === 'completed' || status === 'failed' || status === 'paused') {
-          mainStore.setPendingOrder(mainStore.pendingOrder.filter(id => id !== payload.id));
-        } else if (status === 'queued') {
-          if (!mainStore.pendingOrder.includes(payload.id)) {
-            mainStore.setPendingOrder([...mainStore.pendingOrder, payload.id]);
-          }
+      if (status === 'completed' || status === 'failed' || status === 'paused') {
+        mainStore.setPendingOrder(mainStore.pendingOrder.filter(id => id !== payload.id));
+      } else if (status === 'queued') {
+        if (!mainStore.pendingOrder.includes(payload.id)) {
+          mainStore.setPendingOrder([...mainStore.pendingOrder, payload.id]);
         }
+      }
 
-        if (status === 'queued' || status === 'downloading' || status === 'processing' || status === 'retrying') {
-          mainStore.registerBackendIds([payload.id]);
-        } else if (status === 'completed' || status === 'failed') {
-          mainStore.unregisterBackendIds([payload.id]);
-        }
-        if (status === 'completed' || status === 'failed' || status === 'paused') {
-          useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
-        }
+      if (status === 'queued' || status === 'downloading' || status === 'processing' || status === 'retrying') {
+        mainStore.registerBackendIds([payload.id]);
+      } else if (status === 'completed' || status === 'failed') {
+        mainStore.unregisterBackendIds([payload.id]);
+      }
+      if (status === 'completed' || status === 'failed' || status === 'paused') {
+        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
       }
     }),
     listen('tray-action', (event) => {

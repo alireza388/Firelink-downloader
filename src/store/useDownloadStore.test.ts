@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getProxyArgs, getSiteLogin, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
+import { useDownloadProgressStore } from './downloadProgressStore';
 import { useSettingsStore } from './useSettingsStore';
 import * as ipc from '../ipc';
 
@@ -91,6 +92,7 @@ describe('useDownloadStore', () => {
       pendingAddRequestContexts: {},
       pendingAddRequestVersion: 0,
     });
+    useDownloadProgressStore.setState({ progressMap: {} });
   });
 
   it('invalidates in-flight Add-modal handoffs when the modal is toggled', () => {
@@ -867,6 +869,27 @@ describe('useDownloadStore', () => {
       .rejects.toThrow('writer did not stop');
     expect(useDownloadStore.getState().downloads.map(download => download.id))
       .toEqual(['active']);
+  });
+
+  it('clears live progress when a download is removed', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'removed-progress', url: 'https://example.com/file', fileName: 'file', status: 'paused', category: 'Other', dateAdded: '' }
+      ] as any[]
+    });
+    useDownloadProgressStore.getState().updateDownloadProgress('removed-progress', {
+      id: 'removed-progress',
+      fraction: 0.5,
+      speed: '1 MB/s',
+      eta: '10s',
+      size: '2 MB',
+      size_is_final: false
+    });
+    vi.mocked(ipc.invokeCommand).mockResolvedValue(undefined as never);
+
+    await useDownloadStore.getState().removeDownload('removed-progress');
+
+    expect(useDownloadProgressStore.getState().progressMap).toEqual({});
   });
 
   it('asks the backend to preserve resumable assets during replacement removal', async () => {

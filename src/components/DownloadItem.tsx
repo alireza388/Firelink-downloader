@@ -1,7 +1,7 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useDownloadStore } from '../store/useDownloadStore';
-import { useDownloadProgressStore } from '../store/downloadStore';
+import { useDownloadProgressStore } from '../store/downloadProgressStore';
 import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
 import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/downloadActions';

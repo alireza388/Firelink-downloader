@@ -7,6 +7,7 @@ import type { DownloadStatus } from '../bindings/DownloadStatus';
 import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
+import { useDownloadProgressStore } from './downloadProgressStore';
 import { categoryForFileName, isActiveDownloadStatus, isTransferActiveStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
 import {
   resolveCategoryDestination
@@ -778,6 +779,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         Array.from(state.backendRegisteredIds).filter(registeredId => registeredId !== id)
       )
     }));
+    useDownloadProgressStore.getState().clearDownloadProgress(id);
     info(`Download ${id} removed`);
     syncSystemIntegrations();
   },

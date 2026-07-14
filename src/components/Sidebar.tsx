@@ -82,6 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             const queueId = selectedFilter.replace('queue:', '');
             const q = queues.find(q => q.id === queueId);
             if (q && !q.isMain) {
+              if (!window.confirm(`Delete queue "${q.name}"? Its unfinished downloads will move to Main Queue.`)) {
+                return;
+              }
               void removeQueue(queueId).catch(error => {
                 addToast({ message: `Could not delete queue: ${String(error)}`, variant: 'error', isActionable: true });
               });
@@ -92,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedFilter, activeView, queues]);
+  }, [addToast, activeView, queues, removeQueue, selectedFilter]);
 
   const getCount = (filter: SidebarFilter) => {
     if (filter.startsWith('queue:')) {
@@ -383,6 +386,14 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
               className="w-full text-left px-3 py-1.5 flex items-center hover:bg-red-500/20 text-red-400"
               onClick={() => {
                 const queueId = contextMenu.id;
+                const queue = queues.find(q => q.id === queueId);
+                if (!queue || queue.isMain) {
+                  setContextMenu(null);
+                  return;
+                }
+                if (!window.confirm(`Delete queue "${queue.name}"? Its unfinished downloads will move to Main Queue.`)) {
+                  return;
+                }
                 setContextMenu(null);
                 void removeQueue(queueId).catch(error => {
                   addToast({

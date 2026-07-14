@@ -14,6 +14,15 @@ export const DeleteConfirmationModal: React.FC = () => {
     }
   }, [deleteModalState.isOpen]);
 
+  useEffect(() => {
+    if (!deleteModalState.isOpen || isRemoving) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDeleteModal();
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [closeDeleteModal, deleteModalState.isOpen, isRemoving]);
+
   if (!deleteModalState.isOpen) return null;
 
   const handleCancel = () => {
@@ -53,7 +62,14 @@ export const DeleteConfirmationModal: React.FC = () => {
   const handleDeleteFile = () => removeMany(true);
 
   return (
-    <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div
+      className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !isRemoving) handleCancel();
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div
         className="window-safe-modal bg-bg-modal rounded-xl w-full max-w-md overflow-hidden flex flex-col shadow-2xl border border-border-modal scale-in"
         onClick={(e) => e.stopPropagation()}

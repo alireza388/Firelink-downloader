@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
-import { useDownloadProgressStore } from '../store/downloadStore';
+import { useDownloadProgressStore } from '../store/downloadProgressStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { ChevronDown, ChevronRight, FolderPlus, Info, CheckCircle, AlertCircle, Play, Pause } from 'lucide-react';
@@ -114,6 +114,15 @@ export const PropertiesModal = () => {
     }
   }, [selectedPropertiesDownloadId, baseDownloadFolder, setSelectedPropertiesDownloadId]);
 
+  useEffect(() => {
+    if (!selectedPropertiesDownloadId) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedPropertiesDownloadId(null);
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [selectedPropertiesDownloadId, setSelectedPropertiesDownloadId]);
+
   if (!selectedPropertiesDownloadId || !item) return null;
 
   const handleBrowse = async () => {
@@ -186,7 +195,14 @@ export const PropertiesModal = () => {
   else if (item.status === 'failed') { statusColor = 'text-red-500'; StatusIcon = AlertCircle; }
 
   return (
-    <div className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center">
+    <div
+      className="app-modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) setSelectedPropertiesDownloadId(null);
+      }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="app-modal w-[720px] h-[580px] flex flex-col overflow-hidden text-sm">
         
         {/* Header Summary */}

@@ -1017,6 +1017,7 @@ html[data-list-density="relaxed"] {
     z-index: 60;
     width: 8px;
     cursor: col-resize;
+    -webkit-app-region: no-drag;
   }
 
   .sidebar-resize-handle::after {
@@ -1254,6 +1255,7 @@ html[data-list-density="relaxed"] {
     border-radius: 6px;
     color: hsl(var(--text-secondary));
     background: transparent;
+    -webkit-app-region: no-drag;
   }
 
   .sidebar-toggle-button:hover {
@@ -1653,7 +1655,7 @@ html[data-list-density="relaxed"] {
     letter-spacing: -0.01em;
   }
 
-  .main-control-group {
+.main-control-group {
     margin-left: auto;
     height: 28px;
     display: inline-flex;
@@ -1662,6 +1664,7 @@ html[data-list-density="relaxed"] {
     border-radius: 15px;
     border: 1px solid hsl(var(--border-modal));
     background: hsl(var(--bg-input));
+    -webkit-app-region: no-drag;
   }
 
   .main-control-button {
@@ -1672,6 +1675,7 @@ html[data-list-density="relaxed"] {
     justify-content: center;
     color: hsl(var(--text-secondary));
     border-right: 1px solid hsl(var(--border-color));
+    -webkit-app-region: no-drag;
   }
 
   .main-control-button svg {
@@ -1842,6 +1846,7 @@ html[data-list-density="relaxed"] {
   z-index: 5;
   width: 8px;
   cursor: col-resize;
+  -webkit-app-region: no-drag;
 }
 
 .column-resize-handle::after {

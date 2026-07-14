@@ -17,6 +17,7 @@ import {
   DEFAULT_CATEGORY_SUBFOLDERS,
   normalizeDownloadLocationSettings
 } from '../utils/downloadLocations';
+import { normalizeSpeedLimitForBackend } from '../utils/downloads';
 
 let settingsSave = Promise.resolve();
 const DEFAULT_SCHEDULER_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
@@ -165,7 +166,7 @@ export interface SettingsState {
   setBaseDownloadFolder: (path: string) => void;
   approveDownloadRoot: (path: string) => Promise<string>;
   setMaxConcurrentDownloads: (count: number) => void;
-  setGlobalSpeedLimit: (limit: string) => void;
+  setGlobalSpeedLimit: (limit: string) => Promise<void>;
   setSpeedLimitPresetValues: (values: number[]) => void;
   setLogsEnabled: (enabled: boolean) => void;
   setActiveView: (view: ActiveView) => void;
@@ -308,7 +309,10 @@ export const useSettingsStore = create<SettingsState>()(
           maxConcurrentDownloads: clampSettingInteger(max, 1, 12, 3)
         });
       },
-      setGlobalSpeedLimit: (limit) => {
+      setGlobalSpeedLimit: async (limit) => {
+        await invoke('set_global_speed_limit', {
+          limit: normalizeSpeedLimitForBackend(limit)
+        });
         info('Settings updated: globalSpeedLimit');
         set({ globalSpeedLimit: limit });
       },

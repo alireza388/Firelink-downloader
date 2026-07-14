@@ -5,6 +5,8 @@ import { invoke } from '@tauri-apps/api/core';
 let isPaused = true;
 
 let initPromise: Promise<void> | null = null;
+let logPauseTransition = Promise.resolve();
+let logStreamTransition = Promise.resolve();
 
 export const initLogger = () => {
     if (!initPromise) {
@@ -15,9 +17,21 @@ export const initLogger = () => {
     return initPromise;
 };
 
-export const setLogPaused = async (pause: boolean) => {
-    isPaused = pause;
-    await invoke('toggle_log_pause', { pause }).catch(console.error);
+export const setLogPaused = (pause: boolean): Promise<void> => {
+    const transition = logPauseTransition.then(async () => {
+        await invoke('toggle_log_pause', { pause });
+        isPaused = pause;
+    });
+    logPauseTransition = transition.catch(() => undefined);
+    return transition;
+};
+
+export const setLogStreamActive = (active: boolean): Promise<void> => {
+    const transition = logStreamTransition.then(async () => {
+        await invoke('set_log_stream_active', { active });
+    });
+    logStreamTransition = transition.catch(() => undefined);
+    return transition;
 };
 
 export const getLogPaused = () => isPaused;

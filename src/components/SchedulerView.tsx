@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { PostQueueAction, SchedulerSettings, useSettingsStore } from '../store/useSettingsStore';
 import { MAIN_QUEUE_ID, useDownloadStore } from '../store/useDownloadStore';
+import { isActiveDownloadStatus } from '../utils/downloads';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
 import { usePlatformInfo } from '../utils/platform';
@@ -137,6 +138,7 @@ export default function SchedulerView() {
   };
 
   const runNow = async () => {
+    const previouslyTrackedIds = new Set(useSettingsStore.getState().schedulerActiveDownloadIds);
     const results = await Promise.all(
       effectiveSelectedQueueIds.map(queueId => useDownloadStore.getState().startQueue(queueId))
     );
@@ -144,8 +146,9 @@ export default function SchedulerView() {
     const selectedQueueSet = new Set(effectiveSelectedQueueIds);
     const trackedIds = useDownloadStore.getState().downloads
       .filter(download =>
+        previouslyTrackedIds.has(download.id) &&
         selectedQueueSet.has(download.queueId || MAIN_QUEUE_ID) &&
-        ['queued', 'downloading', 'processing', 'retrying'].includes(download.status)
+        isActiveDownloadStatus(download.status)
       )
       .map(download => download.id);
     const activeIds = [...new Set([...acceptedIds, ...trackedIds])];

@@ -1,4 +1,4 @@
-import { initMediaDomains, isActiveDownloadStatus, isTransferActiveStatus, normalizeSpeedLimitForBackend } from './utils/downloads';
+import { initMediaDomains, isActiveDownloadStatus, isTransferActiveStatus } from './utils/downloads';
 import { schedulerCompletionState } from './utils/schedulerCompletion';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
@@ -19,6 +19,7 @@ import LogsView from "./components/LogsView";
 import { KeychainPermissionModal } from "./components/KeychainPermissionModal";
 import { WindowControls } from "./components/WindowControls";
 import { useToast } from "./contexts/ToastContext";
+import { setLogStreamActive } from './utils/logger';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { usePlatformInfo } from './utils/platform';
 import type { PostQueueAction } from './bindings/PostQueueAction';
@@ -109,7 +110,6 @@ function App() {
   const showNotifications = useSettingsStore(state => state.showNotifications);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
-  const logsEnabled = useSettingsStore(state => state.logsEnabled);
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
   const downloads = useDownloadStore(state => state.downloads);
   const activeDownloadCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
@@ -119,8 +119,6 @@ function App() {
   const doneCount = downloads.filter(download => download.status === 'completed').length;
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const schedulerActiveDownloadIds = useSettingsStore(state => state.schedulerActiveDownloadIds);
-  const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
-  const previousSpeedLimit = useRef<string | null>(null);
   const pendingPostActionTimer = useRef<number | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
   const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
@@ -189,7 +187,7 @@ function App() {
       );
       if (activeTransfers) {
         addToast({
-          message: 'System action cancelled because another download is active.',
+          message: 'System action cancelled because another download is active or queued.',
           variant: 'warning',
           isActionable: true
         });
@@ -231,6 +229,12 @@ function App() {
   useEffect(() => {
     return clearPendingPostActionTimer;
   }, [clearPendingPostActionTimer]);
+
+  useEffect(() => {
+    if (activeTransferCount > 0) {
+      clearPendingPostActionTimer();
+    }
+  }, [activeTransferCount, clearPendingPostActionTimer]);
 
   useEffect(() => {
     initMediaDomains();
@@ -394,12 +398,8 @@ function App() {
   }, [showMenuBarIcon]);
 
   useEffect(() => {
-    invoke('toggle_log_pause', { pause: !logsEnabled }).catch(console.error);
-  }, [logsEnabled]);
-
-  useEffect(() => {
     if (activeView !== 'logs') {
-      invoke('set_log_stream_active', { active: false }).catch(console.error);
+      setLogStreamActive(false).catch(console.error);
     }
   }, [activeView]);
 
@@ -409,17 +409,6 @@ function App() {
       console.error('Failed to configure browser extension pairing token:', error);
     });
   }, [extensionPairingToken]);
-
-  useEffect(() => {
-    if (previousSpeedLimit.current === globalSpeedLimit) return;
-    previousSpeedLimit.current = globalSpeedLimit;
-    
-    const formattedLimit = normalizeSpeedLimitForBackend(globalSpeedLimit);
-
-    invoke('set_global_speed_limit', { limit: formattedLimit }).catch(error => {
-      console.error('Failed to apply global speed limit:', error);
-    });
-  }, [globalSpeedLimit]);
 
   useEffect(() => {
     if (!coreReady) return;
@@ -443,6 +432,7 @@ function App() {
             await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
             return;
           }
+          const previouslyTrackedIds = new Set(state.schedulerActiveDownloadIds);
           const startedResults = await Promise.all(
             scheduledQueueIds.map(queueId => useDownloadStore.getState().startQueue(queueId))
           );
@@ -450,6 +440,7 @@ function App() {
           const scheduledQueueSet = new Set(scheduledQueueIds);
           const trackedIds = useDownloadStore.getState().downloads
             .filter(download =>
+              previouslyTrackedIds.has(download.id) &&
               scheduledQueueSet.has(download.queueId || MAIN_QUEUE_ID) &&
               isActiveDownloadStatus(download.status)
             )
@@ -459,9 +450,9 @@ function App() {
           state.setSchedulerRunning(activeIds.length > 0);
           await invoke('ack_schedule_trigger', { action: 'start', key: payload.key });
         } else if (payload.action === 'stop') {
-          clearPendingPostActionTimer();
           const trackedIds = state.schedulerActiveDownloadIds;
           if (trackedIds.length > 0) {
+            clearPendingPostActionTimer();
             const pauseResults = await Promise.allSettled(
               trackedIds.map(id => useDownloadStore.getState().pauseDownload(id))
             );
@@ -506,7 +497,15 @@ function App() {
         isActionable: true
       });
     } else if (settings.scheduler.postQueueAction !== 'none') {
-      schedulePostQueueAction(settings.scheduler.postQueueAction);
+      if (downloads.some(download => isActiveDownloadStatus(download.status))) {
+        addToast({
+          message: 'Scheduled system action skipped because another download is active or queued.',
+          variant: 'warning',
+          isActionable: true
+        });
+      } else {
+        schedulePostQueueAction(settings.scheduler.postQueueAction);
+      }
     }
   }, [
     addToast,

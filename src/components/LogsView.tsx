@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invokeCommand as invoke } from '../ipc';
 import { save } from '@tauri-apps/plugin-dialog';
-import { attachLogger, setLogPaused, initLogger } from '../utils/logger';
+import { attachLogger, setLogPaused, initLogger, setLogStreamActive } from '../utils/logger';
 import { FileDown, Trash2, Terminal, Filter, Play, Pause, Info, Copy } from 'lucide-react';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
@@ -27,6 +27,11 @@ export default function LogsView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const liveBatchRef = useRef<LogEntry[]>([]);
   const liveFrameRef = useRef<number | null>(null);
+  const clearGenerationRef = useRef(0);
+  const clearInFlightRef = useRef<Promise<void> | null>(null);
+  const toggleInFlightRef = useRef<Promise<void> | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
+  const [isToggling, setIsToggling] = useState(false);
 
   useEffect(() => {
     const handleVisibilityChange = () => setPageVisible(document.visibilityState !== 'hidden');
@@ -36,16 +41,17 @@ export default function LogsView() {
 
   useEffect(() => {
     if (!pageVisible) {
-      void invoke('set_log_stream_active', { active: false }).catch(console.error);
+      void setLogStreamActive(false).catch(console.error);
       return;
     }
 
     if (!logsEnabled) {
-      void invoke('set_log_stream_active', { active: false }).catch(console.error);
+      void setLogStreamActive(false).catch(console.error);
     }
 
     let active = true;
     let initialized = false;
+    const initGeneration = clearGenerationRef.current;
     let pendingLiveEntries: LogEntry[] = [];
     let unlistenPromise: Promise<() => void> | undefined;
 
@@ -78,9 +84,9 @@ export default function LogsView() {
           });
           await unlistenPromise;
           if (!active) return;
-          await invoke('set_log_stream_active', { active: true });
+          await setLogStreamActive(true);
           if (!active) {
-            await invoke('set_log_stream_active', { active: false }).catch(console.error);
+            await setLogStreamActive(false).catch(console.error);
             return;
           }
         }
@@ -89,6 +95,10 @@ export default function LogsView() {
         if (!active) return;
         const snapshot = lines.map(persistedLogEntry);
         initialized = true;
+        if (initGeneration !== clearGenerationRef.current) {
+          pendingLiveEntries = [];
+          return;
+        }
         const caughtUpLogs = mergeLogSnapshotAndLiveEntries(snapshot, pendingLiveEntries);
         pendingLiveEntries = [];
         setLogs(caughtUpLogs);
@@ -106,7 +116,7 @@ export default function LogsView() {
         liveFrameRef.current = null;
       }
       if (logsEnabled) {
-        void invoke('set_log_stream_active', { active: false }).catch(console.error);
+        void setLogStreamActive(false).catch(console.error);
       }
       if (unlistenPromise) {
         void unlistenPromise.then(unlisten => unlisten()).catch(console.error);
@@ -170,23 +180,63 @@ export default function LogsView() {
   };
 
   const handleClear = async () => {
-    liveBatchRef.current = [];
-    if (liveFrameRef.current !== null) {
-      window.cancelAnimationFrame(liveFrameRef.current);
-      liveFrameRef.current = null;
+    if (clearInFlightRef.current) return;
+
+    const clearOperation = invoke('clear_logs');
+    clearInFlightRef.current = clearOperation;
+    setIsClearing(true);
+    try {
+      await clearOperation;
+      clearGenerationRef.current += 1;
+      liveBatchRef.current = [];
+      if (liveFrameRef.current !== null) {
+        window.cancelAnimationFrame(liveFrameRef.current);
+        liveFrameRef.current = null;
+      }
+      setLogs([]);
+      addToast({ message: 'Logs cleared', variant: 'info' });
+    } catch (error) {
+      addToast({
+        message: `Could not clear logs: ${String(error)}`,
+        variant: 'error',
+        isActionable: true
+      });
+    } finally {
+      if (clearInFlightRef.current === clearOperation) {
+        clearInFlightRef.current = null;
+      }
+      setIsClearing(false);
     }
-    setLogs([]);
-    await invoke('clear_logs').catch(console.error);
   };
 
   const handleToggleLogging = async () => {
+    if (toggleInFlightRef.current) return;
+
     const nextEnabled = !logsEnabled;
-    setLogsEnabled(nextEnabled);
-    await setLogPaused(!nextEnabled);
-    addToast({
-      message: nextEnabled ? 'Diagnostic logging enabled' : 'Diagnostic logging disabled',
-      variant: 'success'
-    });
+    const toggleOperation = (async () => {
+      await setLogPaused(!nextEnabled);
+      setLogsEnabled(nextEnabled);
+      addToast({
+        message: nextEnabled ? 'Diagnostic logging enabled' : 'Diagnostic logging disabled',
+        variant: 'success'
+      });
+    })();
+    toggleInFlightRef.current = toggleOperation;
+    setIsToggling(true);
+    try {
+      await toggleOperation;
+    } catch (error) {
+      addToast({
+        message: `Could not update diagnostic logging: ${String(error)}`,
+        variant: 'error',
+        isActionable: true
+      });
+    } finally {
+      if (toggleInFlightRef.current === toggleOperation) {
+        toggleInFlightRef.current = null;
+      }
+      setIsToggling(false);
+    }
   };
 
   const severityClass = (level: string) => {
@@ -233,14 +283,16 @@ export default function LogsView() {
           <div className="w-[1px] h-4 bg-border-modal mx-0.5" />
           <button
             onClick={handleToggleLogging}
-            className={`app-icon-button ${logsEnabled ? 'text-accent' : ''}`}
+            disabled={isToggling}
+            className={`app-icon-button disabled:cursor-not-allowed disabled:opacity-50 ${logsEnabled ? 'text-accent' : ''}`}
             title={logsEnabled ? "Pause diagnostic logging" : "Enable diagnostic logging"}
           >
             {logsEnabled ? <Pause size={14} /> : <Play size={14} />}
           </button>
           <button
             onClick={handleClear}
-            className="app-icon-button"
+            disabled={isClearing}
+            className="app-icon-button disabled:cursor-not-allowed disabled:opacity-50"
             title="Clear displayed logs"
           >
             <Trash2 size={14} />

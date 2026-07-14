@@ -5003,23 +5003,39 @@ pub(crate) fn redact_sensitive_text(line: &str) -> String {
     static SECRET: OnceLock<regex::Regex> = OnceLock::new();
     static HEADER: OnceLock<regex::Regex> = OnceLock::new();
     static QUERY: OnceLock<regex::Regex> = OnceLock::new();
+    static USERINFO: OnceLock<regex::Regex> = OnceLock::new();
+    static FRAGMENT: OnceLock<regex::Regex> = OnceLock::new();
     let secret = SECRET.get_or_init(|| {
         regex::Regex::new(
-            r"(?i)(authorization|cookie|password|token|secret)\s*[:=]\s*([^\r\n,;]+)",
+            r"(?i)(authorization|proxy-authorization|cookie|set-cookie|password|token|secret|credential|pairing[-_ ]?token|api[-_ ]?key)\s*[:=]\s*([^\r\n,;]+)",
         )
             .expect("valid secret redaction regex")
     });
     let header = HEADER.get_or_init(|| {
-        regex::Regex::new(r"(?i)(authorization|cookie)\s*:\s*[^\r\n]+")
+        regex::Regex::new(
+            r"(?i)(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+",
+        )
             .expect("valid sensitive header redaction regex")
     });
     let query = QUERY.get_or_init(|| {
         regex::Regex::new(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s?]+)\?[^\s]+")
             .expect("valid URL query redaction regex")
     });
+    let userinfo = USERINFO.get_or_init(|| {
+        regex::Regex::new(r"(?i)([A-Za-z][A-Za-z0-9+.-]*://)[^@\s/?#]+@")
+            .expect("valid URL userinfo redaction regex")
+    });
+    let fragment = FRAGMENT.get_or_init(|| {
+        regex::Regex::new(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s?#]+)#\S+")
+            .expect("valid URL fragment redaction regex")
+    });
     let redacted = header.replace_all(line, "$1: [redacted]");
     let redacted = secret.replace_all(&redacted, "$1=[redacted]");
-    query.replace_all(&redacted, "$1?[redacted]").into_owned()
+    let redacted = userinfo.replace_all(&redacted, "$1[redacted]@");
+    let redacted = query.replace_all(&redacted, "$1?[redacted]");
+    fragment
+        .replace_all(&redacted, "$1#[redacted]")
+        .into_owned()
 }
 
 fn redact_log_line(line: &str) -> String {
@@ -5615,6 +5631,17 @@ mod tests {
         assert!(!redacted.contains("session=abc"));
         assert!(!redacted.contains("signature=secret"));
         assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_proxy_credentials_pairing_tokens_and_url_fragments() {
+        let line = "Proxy-Authorization: Basic abc\npairing token: pair-secret\nhttp://user:pass@example.com/file#signature=secret";
+        let redacted = redact_log_line(line);
+        assert!(!redacted.contains("Basic abc"));
+        assert!(!redacted.contains("pair-secret"));
+        assert!(!redacted.contains("user:pass"));
+        assert!(!redacted.contains("signature=secret"));
+        assert!(redacted.contains("http://[redacted]@example.com/file#[redacted]"));
     }
 
     #[test]

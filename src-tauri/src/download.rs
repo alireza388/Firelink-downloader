@@ -142,7 +142,9 @@ async fn run_coordinator(
     mut media_rx: mpsc::Receiver<MediaCmd>,
 ) {
     let mut active_media = HashMap::<String, (u64, watch::Sender<bool>)>::new();
-    let mut pending_media_acks = HashMap::<String, (u64, tokio::sync::oneshot::Sender<()>)>::new();
+    let mut cancelled_media_generations = HashMap::<String, u64>::new();
+    let mut pending_media_acks =
+        HashMap::<(String, u64), tokio::sync::oneshot::Sender<()>>::new();
     let mut pending_captured_urls = Vec::<String>::new();
     let mut frontend_ready = false;
 
@@ -180,8 +182,28 @@ async fn run_coordinator(
                 };
                 match command {
                     MediaCmd::Register { id, lifecycle_generation, cancel_tx } => {
-                        if let Some((_, previous)) = active_media.insert(id, (lifecycle_generation, cancel_tx)) {
+                        if active_media
+                            .get(&id)
+                            .is_some_and(|(generation, _)| *generation > lifecycle_generation)
+                        {
+                            let _ = cancel_tx.send(true);
+                            continue;
+                        }
+                        let pending_cancel = cancelled_media_generations.get(&id).copied();
+                        if pending_cancel.is_some_and(|generation| generation < lifecycle_generation) {
+                            cancelled_media_generations.remove(&id);
+                        }
+                        let cancelled = pending_cancel.is_some_and(|generation| generation >= lifecycle_generation);
+                        if let Some((_, previous)) = active_media.insert(id.clone(), (lifecycle_generation, cancel_tx)) {
                             let _ = previous.send(true);
+                        }
+                        if cancelled {
+                            if let Some((_, cancel_tx)) = active_media.get(&id) {
+                                let _ = cancel_tx.send(true);
+                            }
+                            if pending_cancel == Some(lifecycle_generation) {
+                                cancelled_media_generations.remove(&id);
+                            }
                         }
                     }
                     MediaCmd::Pause { id, lifecycle_generation } => {
@@ -189,15 +211,24 @@ async fn run_coordinator(
                             if let Some((_, cancel_tx)) = active_media.remove(&id) {
                                 let _ = cancel_tx.send(true);
                             }
+                        } else {
+                            cancelled_media_generations
+                                .entry(id)
+                                .and_modify(|generation| *generation = (*generation).max(lifecycle_generation))
+                                .or_insert(lifecycle_generation);
                         }
                     }
                     MediaCmd::PauseWithAck { id, lifecycle_generation, ack } => {
                         if active_media.get(&id).is_some_and(|(generation, _)| *generation == lifecycle_generation) {
                             if let Some((_, cancel_tx)) = active_media.remove(&id) {
                                 let _ = cancel_tx.send(true);
-                                pending_media_acks.insert(id, (lifecycle_generation, ack));
+                                pending_media_acks.insert((id, lifecycle_generation), ack);
                             }
                         } else {
+                            cancelled_media_generations
+                                .entry(id)
+                                .and_modify(|generation| *generation = (*generation).max(lifecycle_generation))
+                                .or_insert(lifecycle_generation);
                             let _ = ack.send(());
                         }
                     }
@@ -205,10 +236,16 @@ async fn run_coordinator(
                         if active_media.get(&id).is_some_and(|(generation, _)| *generation == lifecycle_generation) {
                             active_media.remove(&id);
                         }
-                        if pending_media_acks.get(&id).is_some_and(|(generation, _)| *generation == lifecycle_generation) {
-                            if let Some((_, ack)) = pending_media_acks.remove(&id) {
-                                let _ = ack.send(());
-                            }
+                        if let Some(ack) =
+                            pending_media_acks.remove(&(id.clone(), lifecycle_generation))
+                        {
+                            let _ = ack.send(());
+                        }
+                        if cancelled_media_generations
+                            .get(&id)
+                            .is_some_and(|generation| *generation <= lifecycle_generation)
+                        {
+                            cancelled_media_generations.remove(&id);
                         }
                     }
                 }
@@ -316,5 +353,98 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(*new_cancel.borrow_and_update());
+    }
+
+    #[tokio::test]
+    async fn pause_before_media_registration_cancels_the_late_lifecycle() {
+        let (coordinator, _events) = DownloadCoordinator::spawn_headless();
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+
+        coordinator
+            .pause_media_with_ack("late-media".to_string(), 7, ack_tx)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), ack_rx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut cancel_rx = coordinator
+            .register_media("late-media".to_string(), 7)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !*cancel_rx.borrow_and_update() {
+                cancel_rx.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("late media registration was not cancelled");
+    }
+
+    #[tokio::test]
+    async fn stale_media_registration_cannot_replace_a_newer_lifecycle() {
+        let (coordinator, _events) = DownloadCoordinator::spawn_headless();
+        let mut new_cancel = coordinator
+            .register_media("same-id".to_string(), 2)
+            .await
+            .unwrap();
+        let mut old_cancel = coordinator
+            .register_media("same-id".to_string(), 1)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), old_cancel.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(*old_cancel.borrow_and_update());
+
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        coordinator
+            .pause_media_with_ack("same-id".to_string(), 2, ack_tx)
+            .await
+            .unwrap();
+        coordinator.finish_media("same-id".to_string(), 2).await;
+        tokio::time::timeout(Duration::from_secs(1), ack_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(*new_cancel.borrow_and_update());
+    }
+
+    #[tokio::test]
+    async fn media_pause_ack_is_preserved_across_lifecycle_replacement() {
+        let (coordinator, _events) = DownloadCoordinator::spawn_headless();
+        let _old_cancel = coordinator
+            .register_media("same-id".to_string(), 1)
+            .await
+            .unwrap();
+        let (old_ack_tx, old_ack_rx) = tokio::sync::oneshot::channel();
+        coordinator
+            .pause_media_with_ack("same-id".to_string(), 1, old_ack_tx)
+            .await
+            .unwrap();
+
+        let _new_cancel = coordinator
+            .register_media("same-id".to_string(), 2)
+            .await
+            .unwrap();
+        let (new_ack_tx, new_ack_rx) = tokio::sync::oneshot::channel();
+        coordinator
+            .pause_media_with_ack("same-id".to_string(), 2, new_ack_tx)
+            .await
+            .unwrap();
+
+        coordinator.finish_media("same-id".to_string(), 1).await;
+        tokio::time::timeout(Duration::from_secs(1), old_ack_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        coordinator.finish_media("same-id".to_string(), 2).await;
+        tokio::time::timeout(Duration::from_secs(1), new_ack_rx)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

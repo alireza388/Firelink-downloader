@@ -3357,11 +3357,11 @@ async fn pause_download(
 
     let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let active_kind = state.queue_manager.active_kind(&id).await;
-    let media_lifecycle_generation = state
+    let registered_lifecycle_generation = state
         .queue_manager
         .registered_lifecycle_generation(&id)
-        .await
-        .unwrap_or_default();
+        .await;
+    let media_lifecycle_generation = registered_lifecycle_generation.unwrap_or_default();
     let removed_pending = state.queue_manager.remove_from_pending(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
@@ -3379,17 +3379,68 @@ async fn pause_download(
                 log::info!("aria2 pause [{}]: gid {} was already paused", id, gid);
             }
             "active" | "waiting" => {
-                state.queue_manager.next_aria2_control_epoch(&id).await;
                 state.queue_manager.cancel_aria2_retries(&id).await;
-                let result = rpc_call(
+                let pause_result = match rpc_call(
                     state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
                     &state.aria2_secret,
                     "aria2.forcePause",
                     serde_json::json!([gid]),
                 )
                 .await
-                .map_err(|error| format!("failed to pause aria2 gid {gid}: {error}"))?;
-                ensure_aria2_gid_result("forcePause", gid, &result)?;
+                {
+                    Ok(result) => ensure_aria2_gid_result("forcePause", gid, &result),
+                    Err(error) => Err(format!("failed to pause aria2 gid {gid}: {error}")),
+                };
+                if let Err(pause_error) = pause_result {
+                    match aria2_download_status(
+                        state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
+                        &state.aria2_secret,
+                        gid,
+                    )
+                    .await
+                    {
+                        Ok(status) if status == "paused" => {
+                            log::info!(
+                                "aria2 pause [{}]: forcePause failed but gid {} is paused",
+                                id,
+                                gid
+                            );
+                        }
+                        Ok(status) if status == "complete" => {
+                            state
+                                .queue_manager
+                                .apply_completion_locked(&id, crate::queue::PendingOutcome::Complete)
+                                .await;
+                            return Ok(());
+                        }
+                        Ok(status) if matches!(status.as_str(), "error" | "removed") => {
+                            let terminal_error = format!(
+                                "cannot pause aria2 gid {gid}: {pause_error}; daemon reports terminal state {status}"
+                            );
+                            state
+                                .queue_manager
+                                .apply_completion_locked(
+                                    &id,
+                                    crate::queue::PendingOutcome::Error(terminal_error.clone()),
+                                )
+                                .await;
+                            return Err(terminal_error);
+                        }
+                        Ok(status) => {
+                            state.queue_manager.allow_aria2_retries(&id).await;
+                            return Err(format!(
+                                "{pause_error}; aria2 gid {gid} is still {status}"
+                            ));
+                        }
+                        Err(status_error) => {
+                            state.queue_manager.allow_aria2_retries(&id).await;
+                            return Err(format!(
+                                "{pause_error}; failed to verify aria2 gid {gid}: {status_error}"
+                            ));
+                        }
+                    }
+                }
+                state.queue_manager.next_aria2_control_epoch(&id).await;
                 log::info!("aria2 pause [{}]: gid {} paused", id, gid);
             }
             "complete" => {
@@ -3442,6 +3493,13 @@ async fn pause_download(
         return Ok(());
     }
 
+    // A terminal runner may have already released its lifecycle while this
+    // command was waiting for the per-download control lock. Treat pause as
+    // an idempotent no-op instead of emitting a stale Paused state.
+    if active_kind.is_none() && !removed_pending && registered_lifecycle_generation.is_none() {
+        return Ok(());
+    }
+
     if matches!(active_kind, Some(crate::queue::TaskKind::Aria2)) {
         state.queue_manager.next_aria2_control_epoch(&id).await;
         state.queue_manager.cancel_aria2_retries(&id).await;
@@ -3460,11 +3518,19 @@ async fn pause_download(
     rx.await
         .map_err(|_| "download worker stopped without acknowledging pause".to_string())?;
 
-    if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-        state.queue_manager.release_permit(&id).await;
-    }
-    if removed_pending || matches!(active_kind, Some(crate::queue::TaskKind::Aria2)) {
-        state.queue_manager.release_registered_id(&id).await;
+    state.queue_manager.release_permit(&id).await;
+    if registered_lifecycle_generation.is_some()
+        || removed_pending
+        || matches!(active_kind, Some(crate::queue::TaskKind::Aria2))
+    {
+        if let Some(generation) = registered_lifecycle_generation {
+            state
+                .queue_manager
+                .release_registered_id_for_generation(&id, generation)
+                .await;
+        } else {
+            state.queue_manager.release_registered_id(&id).await;
+        }
     }
     use tauri::Emitter;
     let _ = app_handle.emit(
@@ -3726,11 +3792,12 @@ async fn remove_download(
         .unwrap_or_default();
     state.queue_manager.remove_from_pending(&id).await;
 
-    state.queue_manager.next_aria2_control_epoch(&id).await;
-    state.queue_manager.cancel_aria2_retries(&id).await;
-
     let gid = state.queue_manager.aria2_gid_for_download(&id);
     if let Some(gid) = gid.as_deref() {
+        // Keep the current epoch and mapping alive until daemon removal is
+        // confirmed. If removal fails, terminal events from this lifecycle
+        // must still be accepted so the permit and mapping can be cleaned up.
+        state.queue_manager.cancel_aria2_retries(&id).await;
         let removal_result = async {
             force_remove_aria2_gid(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
@@ -3750,11 +3817,17 @@ async fn remove_download(
             state.queue_manager.allow_aria2_retries(&id).await;
             return Err(error);
         }
+        state.queue_manager.next_aria2_control_epoch(&id).await;
         state.queue_manager.clear_aria2_retry_state(&id).await;
         state.queue_manager.forget_aria2_gid(&id).await;
         state.queue_manager.release_permit(&id).await;
         log::info!("aria2 remove [{}]: gid {} stopped and forgotten", id, gid);
     } else {
+        // There may be an addUri or retry handoff in flight with no mapped
+        // GID yet. Invalidate that pending lifecycle before acknowledging the
+        // removal so its late result cannot resurrect the download.
+        state.queue_manager.next_aria2_control_epoch(&id).await;
+        state.queue_manager.cancel_aria2_retries(&id).await;
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state
@@ -3766,9 +3839,7 @@ async fn remove_download(
         }
         let _ = rx.await;
 
-        if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-            state.queue_manager.release_permit(&id).await;
-        }
+        state.queue_manager.release_permit(&id).await;
         state.queue_manager.clear_aria2_retry_state(&id).await;
         state.queue_manager.forget_aria2_gid(&id).await;
     }
@@ -3881,12 +3952,13 @@ async fn detach_download_for_reconfigure(
         .await
         .unwrap_or_default();
     state.queue_manager.remove_from_pending(&id).await;
-    state.queue_manager.next_aria2_control_epoch(&id).await;
-    state.queue_manager.cancel_aria2_retries(&id).await;
-
     let gid = state.queue_manager.aria2_gid_for_download(&id);
 
     if let Some(gid) = gid.as_deref() {
+        // Do not invalidate the mapped lifecycle until the daemon confirms
+        // the detach. A failed pause must leave terminal-event reconciliation
+        // and permit ownership intact.
+        state.queue_manager.cancel_aria2_retries(&id).await;
         let removal_result = async {
             let pause_res = rpc_call(
                 state.aria2_port.load(std::sync::atomic::Ordering::Relaxed),
@@ -3914,12 +3986,16 @@ async fn detach_download_for_reconfigure(
             state.queue_manager.allow_aria2_retries(&id).await;
             return Err(error);
         }
+        state.queue_manager.next_aria2_control_epoch(&id).await;
         state.queue_manager.clear_aria2_retry_state(&id).await;
         state.queue_manager.forget_aria2_gid(&id).await;
         state.queue_manager.release_permit(&id).await;
         state.queue_manager.release_registered_id(&id).await;
         log::info!("aria2 detach [{}]: gid {} stopped and forgotten", id, gid);
     } else {
+        // Invalidate a queued/addUri lifecycle that has not published a GID.
+        state.queue_manager.next_aria2_control_epoch(&id).await;
+        state.queue_manager.cancel_aria2_retries(&id).await;
         let (tx, rx) = tokio::sync::oneshot::channel();
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state
@@ -3931,9 +4007,7 @@ async fn detach_download_for_reconfigure(
         }
         let _ = rx.await; // Wait for the writer to stop
 
-        if !matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
-            state.queue_manager.release_permit(&id).await;
-        }
+        state.queue_manager.release_permit(&id).await;
         state.queue_manager.clear_aria2_retry_state(&id).await;
         state.queue_manager.forget_aria2_gid(&id).await;
         state.queue_manager.release_registered_id(&id).await;

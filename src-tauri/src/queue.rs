@@ -277,7 +277,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             == Some(generation)
     }
 
-    async fn release_registered_id_for_generation(&self, id: &str, generation: u64) {
+    pub(crate) async fn release_registered_id_for_generation(&self, id: &str, generation: u64) {
         let released = {
             let mut registered = self.registered_ids.lock().await;
             let mut generations = self.registered_lifecycle_generations.lock().await;
@@ -362,7 +362,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn commit_reserved_enqueue(
         &self,
-        task: QueuedTask,
+        mut task: QueuedTask,
         generation: u64,
     ) -> Result<(), String> {
         let id = task.id.clone();
@@ -373,6 +373,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
         {
             return Err("Download enqueue was superseded by a newer user action".to_string());
         }
+        task.lifecycle_generation = generation;
         self.pending.lock().await.push_back(task);
         self.emit_state(id, DownloadStatus::Queued);
         self.notify.notify_one();
@@ -685,6 +686,20 @@ impl<R: tauri::Runtime> QueueManager<R> {
     async fn dispatch_one(self: Arc<Self>, permit: OwnedSemaphorePermit, task: QueuedTask) {
         let id = task.id.clone();
         let lifecycle_generation = task.lifecycle_generation;
+        // Serialize activation with pause/remove/detach. The dispatcher can
+        // pop a task just as a control command arrives; registering the
+        // permit and active kind under the same guard prevents that command
+        // from observing a half-started lifecycle.
+        let control_guard = self.acquire_aria2_control(&id).await;
+        if !self
+            .is_registered_generation(&id, lifecycle_generation)
+            .await
+        {
+            drop(control_guard);
+            drop(permit);
+            return;
+        }
+
         // Park the permit BEFORE spawning. Uniform parking:
         // aria2's RPC returns instantly, so the permit must outlive the
         // dispatch_one call. Media runners release on exit.
@@ -694,21 +709,30 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .lock()
             .await
             .insert(id.clone(), task.kind.clone());
+
+        let aria2_lifecycle_epoch = if matches!(&task.kind, TaskKind::Aria2) {
+            // Every backend aria2 dispatch starts a new control lifecycle.
+            // This invalidates retry workers left behind by a previous
+            // failed or cancelled lifecycle before retry cancellation is
+            // made reusable for the new task.
+            let lifecycle_epoch = self.next_aria2_control_epoch(&id).await;
+            self.aria2_retry_cancelled.lock().await.remove(&id);
+            self.aria2_payloads
+                .lock()
+                .await
+                .insert(id.clone(), task.payload.clone());
+            self.aria2_retry_strikes.lock().await.remove(&id);
+            Some(lifecycle_epoch)
+        } else {
+            None
+        };
         self.emit_state(&id, DownloadStatus::Downloading);
+        drop(control_guard);
 
         match task.kind {
             TaskKind::Aria2 => {
-                // Every backend aria2 dispatch starts a new control lifecycle.
-                // This invalidates retry workers left behind by a previous
-                // failed or cancelled lifecycle before retry cancellation is
-                // made reusable for the new task.
-                let lifecycle_epoch = self.next_aria2_control_epoch(&id).await;
-                self.aria2_retry_cancelled.lock().await.remove(&id);
-                self.aria2_payloads
-                    .lock()
-                    .await
-                    .insert(id.clone(), task.payload.clone());
-                self.aria2_retry_strikes.lock().await.remove(&id);
+                let lifecycle_epoch = aria2_lifecycle_epoch
+                    .expect("aria2 dispatch must initialize a control epoch");
                 match self.spawner.add_uri(&id, &task.payload).await {
                     Ok(gid) => {
                         let control_guard = self.acquire_aria2_control(&id).await;
@@ -793,6 +817,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
         lifecycle_generation: u64,
         outcome: Result<(), String>,
     ) {
+        // Completion and pause/remove/detach must observe one ordered
+        // lifecycle. Without this guard a terminal media outcome could emit
+        // Completed, then a racing pause could emit Paused afterward.
+        let _control_guard = self.acquire_aria2_control(id).await;
         if !self.is_registered_generation(id, lifecycle_generation).await {
             log::info!(
                 "media runner [{}]: ignoring stale terminal outcome for lifecycle {}",
@@ -1900,25 +1928,29 @@ impl SidecarSpawner for ProductionSpawner {
             .download_coordinator
             .register_media(id.to_string(), lifecycle_generation)
             .await?;
-        let outcome = crate::start_media_download_internal(
-            self.app_handle.clone(),
-            id,
-            payload.url.clone(),
-            payload.destination.clone(),
-            payload.filename.clone(),
-            payload.format_selector.clone(),
-            payload.cookie_source.clone(),
-            payload.speed_limit.clone(),
-            payload.username.clone(),
-            payload.password.clone(),
-            payload.headers.clone(),
-            payload.cookies.clone(),
-            payload.proxy.clone(),
-            payload.user_agent.clone(),
-            payload.max_tries,
-            &mut cancel_rx,
-        )
-        .await;
+        let outcome = if *cancel_rx.borrow() {
+            Err(crate::queue::MEDIA_RUN_CANCELLED.to_string())
+        } else {
+            crate::start_media_download_internal(
+                self.app_handle.clone(),
+                id,
+                payload.url.clone(),
+                payload.destination.clone(),
+                payload.filename.clone(),
+                payload.format_selector.clone(),
+                payload.cookie_source.clone(),
+                payload.speed_limit.clone(),
+                payload.username.clone(),
+                payload.password.clone(),
+                payload.headers.clone(),
+                payload.cookies.clone(),
+                payload.proxy.clone(),
+                payload.user_agent.clone(),
+                payload.max_tries,
+                &mut cancel_rx,
+            )
+            .await
+        };
         if let Ok(path) = outcome.as_ref() {
             let _ = crate::download_ownership::set_primary_path(&self.app_handle, id, path);
             if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {

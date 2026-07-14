@@ -238,6 +238,12 @@ fn import_legacy_data(
                 }
             }
         }
+        if portable {
+            // Sanitize before importing as well as sanitizing the legacy
+            // source afterward. A crash between those two operations must
+            // not leave raw transfer credentials in the portable database.
+            sanitize_download_strings(&mut legacy.downloads)?;
+        }
         merge_legacy_data(connection, legacy)?;
         if migration_complete {
             connection
@@ -777,6 +783,19 @@ fn mark_portable_download_unresumable(object: &mut serde_json::Map<String, Value
             ),
         );
     }
+}
+
+fn sanitize_download_strings(downloads: &mut [String]) -> Result<(), String> {
+    for data in downloads {
+        let mut value: Value = serde_json::from_str(data).map_err(|error| {
+            format!("failed to decode download for portable sanitization: {error}")
+        })?;
+        remove_persisted_transfer_secrets(&mut value);
+        *data = serde_json::to_string(&value).map_err(|error| {
+            format!("failed to encode download for portable sanitization: {error}")
+        })?;
+    }
+    Ok(())
 }
 
 fn sanitize_persisted_downloads(connection: &mut Connection) -> Result<(), String> {

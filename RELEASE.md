@@ -11,7 +11,7 @@ Targets:
 
 ## Distribution policy
 
-Firelink does not use an Apple Developer account. macOS releases are unsigned and not notarized. Users must explicitly approve the downloaded app through Finder or macOS Privacy & Security. Release copy must never describe these builds as signed, notarized, or Gatekeeper-approved.
+Firelink does not use an Apple Developer account. macOS releases are ad-hoc signed but not notarized or Gatekeeper-approved. Users may still need to explicitly approve the downloaded app through Finder or macOS Privacy & Security. Release copy must not describe these builds as Developer ID signed, notarized, or Gatekeeper-approved.
 
 Windows releases are currently unsigned. SmartScreen may warn until code signing is added.
 
@@ -58,10 +58,12 @@ node scripts/verify-binaries.js --search-root "$APP" --target aarch64-apple-darw
 node scripts/smoke-packaged-app.js --executable "$APP/Contents/MacOS/firelink"
 ```
 
-GitHub release publication is intentionally manual. Tag pushes build and upload
-artifacts, but the `publish` job only runs from a `workflow_dispatch` on a `v*`
-tag when both release-certification inputs are checked after Windows, Linux,
-and macOS clean-machine QA.
+GitHub release publication follows `.github/workflows/release.yml`. A `v*` tag
+push builds, verifies, and publishes the GitHub release after the platform jobs
+pass. A `workflow_dispatch` on a `v*` tag also publishes when its
+`publish_release` input is enabled. The current workflow has no separate
+release-certification inputs; clean-machine QA remains a release-owner gate
+before pushing the tag.
 
 ## Automated release builds
 
@@ -74,7 +76,6 @@ git push origin v<version>
 
 GitHub Actions builds all targets on native runners, verifies engines inside
 final package contents, performs packaged launch smoke where supported, and
-uploads artifacts. Publish the GitHub Release with a manual `workflow_dispatch`
-run on the same tag after clean-machine QA is complete.
+publishes the GitHub Release after the build matrix passes.
 
 No target may silently skip missing engines, failed extraction, checksum mismatch, or missing package output.

@@ -83,22 +83,38 @@ async function latestMartinRiedlMacArm64Release() {
 async function latestMartinRiedlMacArm64Snapshot() {
   const html = await fetchText('https://ffmpeg.martin-riedl.de/');
   const snapshotSection = html.split('Download Snapshot Build')[1]?.split('Download Release Build')[0] || '';
+  const card = snapshotSection.match(/<h3>macOS \(Apple Silicon\/arm64\)<\/h3>[\s\S]*?<\/div>/)?.[0] || '';
   const match =
-    snapshotSection.match(/macOS \(Apple Silicon\/arm64\)[\s\S]*?<b>Release:\s*<\/b>\s*([A-Za-z0-9.-]+)/) ||
-    snapshotSection.match(/macOS \(Apple Silicon\/arm64\)[\s\S]*?Release:\s*([A-Za-z0-9.-]+)/);
-  return match?.[1];
+    card.match(/<b>Release:\s*<\/b>\s*([A-Za-z0-9.-]+)/) ||
+    card.match(/Release:\s*([A-Za-z0-9.-]+)/);
+  const url = card.match(/href="([^"]+\/ffmpeg\.zip)"/)?.[1];
+  return match?.[1]
+    ? { version: match[1], url: url ? new URL(url, 'https://ffmpeg.martin-riedl.de').href : undefined }
+    : undefined;
 }
 
 async function latestBtbnFfmpegN81Build() {
   const releases = await fetchJson('https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=10');
   for (const release of releases) {
     if (release.tag_name === 'latest') continue;
-    const versions = (release.assets || [])
-      .map(asset => asset.name.match(/^ffmpeg-n(8\.1\.\d+-\d+-g[0-9a-f]+)-(?:win64-gpl-8\.1\.zip|linux64-gpl-8\.1\.tar\.xz)$/)?.[1])
+    const assets = (release.assets || [])
+      .map(asset => {
+        const match = asset.name.match(/^ffmpeg-n(8\.1\.\d+-\d+-g[0-9a-f]+)-(win64|linux64)-gpl-8\.1\.(?:zip|tar\.xz)$/);
+        if (!match) return undefined;
+        return {
+          target: match[2] === 'win64' ? 'windows' : 'linux',
+          version: match[1],
+          url: asset.browser_download_url,
+        };
+      })
       .filter(Boolean);
-    const unique = [...new Set(versions)];
-    if (unique.length === 1 && versions.length >= 2) {
-      return unique[0];
+    const unique = [...new Set(assets.map(asset => asset.version))];
+    const byTarget = Object.fromEntries(assets.map(asset => [asset.target, asset]));
+    if (unique.length === 1 && byTarget.windows && byTarget.linux) {
+      return {
+        version: unique[0],
+        urls: { windows: byTarget.windows.url, linux: byTarget.linux.url },
+      };
     }
   }
   return undefined;
@@ -131,22 +147,26 @@ function packagedEngineVersions(engineLock) {
   const rows = [];
   for (const [target, targetLock] of Object.entries(engineLock.targets || {})) {
     for (const [engine, meta] of Object.entries(targetLock.engines || {})) {
-      rows.push({ target, engine, version: meta.version });
+      rows.push({ target, engine, version: meta.version, url: meta.url });
     }
   }
   return rows;
 }
 
-function checkRows(rows, latestByEngine, latestByTargetEngine = {}) {
+function checkRows(rows, latestByEngine, latestByTargetEngine = {}, latestUrlsByTargetEngine = {}) {
   let outdated = 0;
   for (const row of rows) {
     const latest = latestByTargetEngine[`${row.target}:${row.engine}`] || latestByEngine[row.engine];
     if (!latest) continue;
     const current = normalizeVersion(row.version);
     const wanted = normalizeVersion(latest);
-    const status = compareVersions(current, wanted) < 0 ? 'outdated' : 'current';
-    if (status === 'outdated') outdated += 1;
+    const latestUrl = latestUrlsByTargetEngine[`${row.target}:${row.engine}`];
+    const versionOutdated = compareVersions(current, wanted) < 0;
+    const sourceOutdated = Boolean(latestUrl && row.url && row.url !== latestUrl);
+    const status = versionOutdated ? 'outdated' : sourceOutdated ? 'source-outdated' : 'current';
+    if (status !== 'current') outdated += 1;
     console.log(`  ${row.target} ${row.engine}: ${current} -> ${wanted} ${status}`);
+    if (sourceOutdated) console.log(`    source: ${row.url} -> ${latestUrl}`);
   }
   return outdated;
 }
@@ -184,9 +204,14 @@ async function main() {
     ffmpeg,
   };
   const latestByTargetEngine = {
-    'x86_64-pc-windows-msvc:ffmpeg': btbnFfmpegN81Build || ffmpeg,
-    'x86_64-unknown-linux-gnu:ffmpeg': btbnFfmpegN81Build || ffmpeg,
-    'aarch64-apple-darwin:ffmpeg': martinRiedlMacArm64Snapshot || martinRiedlMacArm64Ffmpeg,
+    'x86_64-pc-windows-msvc:ffmpeg': btbnFfmpegN81Build?.version || ffmpeg,
+    'x86_64-unknown-linux-gnu:ffmpeg': btbnFfmpegN81Build?.version || ffmpeg,
+    'aarch64-apple-darwin:ffmpeg': martinRiedlMacArm64Snapshot?.version || martinRiedlMacArm64Ffmpeg,
+  };
+  const latestUrlsByTargetEngine = {
+    'x86_64-pc-windows-msvc:ffmpeg': btbnFfmpegN81Build?.urls.windows,
+    'x86_64-unknown-linux-gnu:ffmpeg': btbnFfmpegN81Build?.urls.linux,
+    'aarch64-apple-darwin:ffmpeg': martinRiedlMacArm64Snapshot?.url,
   };
 
   console.log('\nlatest engines:');
@@ -194,21 +219,23 @@ async function main() {
     console.log(`  ${engine}: ${normalizeVersion(version)}`);
   }
   console.log('\nlatest engine provider builds:');
-  console.log(`  BtbN FFmpeg n8.1 Windows/Linux: ${normalizeVersion(btbnFfmpegN81Build || ffmpeg)}`);
-  console.log(`  Martin Riedl FFmpeg macOS arm64 snapshot: ${normalizeVersion(martinRiedlMacArm64Snapshot || martinRiedlMacArm64Ffmpeg)}`);
+  console.log(`  BtbN FFmpeg n8.1 Windows/Linux: ${normalizeVersion(btbnFfmpegN81Build?.version || ffmpeg)}`);
+  console.log(`  Martin Riedl FFmpeg macOS arm64 snapshot: ${normalizeVersion(martinRiedlMacArm64Snapshot?.version || martinRiedlMacArm64Ffmpeg)}`);
 
   console.log('\nengine source lock:');
   outdatedCount += checkRows(
     sourceEngineVersions(parseJsonFile('engine-sources.lock.json')),
     latestByEngine,
-    latestByTargetEngine
+    latestByTargetEngine,
+    latestUrlsByTargetEngine
   );
 
   console.log('\npackaged engine lock:');
   outdatedCount += checkRows(
     packagedEngineVersions(parseJsonFile('engines.lock.json')),
     latestByEngine,
-    latestByTargetEngine
+    latestByTargetEngine,
+    latestUrlsByTargetEngine
   );
 
   if (outdatedCount > 0) {

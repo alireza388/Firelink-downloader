@@ -125,6 +125,31 @@ describe('add download metadata workflow', () => {
     });
   });
 
+  it('replaces a stale filename when a newer handoff supplies a new one', () => {
+    const existing = row({
+      file: 'old-name.zip',
+      requestContextVersion: 1,
+      generation: 2
+    });
+
+    const refreshed = reconcileDownloadRows(
+      existing.sourceUrl,
+      [existing],
+      undefined,
+      new Set(),
+      () => 'unused',
+      { [existing.sourceUrl]: 'new-name.zip' },
+      { [existing.sourceUrl]: 2 }
+    );
+
+    expect(refreshed[0]).toMatchObject({
+      file: 'new-name.zip',
+      status: 'loading',
+      generation: 3,
+      requestContextVersion: 2
+    });
+  });
+
   it('appends every unseen handoff after the observed version', () => {
     const merged = appendRequestUrlsAfterVersion(
       'https://existing.example/file.zip',

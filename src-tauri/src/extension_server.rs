@@ -316,7 +316,17 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         matches!(url.scheme(), "http" | "https").then(|| url.to_string())
     });
     let filename = payload.filename.and_then(|value| sanitize_filename(&value));
-    let headers = normalize_headers(payload.headers, payload.media);
+    // A multi-URL handoff has no per-URL cookie scope. Keep ordinary
+    // request headers, but drop Cookie headers and the dedicated cookie field
+    // so a legacy or untrusted caller cannot reuse one session across hosts.
+    let headers = normalize_headers(payload.headers, payload.media || urls.len() > 1);
+    let cookies = if !payload.media && urls.len() == 1 {
+        payload
+            .cookies
+            .filter(|value| !value.trim().is_empty())
+    } else {
+        None
+    };
 
     Some(ExtensionDownload {
         urls,
@@ -329,10 +339,7 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         // Cookie header can exceed upstream limits and makes old extension
         // builds pay for a doomed metadata request before retrying. Ordinary
         // captured downloads still need their exact request cookies.
-        cookies: (!payload.media)
-            .then_some(payload.cookies)
-            .flatten()
-            .filter(|value| !value.trim().is_empty()),
+        cookies,
         media: payload.media,
     })
 }
@@ -566,6 +573,26 @@ mod tests {
             download.cookies.as_deref(),
             Some("session=browser-cookie-header")
         );
+    }
+
+    #[test]
+    fn multi_url_capture_drops_cookie_scope_but_preserves_safe_headers() {
+        let download = normalize_download(ExtensionRequest {
+            urls: vec![
+                "https://one.example/private.zip".to_string(),
+                "https://two.example/file.zip".to_string(),
+            ],
+            referer: None,
+            silent: true,
+            filename: None,
+            headers: Some("Cookie: session=secret\nUser-Agent: Firefox".to_string()),
+            cookies: Some("session=secret".to_string()),
+            media: false,
+        })
+        .expect("valid multi-url handoff");
+
+        assert_eq!(download.cookies, None);
+        assert_eq!(download.headers.as_deref(), Some("User-Agent: Firefox"));
     }
 
     #[test]

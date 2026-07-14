@@ -539,6 +539,7 @@ export const AddDownloadsModal = () => {
     setResolvedLocation(finalLocation);
     const store = useDownloadStore.getState();
     const newConflicts: DuplicateConflict[] = [];
+    const plannedTargets: Array<{ location: string; fileName: string }> = [];
 
     for (let i = 0; i < parsedItems.length; i++) {
       const item = parsedItems[i];
@@ -550,8 +551,25 @@ export const AddDownloadsModal = () => {
         : destinationOverrides[i] || await categoryLocationForFile(finalFile);
 
       const isUrlDupe = store.downloads.some(d => d.url === item.downloadUrl && d.status !== 'failed' && d.status !== 'completed');
+      const hasBatchConflict = plannedTargets.some(target =>
+        downloadLocationEquals(
+          target.location,
+          target.fileName,
+          itemLocation,
+          finalFile,
+          platform.os
+        )
+      );
       if (isUrlDupe) {
         newConflicts.push({ id: i.toString(), fileName: finalFile, reason: { type: 'url', msg: 'URL already in queue' }, resolution: 'rename' });
+      } else if (hasBatchConflict) {
+        newConflicts.push({
+          id: i.toString(),
+          fileName: finalFile,
+          reason: { type: 'file', msg: 'Another selected download uses this destination' },
+          resolution: 'rename',
+          replaceAllowed: false
+        });
       } else {
         let fileExistsInStore = false;
         for (const download of store.downloads) {
@@ -595,6 +613,7 @@ export const AddDownloadsModal = () => {
           });
         }
       }
+      plannedTargets.push({ location: itemLocation, fileName: finalFile });
     }
 
     if (newConflicts.length > 0) {
@@ -646,6 +665,17 @@ export const AddDownloadsModal = () => {
                  const ext = finalFile.includes('.') ? finalFile.substring(finalFile.lastIndexOf('.')) : '';
                  let newName = finalFile;
                  let exists = true;
+                 const batchTargets: Array<{ location: string; fileName: string }> = [];
+                 for (const [candidateIndex, candidate] of itemsToAdd.entries()) {
+                   if (!candidate || candidateIndex === idx) continue;
+                   const candidateFile = candidate.isMedia
+                     ? mediaFileNameForSelectedFormat(candidate.file, candidate)
+                     : canonicalizeDownloadFileName(candidate.file);
+                   const candidateLocation = useSharedDestination
+                     ? finalLocation
+                     : destinationOverrides[candidateIndex] || await categoryLocationForFile(candidateFile);
+                   batchTargets.push({ location: candidateLocation, fileName: candidateFile });
+                 }
                  
                  while (exists && count < 1000) {
           newName = `${base} (${count})${ext}`;
@@ -674,7 +704,14 @@ export const AddDownloadsModal = () => {
                          path: await resolveDownloadFilePath(itemLocation, newName)
                        });
                      } catch(e) {}
-                     exists = storeHas || diskHas;
+                     const batchHas = batchTargets.some(target => downloadLocationEquals(
+                         target.location,
+                         target.fileName,
+                         itemLocation,
+                         newName,
+                         platform.os
+                       ));
+                     exists = storeHas || diskHas || batchHas;
                      count++;
                  }
                  if (exists) {
@@ -1201,7 +1238,7 @@ export const AddDownloadsModal = () => {
             {metadataSummaryMessage(parsedItems)}
           </div>
           <div className="flex gap-2.5">
-            <button onClick={() => toggleAddModal(false)} className="add-download-button add-download-button-cancel px-4 text-xs">
+            <button onClick={() => toggleAddModal(false)} disabled={isSubmitting} className="add-download-button add-download-button-cancel px-4 text-xs">
               Cancel
             </button>
             <div ref={actionMenuRef} className="relative flex gap-2.5">

@@ -88,8 +88,12 @@ export const reconcileDownloadRows = (
       const contextChanged = requestContextVersion !== undefined
         && requestContextVersion !== preserved.requestContextVersion;
       if ((forcedMedia && !preserved.isMedia) || contextChanged) {
+        const requestedFilename = requestFilenames[input.sourceUrl];
         return {
           ...preserved,
+          file: contextChanged
+            ? canonicalizeDownloadFileName(requestedFilename || fileNameFromUrl(input.sourceUrl))
+            : preserved.file,
           status: 'loading',
           generation: preserved.generation + 1,
           requestContextVersion,

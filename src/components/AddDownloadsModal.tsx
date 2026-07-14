@@ -101,6 +101,7 @@ export const AddDownloadsModal = () => {
   const [resolvedLocation, setResolvedLocation] = useState('');
   const [isQueueMenuOpen, setIsQueueMenuOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const actionMenuRef = useRef<HTMLDivElement>(null);
 
   // Right Form
@@ -155,7 +156,7 @@ export const AddDownloadsModal = () => {
   };
 
   const closeModalFromDismissAction = useCallback(() => {
-    if (isSubmitting) return;
+    if (isSubmitting || isSubmittingRef.current) return;
     const hasPendingInput = Boolean(
       urls.trim() || pendingAddUrls.trim() || parsedItems.length || headers.trim() || cookies.trim()
     );
@@ -206,6 +207,7 @@ export const AddDownloadsModal = () => {
     cookiesManuallyEditedRef.current = false;
     setMirrors('');
     setIsQueueMenuOpen(false);
+    isSubmittingRef.current = false;
     setIsSubmitting(false);
   }, [
     isAddModalOpen,
@@ -496,13 +498,14 @@ export const AddDownloadsModal = () => {
   };
 
   const handleAction = async (action: AddDownloadAction) => {
-    if (isSubmitting || !canSubmitMetadataRows(parsedItems)) {
+    if (isSubmitting || isSubmittingRef.current || !canSubmitMetadataRows(parsedItems)) {
       return;
     }
     if (speedLimitEnabled && (!Number.isFinite(Number(speedLimit)) || Number(speedLimit) <= 0)) {
       addToast({ message: 'Speed limit must be greater than zero', variant: 'error', isActionable: true });
       return;
     }
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     let finalLocation = saveLocation;
     let useSharedDestination = isSaveLocationManual;
@@ -525,11 +528,13 @@ export const AddDownloadsModal = () => {
             const approvedPath = await useSettingsStore.getState().approveDownloadRoot(selected);
             destinationOverrides[index] = approvedPath;
           } else {
+            isSubmittingRef.current = false;
             setIsSubmitting(false);
             return;
           }
         } catch (e) {
           console.error("Failed to select folder:", e);
+          isSubmittingRef.current = false;
           setIsSubmitting(false);
           return;
         }
@@ -622,6 +627,7 @@ export const AddDownloadsModal = () => {
       setPendingUseSharedDestination(useSharedDestination);
       setPendingDestinationOverrides(destinationOverrides);
       setShowingDuplicates(true);
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
       return;
     }
@@ -629,6 +635,7 @@ export const AddDownloadsModal = () => {
     try {
       await executeAddDownloads(action, finalLocation, useSharedDestination, undefined, destinationOverrides);
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -886,6 +893,8 @@ export const AddDownloadsModal = () => {
         <DuplicateResolutionModal 
           conflicts={conflicts} 
           onConfirm={(resolutions) => {
+            if (isSubmittingRef.current) return;
+            isSubmittingRef.current = true;
             setShowingDuplicates(false);
             setIsSubmitting(true);
             void executeAddDownloads(
@@ -902,7 +911,10 @@ export const AddDownloadsModal = () => {
                   isActionable: true
                 });
               })
-              .finally(() => setIsSubmitting(false));
+              .finally(() => {
+                isSubmittingRef.current = false;
+                setIsSubmitting(false);
+              });
           }} 
           onCancel={() => setShowingDuplicates(false)} 
         />
@@ -1238,7 +1250,7 @@ export const AddDownloadsModal = () => {
             {metadataSummaryMessage(parsedItems)}
           </div>
           <div className="flex gap-2.5">
-            <button onClick={() => toggleAddModal(false)} disabled={isSubmitting} className="add-download-button add-download-button-cancel px-4 text-xs">
+            <button onClick={closeModalFromDismissAction} disabled={isSubmitting} className="add-download-button add-download-button-cancel px-4 text-xs">
               Cancel
             </button>
             <div ref={actionMenuRef} className="relative flex gap-2.5">

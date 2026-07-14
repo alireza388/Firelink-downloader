@@ -38,9 +38,10 @@ const startDownloadListeners = async () => {
         return;
       }
       // A sidecar can flush one last progress chunk after a pause, failure,
-      // or completion event. Do not let that stale chunk repopulate the live
-      // progress map or overwrite a later lifecycle's first frame.
-      if (current && ['completed', 'failed', 'paused'].includes(current.status)) {
+      // completion, or lifecycle reset. Do not let that stale chunk repopulate
+      // the live progress map or overwrite a later lifecycle's first frame.
+      if (!['downloading', 'processing'].includes(current.status)) {
+        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
         return;
       }
       useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
@@ -74,6 +75,9 @@ const startDownloadListeners = async () => {
         return;
       }
 
+      if (['queued', 'retrying', 'completed', 'failed', 'paused'].includes(status)) {
+        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
+      }
       const progress = useDownloadProgressStore.getState().progressMap[payload.id];
       const updates: Partial<DownloadItem> = {
         status,
@@ -109,7 +113,7 @@ const startDownloadListeners = async () => {
       } else if (status === 'completed' || status === 'failed') {
         mainStore.unregisterBackendIds([payload.id]);
       }
-      if (status === 'completed' || status === 'failed' || status === 'paused') {
+      if (['queued', 'retrying', 'completed', 'failed', 'paused'].includes(status)) {
         useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
       }
     }),

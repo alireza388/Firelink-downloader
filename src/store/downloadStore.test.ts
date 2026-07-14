@@ -113,4 +113,47 @@ describe('useDownloadProgressStore', () => {
     expect(useDownloadProgressStore.getState().progressMap).toEqual({});
     release();
   });
+
+  it('drops stale progress when a download returns to a queued lifecycle', async () => {
+    const handlers: Record<string, (event: any) => void> = {};
+    vi.mocked(ipc.listenEvent).mockImplementation((event, handler) => {
+      handlers[event] = handler as (event: any) => void;
+      return Promise.resolve(vi.fn());
+    });
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'reused',
+        url: 'https://example.com/file',
+        fileName: 'file.bin',
+        status: 'downloading',
+        category: 'Other',
+        dateAdded: ''
+      }]
+    });
+
+    const release = await initDownloadListener();
+    handlers['download-progress']({ payload: {
+      id: 'reused',
+      fraction: 0.8,
+      speed: '1 MB/s',
+      eta: '2s',
+      size: '8 MB',
+      size_is_final: false
+    } });
+    handlers['download-state']({ payload: {
+      id: 'reused',
+      status: 'queued'
+    } });
+    handlers['download-progress']({ payload: {
+      id: 'reused',
+      fraction: 0.9,
+      speed: '2 MB/s',
+      eta: '1s',
+      size: '9 MB',
+      size_is_final: false
+    } });
+
+    expect(useDownloadProgressStore.getState().progressMap).toEqual({});
+    release();
+  });
 });

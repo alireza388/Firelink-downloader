@@ -923,6 +923,20 @@ pub fn load_ownership(connection: &Connection) -> Result<Vec<(String, String)>, 
 }
 
 pub fn set_ownership(connection: &Connection, id: &str, path: &str) -> Result<(), String> {
+    let existing_owner = connection
+        .query_row(
+            "SELECT id FROM download_ownership
+             WHERE primary_path = ?1 AND id <> ?2
+             LIMIT 1",
+            params![path, id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to check download ownership path: {error}"))?;
+    if existing_owner.is_some() {
+        return Err("Download destination is already owned by another Firelink download".to_string());
+    }
+
     connection
         .execute(
             "INSERT INTO download_ownership (id, primary_path) VALUES (?1, ?2)
@@ -1667,5 +1681,23 @@ mod tests {
 
         acknowledge_pairing_token_notice(&connection).unwrap();
         assert!(!has_pending_notice(&connection, TOKEN_CHANGED_NOTICE).unwrap());
+    }
+
+    #[test]
+    fn rejects_two_download_ids_from_claiming_the_same_primary_path() {
+        let temp = TempDir::new().unwrap();
+        let state = init_at_path(temp.path()).unwrap();
+        let connection = state.lock().unwrap();
+
+        set_ownership(&connection, "first", "/downloads/file.bin").unwrap();
+        let error = set_ownership(&connection, "second", "/downloads/file.bin")
+            .expect_err("a primary path must have one live owner");
+
+        assert!(error.contains("already owned"));
+        assert_eq!(load_ownership(&connection).unwrap(), vec![(
+            "first".to_string(),
+            "/downloads/file.bin".to_string()
+        )]);
+        set_ownership(&connection, "first", "/downloads/renamed.bin").unwrap();
     }
 }

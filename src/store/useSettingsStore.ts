@@ -22,6 +22,50 @@ let settingsSave = Promise.resolve();
 const DEFAULT_SCHEDULER_QUEUE_ID = '00000000-0000-0000-0000-000000000001';
 export const DEFAULT_SPEED_LIMIT_PRESET_VALUES = [1, 5, 10];
 
+const THEME_VALUES = ['system', 'light', 'dark', 'dracula', 'nord'] as const;
+const APP_FONT_SIZE_VALUES = ['small', 'standard', 'large'] as const;
+const LIST_ROW_DENSITY_VALUES = ['compact', 'standard', 'relaxed'] as const;
+const PROXY_MODE_VALUES = ['none', 'system', 'custom'] as const;
+const MEDIA_COOKIE_SOURCE_VALUES = [
+  'none', 'safari', 'chrome', 'chromium', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'whale'
+] as const;
+const SETTINGS_TAB_VALUES = [
+  'downloads', 'lookandfeel', 'network', 'locations', 'sitelogins', 'power', 'engine', 'integrations', 'about'
+] as const;
+
+type PersistedSettingsSnapshot = PersistedSettings & {
+  keychainPromptDismissed: boolean;
+};
+
+const clampSettingInteger = (
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  fallback: number
+) => {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(numeric)));
+};
+
+const isAllowedSetting = <T extends string>(values: readonly T[], value: unknown): value is T =>
+  typeof value === 'string' && values.includes(value as T);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const sanitizeSiteLogins = (value: unknown): SiteLogin[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).filter((login): login is SiteLogin =>
+    typeof login.id === 'string'
+      && typeof login.urlPattern === 'string'
+      && typeof login.username === 'string'
+  );
+};
+
+const persistedBoolean = (value: unknown, fallback: boolean) =>
+  typeof value === 'boolean' ? value : fallback;
+
 const tauriStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (name === 'firelink-settings') {
@@ -113,6 +157,7 @@ export interface SettingsState {
   extensionPairingToken: string;
   isPairingTokenPersistent: boolean;
   keychainAccessGranted: boolean;
+  keychainPromptDismissed: boolean;
   autoCheckUpdates: boolean;
   showKeychainModal: boolean;
 
@@ -158,6 +203,7 @@ export interface SettingsState {
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
   hydratePairingToken: () => Promise<boolean>;
   setShowKeychainModal: (show: boolean) => void;
+  dismissKeychainPrompt: () => void;
 }
 
 const generateSecureToken = () => {
@@ -188,7 +234,7 @@ const generateSecureToken = () => {
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
-    (set, _get) => ({
+    (set, get) => ({
       theme: 'system',
       baseDownloadFolder: '~/Downloads',
       categorySubfoldersEnabled: true,
@@ -236,8 +282,9 @@ export const useSettingsStore = create<SettingsState>()(
       mediaCookieSource: 'none',
       siteLogins: [],
       extensionPairingToken: '',
-      isPairingTokenPersistent: true,
+      isPairingTokenPersistent: false,
       keychainAccessGranted: false,
+      keychainPromptDismissed: false,
       autoCheckUpdates: true,
       showKeychainModal: false,
 
@@ -257,7 +304,9 @@ export const useSettingsStore = create<SettingsState>()(
       },
       setMaxConcurrentDownloads: (max) => {
         info('Settings updated: maxConcurrentDownloads');
-        set({ maxConcurrentDownloads: max });
+        set({
+          maxConcurrentDownloads: clampSettingInteger(max, 1, 12, 3)
+        });
       },
       setGlobalSpeedLimit: (limit) => {
         info('Settings updated: globalSpeedLimit');
@@ -275,8 +324,12 @@ export const useSettingsStore = create<SettingsState>()(
       setLastCustomSpeedLimitKiB: (lastCustomSpeedLimitKiB) => set({ lastCustomSpeedLimitKiB }),
       toggleSidebar: () => set((state) => ({ isSidebarVisible: !state.isSidebarVisible })),
 
-      setPerServerConnections: (perServerConnections) => set({ perServerConnections }),
-      setMaxAutomaticRetries: (maxAutomaticRetries) => set({ maxAutomaticRetries }),
+      setPerServerConnections: (perServerConnections) => set({
+        perServerConnections: clampSettingInteger(perServerConnections, 1, 16, 16)
+      }),
+      setMaxAutomaticRetries: (maxAutomaticRetries) => set({
+        maxAutomaticRetries: clampSettingInteger(maxAutomaticRetries, 0, 10, 3)
+      }),
       setShowNotifications: (showNotifications) => set({ showNotifications }),
       setPlayCompletionSound: (playCompletionSound) => set({ playCompletionSound }),
       setAppFontSize: (appFontSize) => set({ appFontSize }),
@@ -344,15 +397,17 @@ export const useSettingsStore = create<SettingsState>()(
         const result = await invoke('hydrate_extension_pairing_token');
         set({ 
           extensionPairingToken: result.token,
-          isPairingTokenPersistent: result.persistent 
+          isPairingTokenPersistent: result.persistent,
+          showKeychainModal: !result.persistent && !get().keychainPromptDismissed
         });
-        if (!result.persistent) {
-          set({ showKeychainModal: true });
-        }
         return result.tokenChanged;
       },
       setAutoCheckUpdates: (autoCheckUpdates: boolean) => set({ autoCheckUpdates }),
       setShowKeychainModal: (show: boolean) => set({ showKeychainModal: show }),
+      dismissKeychainPrompt: () => set({
+        keychainPromptDismissed: true,
+        showKeychainModal: false
+      }),
     }),
     {
       name: 'firelink-settings',
@@ -391,7 +446,7 @@ export const useSettingsStore = create<SettingsState>()(
           logsEnabled: persisted.logsEnabled === true
         } as SettingsState;
       },
-      partialize: (state): PersistedSettings => ({
+      partialize: (state): PersistedSettingsSnapshot => ({
         theme: state.theme,
         baseDownloadFolder: state.baseDownloadFolder,
         categorySubfoldersEnabled: state.categorySubfoldersEnabled,
@@ -429,6 +484,7 @@ export const useSettingsStore = create<SettingsState>()(
         siteLogins: state.siteLogins,
         extensionPairingToken: state.extensionPairingToken,
         keychainAccessGranted: state.keychainAccessGranted,
+        keychainPromptDismissed: state.keychainPromptDismissed,
         autoCheckUpdates: state.autoCheckUpdates
       }),
       merge: (persistedState: unknown, currentState) => {
@@ -440,6 +496,66 @@ export const useSettingsStore = create<SettingsState>()(
           ...currentState,
           ...persisted,
           ...locations,
+          theme: isAllowedSetting(THEME_VALUES, persisted.theme)
+            ? persisted.theme
+            : currentState.theme,
+          appFontSize: isAllowedSetting(APP_FONT_SIZE_VALUES, persisted.appFontSize)
+            ? persisted.appFontSize
+            : currentState.appFontSize,
+          listRowDensity: isAllowedSetting(LIST_ROW_DENSITY_VALUES, persisted.listRowDensity)
+            ? persisted.listRowDensity
+            : currentState.listRowDensity,
+          proxyMode: isAllowedSetting(PROXY_MODE_VALUES, persisted.proxyMode)
+            ? persisted.proxyMode
+            : currentState.proxyMode,
+          mediaCookieSource: isAllowedSetting(MEDIA_COOKIE_SOURCE_VALUES, persisted.mediaCookieSource)
+            ? persisted.mediaCookieSource
+            : 'none',
+          activeSettingsTab: isAllowedSetting(SETTINGS_TAB_VALUES, persisted.activeSettingsTab)
+            ? persisted.activeSettingsTab
+            : currentState.activeSettingsTab,
+          extensionPairingToken: typeof persisted.extensionPairingToken === 'string'
+            ? persisted.extensionPairingToken
+            : currentState.extensionPairingToken,
+          showNotifications: persistedBoolean(persisted.showNotifications, currentState.showNotifications),
+          playCompletionSound: persistedBoolean(persisted.playCompletionSound, currentState.playCompletionSound),
+          showDockBadge: persistedBoolean(persisted.showDockBadge, currentState.showDockBadge),
+          showMenuBarIcon: persistedBoolean(persisted.showMenuBarIcon, currentState.showMenuBarIcon),
+          askWhereToSaveEachFile: persistedBoolean(
+            persisted.askWhereToSaveEachFile,
+            currentState.askWhereToSaveEachFile
+          ),
+          preventsSleepWhileDownloading: persistedBoolean(
+            persisted.preventsSleepWhileDownloading,
+            currentState.preventsSleepWhileDownloading
+          ),
+          keychainAccessGranted: persistedBoolean(
+            persisted.keychainAccessGranted,
+            currentState.keychainAccessGranted
+          ),
+          keychainPromptDismissed: persistedBoolean(
+            persisted.keychainPromptDismissed,
+            currentState.keychainPromptDismissed
+          ),
+          autoCheckUpdates: persistedBoolean(persisted.autoCheckUpdates, currentState.autoCheckUpdates),
+          maxConcurrentDownloads: clampSettingInteger(
+            persisted.maxConcurrentDownloads,
+            1,
+            12,
+            currentState.maxConcurrentDownloads
+          ),
+          perServerConnections: clampSettingInteger(
+            persisted.perServerConnections,
+            1,
+            16,
+            currentState.perServerConnections
+          ),
+          maxAutomaticRetries: clampSettingInteger(
+            persisted.maxAutomaticRetries,
+            0,
+            10,
+            currentState.maxAutomaticRetries
+          ),
           speedLimitPresetValues: Array.isArray(persisted.speedLimitPresetValues)
             ? persisted.speedLimitPresetValues
             : currentState.speedLimitPresetValues,
@@ -455,10 +571,8 @@ export const useSettingsStore = create<SettingsState>()(
             ? persisted.scheduler.selectedQueueIds
             : currentState.scheduler.selectedQueueIds
         },
-        appFontSize: persisted.appFontSize || currentState.appFontSize,
-        listRowDensity: persisted.listRowDensity || currentState.listRowDensity,
         siteLogins: Array.isArray(persisted.siteLogins)
-          ? persisted.siteLogins
+          ? sanitizeSiteLogins(persisted.siteLogins)
           : currentState.siteLogins
         });
       }

@@ -1688,14 +1688,9 @@ async fn fetch_media_metadata(
         (Err(error), Some(browser))
             if !browser.trim().is_empty() && is_browser_cookie_extraction_error(&error) =>
         {
-            log::warn!(
-                "yt-dlp could not read browser cookies from {}; retrying media metadata without browser cookies",
-                browser
-            );
-            fetch_media_metadata_uncached(
-                app_handle, url, None, user_agent, username, password, headers, cookies, proxy,
-            )
-            .await
+            Err(format!(
+                "Browser cookie extraction failed for {browser}: {error}"
+            ))
         }
         (result, _) => result,
     };
@@ -3025,8 +3020,7 @@ pub(crate) async fn start_media_download_internal(
 
     let max_retries = max_tries.unwrap_or(0).max(0) as usize;
     let mut strike = 0_usize;
-    let mut effective_cookie_source = cookie_source.clone();
-    let mut browser_cookie_fallback_used = false;
+    let effective_cookie_source = cookie_source.clone();
 
     while strike <= max_retries {
         let mut processing_started = false;
@@ -3309,20 +3303,15 @@ pub(crate) async fn start_media_download_internal(
         if should_cleanup_media_artifacts_after_failure(&failure_reason, strike, max_retries) {
             cleanup_media_artifacts(&out_path, false).await;
         }
-        if !browser_cookie_fallback_used
-            && effective_cookie_source
-                .as_deref()
-                .is_some_and(|source| !source.trim().is_empty() && source != "none")
+        if effective_cookie_source
+            .as_deref()
+            .is_some_and(|source| !source.trim().is_empty() && source != "none")
             && is_browser_cookie_extraction_error(&failure_reason)
         {
             let source = effective_cookie_source.clone().unwrap_or_default();
-            log::warn!(
-                "yt-dlp could not read browser cookies from {}; retrying media download without browser cookies",
-                source
-            );
-            effective_cookie_source = None;
-            browser_cookie_fallback_used = true;
-            continue;
+            return Err(format!(
+                "Browser cookie extraction failed for {source}: {failure_reason}"
+            ));
         }
         if !(transient && strikes_left) {
             return Err(failure_reason);
@@ -4583,7 +4572,7 @@ async fn set_concurrent_limit(
     state: tauri::State<'_, AppState>,
     limit: usize,
 ) -> Result<(), String> {
-    state.queue_manager.set_capacity(limit);
+    state.queue_manager.set_capacity(limit.clamp(1, 12));
     Ok(())
 }
 
@@ -5843,7 +5832,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_browser_cookie_database_errors_for_fallback() {
+    fn classifies_browser_cookie_database_errors() {
         assert!(is_browser_cookie_extraction_error(
             "ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp/yt-dlp/issues/7271"
         ));

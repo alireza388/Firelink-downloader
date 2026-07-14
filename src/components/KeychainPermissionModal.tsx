@@ -6,7 +6,7 @@ import { usePlatformInfo } from '../utils/platform';
 
 export const KeychainPermissionModal: React.FC = () => {
   const showKeychainModal = useSettingsStore(state => state.showKeychainModal);
-  const setShowKeychainModal = useSettingsStore(state => state.setShowKeychainModal);
+  const dismissKeychainPrompt = useSettingsStore(state => state.dismissKeychainPrompt);
   const platform = usePlatformInfo();
   const [isGranting, setIsGranting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -14,11 +14,11 @@ export const KeychainPermissionModal: React.FC = () => {
   useEffect(() => {
     if (!showKeychainModal || isGranting) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setShowKeychainModal(false);
+      if (event.key === 'Escape') dismissKeychainPrompt();
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [isGranting, setShowKeychainModal, showKeychainModal]);
+  }, [dismissKeychainPrompt, isGranting, showKeychainModal]);
 
   if (!showKeychainModal) {
     return null;
@@ -53,9 +53,10 @@ export const KeychainPermissionModal: React.FC = () => {
         useSettingsStore.setState({
           keychainAccessGranted: true,
           extensionPairingToken: result.token,
-          isPairingTokenPersistent: true
+          isPairingTokenPersistent: true,
+          keychainPromptDismissed: false,
+          showKeychainModal: false
         });
-        setShowKeychainModal(false);
       } else {
         setError(result.error || `${storeName} is unavailable.`);
       }
@@ -67,7 +68,7 @@ export const KeychainPermissionModal: React.FC = () => {
   };
 
   const handleLater = () => {
-    setShowKeychainModal(false);
+    dismissKeychainPrompt();
   };
 
   return (

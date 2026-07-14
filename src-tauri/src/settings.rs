@@ -20,6 +20,7 @@ pub fn decode_stored_settings(stored: &Value) -> Result<PersistedSettings, Strin
     let document = decode_document(stored)?;
     let mut state = settings_state(&document)?.clone();
     migrate_location_settings(&mut state)?;
+    sanitize_persisted_setting_values(&mut state);
     let mut merged = serde_json::to_value(default_settings())
         .map_err(|error| format!("failed to serialize settings defaults: {error}"))?;
     merge_json(&mut merged, &state);
@@ -153,13 +154,108 @@ fn merge_json(target: &mut Value, source: &Value) {
         (Value::Object(target), Value::Object(source)) => {
             for (key, value) in source {
                 if let Some(target_value) = target.get_mut(key) {
-                    merge_json(target_value, value);
+                    if json_value_types_match(target_value, value) {
+                        merge_json(target_value, value);
+                    }
                 } else {
                     target.insert(key.clone(), value.clone());
                 }
             }
         }
-        (target, source) => *target = source.clone(),
+        (target, source) if json_value_types_match(target, source) => *target = source.clone(),
+        _ => {}
+    }
+}
+
+fn json_value_types_match(left: &Value, right: &Value) -> bool {
+    matches!(
+        (left, right),
+        (Value::Null, Value::Null)
+            | (Value::Bool(_), Value::Bool(_))
+            | (Value::Number(_), Value::Number(_))
+            | (Value::String(_), Value::String(_))
+            | (Value::Array(_), Value::Array(_))
+            | (Value::Object(_), Value::Object(_))
+    )
+}
+
+fn sanitize_persisted_setting_values(state: &mut Value) {
+    let Some(state) = state.as_object_mut() else {
+        return;
+    };
+
+    sanitize_integer_setting(state, "maxConcurrentDownloads", |value| value.as_u64().is_some());
+    sanitize_integer_setting(state, "perServerConnections", |value| value.as_i64().is_some());
+    sanitize_integer_setting(state, "maxAutomaticRetries", |value| value.as_i64().is_some());
+    sanitize_allowed_string(
+        state,
+        "theme",
+        &["system", "light", "dark", "dracula", "nord"],
+    );
+    sanitize_allowed_string(state, "appFontSize", &["small", "standard", "large"]);
+    sanitize_allowed_string(state, "listRowDensity", &["compact", "standard", "relaxed"]);
+    sanitize_allowed_string(state, "activeSettingsTab", &[
+        "downloads",
+        "lookandfeel",
+        "network",
+        "locations",
+        "sitelogins",
+        "power",
+        "engine",
+        "integrations",
+        "about",
+    ]);
+    sanitize_allowed_string(state, "proxyMode", &["none", "system", "custom"]);
+    sanitize_allowed_string(
+        state,
+        "mediaCookieSource",
+        &[
+            "none", "safari", "chrome", "chromium", "firefox", "edge", "brave", "opera",
+            "vivaldi", "whale",
+        ],
+    );
+
+    if let Some(scheduler) = state.get_mut("scheduler").and_then(Value::as_object_mut) {
+        sanitize_allowed_string(
+            scheduler,
+            "postQueueAction",
+            &["none", "sleep", "restart", "shutdown"],
+        );
+    }
+
+    if let Some(logins) = state.get_mut("siteLogins").and_then(Value::as_array_mut) {
+        logins.retain(|login| {
+            let Some(login) = login.as_object() else {
+                return false;
+            };
+            ["id", "urlPattern", "username"]
+                .into_iter()
+                .all(|key| login.get(key).and_then(Value::as_str).is_some())
+        });
+    }
+}
+
+fn sanitize_integer_setting(
+    state: &mut serde_json::Map<String, Value>,
+    key: &str,
+    is_valid: impl Fn(&Value) -> bool,
+) {
+    if state.get(key).is_some_and(|value| !is_valid(value)) {
+        state.remove(key);
+    }
+}
+
+fn sanitize_allowed_string(
+    state: &mut serde_json::Map<String, Value>,
+    key: &str,
+    allowed: &[&str],
+) {
+    let valid = state
+        .get(key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| allowed.contains(&value));
+    if state.contains_key(key) && !valid {
+        state.remove(key);
     }
 }
 
@@ -167,6 +263,9 @@ fn validate_settings(settings: &mut PersistedSettings) {
     if settings.max_concurrent_downloads == 0 {
         settings.max_concurrent_downloads = default_settings().max_concurrent_downloads;
     }
+    settings.max_concurrent_downloads = settings.max_concurrent_downloads.min(12);
+    settings.per_server_connections = settings.per_server_connections.clamp(1, 16);
+    settings.max_automatic_retries = settings.max_automatic_retries.clamp(0, 10);
 }
 
 fn default_category_subfolders() -> HashMap<String, String> {
@@ -334,7 +433,7 @@ fn default_settings() -> PersistedSettings {
         per_server_connections: 16,
         max_automatic_retries: 3,
         show_notifications: true,
-        play_completion_sound: true,
+        play_completion_sound: false,
         app_font_size: AppFontSize::Standard,
         list_row_density: ListRowDensity::Standard,
         show_dock_badge: true,
@@ -356,7 +455,8 @@ fn default_settings() -> PersistedSettings {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_stored_settings, preserve_portable_pairing_token, preserve_scheduler_runtime_keys,
+        decode_stored_settings, default_settings, preserve_portable_pairing_token,
+        preserve_scheduler_runtime_keys,
     };
     use serde_json::{json, Value};
 
@@ -543,6 +643,54 @@ mod tests {
         let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
 
         assert_eq!(settings.max_concurrent_downloads, 3);
+    }
+
+    #[test]
+    fn clamps_out_of_range_download_settings() {
+        let stored = json!({
+            "state": {
+                "maxConcurrentDownloads": 99,
+                "perServerConnections": -4,
+                "maxAutomaticRetries": 99
+            },
+            "version": 3
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert_eq!(settings.max_concurrent_downloads, 12);
+        assert_eq!(settings.per_server_connections, 1);
+        assert_eq!(settings.max_automatic_retries, 10);
+    }
+
+    #[test]
+    fn ignores_malformed_setting_types_without_dropping_valid_values() {
+        let stored = json!({
+            "state": {
+                "baseDownloadFolder": "/Users/test/Downloads",
+                "maxConcurrentDownloads": "not-a-number",
+                "perServerConnections": 5,
+                "showNotifications": "yes",
+                "theme": "not-a-theme",
+                "siteLogins": [{"id": "valid", "urlPattern": "example.com", "username": "user"}, {"id": 3}]
+            },
+            "version": 3
+        });
+
+        let settings = decode_stored_settings(&Value::String(stored.to_string())).unwrap();
+
+        assert_eq!(settings.base_download_folder, "/Users/test/Downloads");
+        assert_eq!(settings.max_concurrent_downloads, 3);
+        assert_eq!(settings.per_server_connections, 5);
+        assert!(settings.show_notifications);
+        assert!(matches!(settings.theme, crate::ipc::Theme::System));
+        assert_eq!(settings.site_logins.len(), 1);
+        assert_eq!(settings.site_logins[0].id, "valid");
+    }
+
+    #[test]
+    fn completion_sound_default_matches_the_frontend_default() {
+        assert!(!default_settings().play_completion_sound);
     }
 
     #[test]

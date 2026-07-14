@@ -28,6 +28,7 @@ import {
   subfolderFromDerivedCategoryPath
 } from '../utils/downloadLocations';
 import { usePlatformInfo } from '../utils/platform';
+import { isTrustedFirelinkReleaseUrl } from '../utils/releaseUrls';
 
 const settingsTabs: { type: SettingsTab; label: string; icon: typeof Download }[] = [
   { type: 'downloads', label: 'Downloads', icon: Download },
@@ -275,7 +276,7 @@ const [engineStatus, setEngineStatus] = useState<EngineStatusItem[] | null>(null
 const [expandedEngine, setExpandedEngine] = useState<string | null>(null);
 const [isRecheckingEngines, setIsRecheckingEngines] = useState(false);
 const engineRunId = useRef(0);
-const [appVersion, setAppVersion] = useState('1.0.1');
+const [appVersion, setAppVersion] = useState('Unknown');
 const [extensionServerPort, setExtensionServerPort] = useState<number | null>(null);
 
   // Local state for adding site login
@@ -283,6 +284,11 @@ const [extensionServerPort, setExtensionServerPort] = useState<number | null>(nu
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [loginFieldErrors, setLoginFieldErrors] = useState<{
+    pattern?: string;
+    username?: string;
+    password?: string;
+  }>({});
 
   // Toast notifications
   const { addToast } = useToast();
@@ -431,6 +437,9 @@ runEngineChecks(false);
           localVersion: result.local_version
         });
       } else if (result.type === 'UpdateAvailable') {
+        if (!isTrustedFirelinkReleaseUrl(result.update.release_url)) {
+          throw new Error('The update check returned an untrusted release URL.');
+        }
         setManualUpdateStatus({
           type: 'update-available',
           version: result.update.version,
@@ -512,10 +521,24 @@ runEngineChecks(false);
   };
 
   const handleAddLogin = async () => {
-    if (!loginPattern.trim() || !loginUser.trim()) {
-      setLoginError("Please enter a URL pattern and a username.");
+    const fieldErrors: typeof loginFieldErrors = {};
+    if (!loginPattern.trim()) {
+      fieldErrors.pattern = 'URL pattern is required.';
+    } else if (/\s/.test(loginPattern.trim())) {
+      fieldErrors.pattern = 'URL pattern cannot contain whitespace.';
+    }
+    if (!loginUser.trim()) {
+      fieldErrors.username = 'Username is required.';
+    }
+    if (!loginPass) {
+      fieldErrors.password = 'Password is required.';
+    }
+    if (Object.keys(fieldErrors).length > 0) {
+      setLoginFieldErrors(fieldErrors);
+      setLoginError('');
       return;
     }
+    setLoginFieldErrors({});
     const id = crypto.randomUUID();
     
     if (loginPass) {
@@ -1057,10 +1080,15 @@ runEngineChecks(false);
                   <input
                     type="text"
                     value={loginPattern}
-                    onChange={(e) => setLoginPattern(e.target.value)}
+                    onChange={(e) => {
+                      setLoginPattern(e.target.value);
+                      setLoginFieldErrors(current => ({ ...current, pattern: undefined }));
+                    }}
                     placeholder="e.g. *.example.com or example.com/downloads"
+                    aria-invalid={Boolean(loginFieldErrors.pattern)}
                     className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full text-text-primary focus:outline-none"
                   />
+                  {loginFieldErrors.pattern && <p className="text-red-500 text-xs mt-1">{loginFieldErrors.pattern}</p>}
                 </div>
 
                 <div className="grid grid-cols-[150px_1fr] items-center gap-4 text-[13px]">
@@ -1068,10 +1096,15 @@ runEngineChecks(false);
                   <input
                     type="text"
                     value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
+                    onChange={(e) => {
+                      setLoginUser(e.target.value);
+                      setLoginFieldErrors(current => ({ ...current, username: undefined }));
+                    }}
                     placeholder="Username"
+                    aria-invalid={Boolean(loginFieldErrors.username)}
                     className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full text-text-primary focus:outline-none"
                   />
+                  {loginFieldErrors.username && <p className="text-red-500 text-xs mt-1">{loginFieldErrors.username}</p>}
                 </div>
 
                 <div className="grid grid-cols-[150px_1fr] items-center gap-4 text-[13px]">
@@ -1079,10 +1112,15 @@ runEngineChecks(false);
                   <input
                     type="password"
                     value={loginPass}
-                    onChange={(e) => setLoginPass(e.target.value)}
+                    onChange={(e) => {
+                      setLoginPass(e.target.value);
+                      setLoginFieldErrors(current => ({ ...current, password: undefined }));
+                    }}
                     placeholder="Password"
+                    aria-invalid={Boolean(loginFieldErrors.password)}
                     className="bg-bg-input border border-border-modal rounded-md px-3 py-1.5 w-full text-text-primary focus:outline-none"
                   />
+                  {loginFieldErrors.password && <p className="text-red-500 text-xs mt-1">{loginFieldErrors.password}</p>}
                 </div>
 
                 <div className="flex justify-end pt-2">
@@ -1215,12 +1253,12 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                   </div>
                   <div className="flex-1">
                     <h4 className="text-sm font-semibold text-green-500 m-0">
-                      {platform.portable ? 'Portable Pairing Enabled' : 'Credential Storage Available'}
+                      {platform.portable ? 'Portable Pairing Enabled' : 'Pairing Token Persisted'}
                     </h4>
                     <p className="text-xs text-text-secondary m-0 mt-0.5">
                       {platform.portable
                         ? 'Your pairing token is stored with this portable Firelink folder and will persist when the folder is moved. Treat the folder as sensitive.'
-                        : "Your pairing token is securely saved in this system's credential store and will persist across restarts."}
+                        : 'Your pairing token is persisted in Firelink settings and will persist across restarts.'}
                     </p>
                   </div>
                 </div>

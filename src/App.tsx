@@ -1,4 +1,4 @@
-import { initMediaDomains, isActiveDownloadStatus, normalizeSpeedLimitForBackend } from './utils/downloads';
+import { initMediaDomains, isActiveDownloadStatus, isTransferActiveStatus, normalizeSpeedLimitForBackend } from './utils/downloads';
 import { schedulerCompletionState } from './utils/schedulerCompletion';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Sidebar, SidebarFilter } from "./components/Sidebar";
@@ -112,7 +112,7 @@ function App() {
   const logsEnabled = useSettingsStore(state => state.logsEnabled);
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
   const downloads = useDownloadStore(state => state.downloads);
-  const activeDownloadCount = downloads.filter(download => download.status === 'downloading').length;
+  const activeDownloadCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
   const queuedCount = downloads.filter(download =>
     download.status === 'queued' || download.status === 'staged'
   ).length;
@@ -124,11 +124,7 @@ function App() {
   const pendingPostActionTimer = useRef<number | null>(null);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
   const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
-  const activeTransferCount = downloads.filter(download =>
-    download.status === 'downloading' ||
-    download.status === 'processing' ||
-    download.status === 'retrying'
-  ).length;
+  const activeTransferCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
   const { addToast } = useToast();
   const isMacUserAgent = navigator.userAgent.includes('Mac');
   const usesCustomWindowControls = !isMacUserAgent && platform.os !== 'macos';

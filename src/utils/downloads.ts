@@ -36,6 +36,10 @@ const ACTIVE_DOWNLOAD_STATUSES: ReadonlySet<DownloadStatus> = new Set([
 export const isActiveDownloadStatus = (status: DownloadStatus): boolean =>
   ACTIVE_DOWNLOAD_STATUSES.has(status);
 
+/** Transfer states that consume a worker/permit. Queued is intentionally excluded. */
+export const isTransferActiveStatus = (status: DownloadStatus): boolean =>
+  status === 'downloading' || status === 'processing' || status === 'retrying';
+
 export const normalizeSpeedLimitForBackend = (value?: string | null): string | null => {
   const trimmed = value?.trim();
   if (!trimmed) return null;
@@ -128,6 +132,7 @@ const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
  */
 export const redactDownloadForPersistence = (item: DownloadItem): DownloadItem => {
   const copy: DownloadItem = { ...item };
+  delete copy.fraction;
   delete copy.speed;
   delete copy.eta;
   for (const field of DOWNLOAD_SECRET_FIELDS) {

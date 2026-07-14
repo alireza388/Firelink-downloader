@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initDownloadListener, useDownloadProgressStore } from './downloadStore';
+import { useDownloadStore } from './useDownloadStore';
 import * as ipc from '../ipc';
 
 vi.mock('../ipc', () => ({
@@ -44,5 +45,42 @@ describe('useDownloadProgressStore', () => {
 
     releaseSecond();
     expect(unlisten).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores late progress and opposite terminal events from an older lifecycle', async () => {
+    const handlers: Record<string, (event: any) => void> = {};
+    vi.mocked(ipc.listenEvent).mockImplementation((event, handler) => {
+      handlers[event] = handler as (event: any) => void;
+      return Promise.resolve(vi.fn());
+    });
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'terminal',
+        url: 'https://example.com/file',
+        fileName: 'file.bin',
+        status: 'completed',
+        category: 'Other',
+        dateAdded: ''
+      }]
+    });
+
+    const release = await initDownloadListener();
+    handlers['download-progress']({ payload: {
+      id: 'terminal',
+      fraction: 0.1,
+      speed: '1 MB/s',
+      eta: '10s',
+      size: '1 MB',
+      size_is_final: false
+    } });
+    handlers['download-state']({ payload: {
+      id: 'terminal',
+      status: 'failed',
+      error: 'stale failure'
+    } });
+
+    expect(useDownloadProgressStore.getState().progressMap).toEqual({});
+    expect(useDownloadStore.getState().downloads[0].status).toBe('completed');
+    release();
   });
 });

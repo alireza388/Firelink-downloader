@@ -73,6 +73,9 @@ pub struct QueuedTask {
     pub queue_id: String,
     pub kind: TaskKind,
     pub payload: SpawnPayload,
+    /// Frontend lifecycle generation that owns this sidecar and its permit.
+    /// Manual internal/test tasks use generation 0.
+    pub lifecycle_generation: u64,
 }
 
 /// Args mirroring start_download / start_media_download. Kept untyped-loose
@@ -120,17 +123,24 @@ pub trait SidecarSpawner: Send + Sync + 'static {
 
     /// Run a media download to completion. The permit is parked for the full
     /// duration; release is handled by QueueManager on the runner's exit.
-    async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String>;
+    async fn run_media(
+        &self,
+        id: &str,
+        payload: &SpawnPayload,
+        lifecycle_generation: u64,
+    ) -> Result<(), String>;
 }
 
 /// The centralized concurrency gatekeeper. One instance lives in AppState.
 pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     registered_ids: Mutex<HashSet<String>>,
+    registered_lifecycle_generations: Mutex<HashMap<String, u64>>,
     enqueue_cancellations: Mutex<HashMap<String, u64>>,
     enqueue_generations: Mutex<HashMap<String, u64>>,
     pending: Mutex<VecDeque<QueuedTask>>,
     semaphore: Arc<Semaphore>,
     active_permits: Mutex<HashMap<String, OwnedSemaphorePermit>>,
+    active_permit_generations: Mutex<HashMap<String, u64>>,
     active_kinds: Mutex<HashMap<String, TaskKind>>,
     target_capacity: AtomicUsize,
     slots_to_retire: AtomicUsize,
@@ -197,11 +207,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
     ) -> Self {
         Self {
             registered_ids: Mutex::new(HashSet::new()),
+            registered_lifecycle_generations: Mutex::new(HashMap::new()),
             enqueue_cancellations: Mutex::new(HashMap::new()),
             enqueue_generations: Mutex::new(HashMap::new()),
             pending: Mutex::new(VecDeque::new()),
             semaphore: Arc::new(Semaphore::new(capacity)),
             active_permits: Mutex::new(HashMap::new()),
+            active_permit_generations: Mutex::new(HashMap::new()),
             active_kinds: Mutex::new(HashMap::new()),
             target_capacity: AtomicUsize::new(capacity),
             slots_to_retire: AtomicUsize::new(0),
@@ -237,6 +249,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
     /// Explicitly release a backend registry id (e.g. on un-resumable false paths, removals, or detach).
     pub async fn release_registered_id(&self, id: &str) {
         self.registered_ids.lock().await.remove(id);
+        self.registered_lifecycle_generations.lock().await.remove(id);
         // A released lifecycle cannot be resumed by a delayed retry worker.
         // Epoch checks remain the authoritative guard; removing this marker
         // prevents terminal downloads from accumulating cancellation entries.
@@ -245,6 +258,40 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn is_registered(&self, id: &str) -> bool {
         self.registered_ids.lock().await.contains(id)
+    }
+
+    pub async fn registered_lifecycle_generation(&self, id: &str) -> Option<u64> {
+        self.registered_lifecycle_generations
+            .lock()
+            .await
+            .get(id)
+            .copied()
+    }
+
+    async fn is_registered_generation(&self, id: &str, generation: u64) -> bool {
+        self.registered_lifecycle_generations
+            .lock()
+            .await
+            .get(id)
+            .copied()
+            == Some(generation)
+    }
+
+    async fn release_registered_id_for_generation(&self, id: &str, generation: u64) {
+        let released = {
+            let mut registered = self.registered_ids.lock().await;
+            let mut generations = self.registered_lifecycle_generations.lock().await;
+            if generations.get(id).copied() == Some(generation) {
+                registered.remove(id);
+                generations.remove(id);
+                true
+            } else {
+                false
+            }
+        };
+        if released {
+            self.aria2_retry_cancelled.lock().await.remove(id);
+        }
     }
 
     /// Reject an in-flight enqueue generation if a newer UI action supersedes it.
@@ -282,6 +329,10 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return Err("Duplicate task".to_string());
         }
         registered.insert(id.to_string());
+        self.registered_lifecycle_generations
+            .lock()
+            .await
+            .insert(id.to_string(), generation);
         generations.insert(id.to_string(), generation);
         Ok(previous_generation)
     }
@@ -298,6 +349,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             return;
         }
         registered.remove(id);
+        self.registered_lifecycle_generations.lock().await.remove(id);
         match previous_generation {
             Some(previous) => {
                 generations.insert(id.to_string(), previous);
@@ -459,6 +511,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .insert(id.to_string(), permit);
     }
 
+    async fn tag_permit_generation(&self, id: &str, generation: u64) {
+        self.active_permit_generations
+            .lock()
+            .await
+            .insert(id.to_string(), generation);
+    }
+
     pub async fn active_kind(&self, id: &str) -> Option<TaskKind> {
         self.active_kinds.lock().await.get(id).cloned()
     }
@@ -492,8 +551,26 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn release_permit(&self, id: &str) {
         let removed = self.active_permits.lock().await.remove(id).is_some();
+        self.active_permit_generations.lock().await.remove(id);
         self.active_kinds.lock().await.remove(id);
         if removed {
+            self.notify.notify_one();
+        }
+    }
+
+    async fn release_permit_for_generation(&self, id: &str, generation: u64) {
+        let removed = {
+            let mut permits = self.active_permits.lock().await;
+            let mut generations = self.active_permit_generations.lock().await;
+            if generations.get(id).copied() == Some(generation) {
+                generations.remove(id);
+                permits.remove(id).is_some()
+            } else {
+                false
+            }
+        };
+        if removed {
+            self.active_kinds.lock().await.remove(id);
             self.notify.notify_one();
         }
     }
@@ -607,10 +684,12 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     async fn dispatch_one(self: Arc<Self>, permit: OwnedSemaphorePermit, task: QueuedTask) {
         let id = task.id.clone();
+        let lifecycle_generation = task.lifecycle_generation;
         // Park the permit BEFORE spawning. Uniform parking:
         // aria2's RPC returns instantly, so the permit must outlive the
         // dispatch_one call. Media runners release on exit.
         self.park_permit(&id, permit).await;
+        self.tag_permit_generation(&id, lifecycle_generation).await;
         self.active_kinds
             .lock()
             .await
@@ -693,30 +772,55 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 let payload = task.payload.clone();
                 let id_for_task = id.clone();
                 tauri::async_runtime::spawn(async move {
-                    let outcome = this.spawner.run_media(&id_for_task, &payload).await;
-                    this.finish_runner(&id_for_task, outcome).await;
+                    let outcome = this
+                        .spawner
+                        .run_media(&id_for_task, &payload, lifecycle_generation)
+                        .await;
+                    this.finish_runner(&id_for_task, lifecycle_generation, outcome)
+                        .await;
                 });
             }
         }
     }
 
     /// Terminal handler for non-aria2 transfers. Emits state and frees the permit.
-    /// Does not emit or release anything on intentional MEDIA_RUN_CANCELLED.
+    /// Intentional cancellation is silent, but still releases backend ownership.
     /// Note: `id` is the frontend download UUID, which survives indefinitely as
     /// the terminal state.
-    async fn finish_runner(self: Arc<Self>, id: &str, outcome: Result<(), String>) {
+    async fn finish_runner(
+        self: Arc<Self>,
+        id: &str,
+        lifecycle_generation: u64,
+        outcome: Result<(), String>,
+    ) {
+        if !self.is_registered_generation(id, lifecycle_generation).await {
+            log::info!(
+                "media runner [{}]: ignoring stale terminal outcome for lifecycle {}",
+                id,
+                lifecycle_generation
+            );
+            self.release_permit_for_generation(id, lifecycle_generation).await;
+            return;
+        }
+
         match outcome {
             Ok(()) => {
                 self.emit_state(id, DownloadStatus::Completed);
-                self.release_registered_id(id).await;
+                self.release_registered_id_for_generation(id, lifecycle_generation)
+                    .await;
             }
-            Err(error) if error == MEDIA_RUN_CANCELLED => {}
+            Err(error) if error == MEDIA_RUN_CANCELLED => {
+                self.release_registered_id_for_generation(id, lifecycle_generation)
+                    .await;
+            }
             Err(error) => {
                 self.emit_failed(id, error);
-                self.release_registered_id(id).await;
+                self.release_registered_id_for_generation(id, lifecycle_generation)
+                    .await;
             }
         }
-        self.release_permit(id).await;
+        self.release_permit_for_generation(id, lifecycle_generation)
+            .await;
     }
 
     fn emit_failed(&self, id: &str, error: String) {
@@ -850,6 +954,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     pub async fn allow_aria2_retries(&self, id: &str) {
         self.aria2_retry_cancelled.lock().await.remove(id);
+    }
+
+    /// A user-initiated resume starts a new retry lifecycle while retaining
+    /// the paused Aria2 payload/GID. Reset only the strike budget here; the
+    /// payload is still needed for the same-GID resume path.
+    pub async fn reset_aria2_retry_strikes(&self, id: &str) {
+        self.aria2_retry_strikes.lock().await.remove(id);
     }
 
     async fn finish_aria2_retry(&self, id: &str, gid: &str, retry_epoch: u64) {
@@ -1277,28 +1388,66 @@ impl<R: tauri::Runtime> QueueManager<R> {
         queue_id: &str,
         direction: QueueDirection,
     ) -> Vec<String> {
+        self.move_many_in_queue(&[id.to_string()], queue_id, direction)
+            .await
+    }
+
+    /// Atomically move a selected block of pending tasks up or down. The
+    /// frontend uses the same block semantics for multi-selection, so keeping
+    /// the operation under one pending-list lock prevents partial RPC moves
+    /// from leaving the backend in a different order than the UI.
+    pub async fn move_many_in_queue(
+        &self,
+        ids: &[String],
+        queue_id: &str,
+        direction: QueueDirection,
+    ) -> Vec<String> {
         let mut pending = self.pending.lock().await;
         let queue_positions = pending
             .iter()
             .enumerate()
             .filter_map(|(index, task)| (task.queue_id == queue_id).then_some(index))
             .collect::<Vec<_>>();
-        let queue_pos = queue_positions
+        let selected_positions = queue_positions
             .iter()
-            .position(|index| pending[*index].id == id);
-        if let Some(queue_pos) = queue_pos {
-            let target = match direction {
-                QueueDirection::Up => queue_pos.checked_sub(1),
-                QueueDirection::Down => {
-                    if queue_pos + 1 < queue_positions.len() {
-                        Some(queue_pos + 1)
-                    } else {
-                        None
-                    }
-                }
+            .enumerate()
+            .filter_map(|(position, index)| ids.iter().any(|id| id == &pending[*index].id).then_some(position))
+            .collect::<Vec<_>>();
+
+        if !selected_positions.is_empty() {
+            let queue_tasks = queue_positions
+                .iter()
+                .map(|index| pending[*index].clone())
+                .collect::<Vec<_>>();
+            let selected_ids = ids.iter().collect::<HashSet<_>>();
+            let selected_tasks = queue_tasks
+                .iter()
+                .filter(|task| selected_ids.contains(&task.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let unselected_tasks = queue_tasks
+                .iter()
+                .filter(|task| !selected_ids.contains(&task.id))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let first_selected = *selected_positions.first().unwrap();
+            let last_selected = *selected_positions.last().unwrap();
+            let selected_count = selected_tasks.len();
+            let insert_index = match direction {
+                QueueDirection::Up => first_selected.saturating_sub(1),
+                QueueDirection::Down => (last_selected + 1)
+                    .saturating_sub(selected_count)
+                    .saturating_add(1)
+                    .min(unselected_tasks.len()),
             };
-            if let Some(target) = target {
-                pending.swap(queue_positions[queue_pos], queue_positions[target]);
+            let mut reordered = Vec::with_capacity(queue_tasks.len());
+            reordered.extend_from_slice(&unselected_tasks[..insert_index]);
+            reordered.extend(selected_tasks);
+            reordered.extend_from_slice(&unselected_tasks[insert_index..]);
+
+            for (queue_index, pending_index) in queue_positions.iter().enumerate() {
+                pending[*pending_index] = reordered[queue_index].clone();
             }
         }
         pending
@@ -1740,11 +1889,16 @@ impl SidecarSpawner for ProductionSpawner {
         crate::ensure_aria2_gid_result("unpause", gid, &resumed)
     }
 
-    async fn run_media(&self, id: &str, payload: &SpawnPayload) -> Result<(), String> {
+    async fn run_media(
+        &self,
+        id: &str,
+        payload: &SpawnPayload,
+        lifecycle_generation: u64,
+    ) -> Result<(), String> {
         let state = self.app_handle.state::<crate::AppState>();
         let mut cancel_rx = state
             .download_coordinator
-            .register_media(id.to_string())
+            .register_media(id.to_string(), lifecycle_generation)
             .await?;
         let outcome = crate::start_media_download_internal(
             self.app_handle.clone(),
@@ -1777,7 +1931,7 @@ impl SidecarSpawner for ProductionSpawner {
         }
         let _ = state
             .download_coordinator
-            .finish_media(id.to_string())
+            .finish_media(id.to_string(), lifecycle_generation)
             .await;
         outcome.map(|_| ())
     }
@@ -1823,6 +1977,11 @@ impl EnqueueItem {
             id,
             queue_id: self.queue_id,
             kind,
+            lifecycle_generation: self
+                .lifecycle_generation
+                .as_deref()
+                .and_then(|generation| generation.parse().ok())
+                .unwrap_or_default(),
             payload: SpawnPayload {
                 url: self.url,
                 destination: self.destination,

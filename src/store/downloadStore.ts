@@ -52,10 +52,15 @@ const startDownloadListeners = async () => {
   const registrations = await Promise.allSettled([
     listen('download-progress', (event) => {
       const payload = event.payload;
-      useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
-
       const mainStore = useDownloadStore.getState();
       const current = mainStore.downloads.find(d => d.id === payload.id);
+      // A sidecar can flush one last progress chunk after a pause, failure,
+      // or completion event. Do not let that stale chunk repopulate the live
+      // progress map or overwrite a later lifecycle's first frame.
+      if (current && ['completed', 'failed', 'paused'].includes(current.status)) {
+        return;
+      }
+      useDownloadProgressStore.getState().updateDownloadProgress(payload.id, payload);
       if (current) {
         const shouldUpdateSize = Boolean(payload.size && (!current.isMedia || payload.size_is_final));
         const updates: Partial<DownloadItem> = {};
@@ -81,7 +86,7 @@ const startDownloadListeners = async () => {
 
         // Prevent race condition: don't transition backwards from terminal state
         if ((current.status === 'completed' || current.status === 'failed') &&
-            (status !== 'completed' && status !== 'failed')) {
+            status !== current.status) {
           return;
         }
 

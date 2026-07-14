@@ -248,8 +248,15 @@ describe('useDownloadStore', () => {
       );
     });
 
-    await useDownloadStore.getState().removeDownload('late');
+    const remove = useDownloadStore.getState().removeDownload('late');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'cancel_enqueue_generation',
+        expect.objectContaining({ id: 'late' })
+      );
+    });
     resolveEnqueue({ id: 'late', filename: 'late.bin' });
+    await remove;
 
     await expect(start).resolves.toEqual([]);
     expect(useDownloadStore.getState().downloads).toEqual([]);
@@ -686,6 +693,134 @@ describe('useDownloadStore', () => {
 
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'ready')?.queueId).toBe('new');
     expect(useDownloadStore.getState().downloads.find(item => item.id === 'done')?.queueId).toBe('old');
+  });
+
+  it('does not reassign an item that completes while queue assignment is awaiting cancellation', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'race-ready', status: 'ready', queueId: 'old' },
+        { id: 'race-done', status: 'completed', queueId: 'old' }
+      ] as any[]
+    });
+
+    let resolveCancellation!: () => void;
+    const cancellation = new Promise<void>(resolve => {
+      resolveCancellation = resolve;
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'cancel_enqueue_generation') return cancellation as never;
+      return Promise.resolve(undefined) as never;
+    });
+
+    const assignment = useDownloadStore.getState().assignToQueue(['race-ready', 'race-done'], 'new');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'cancel_enqueue_generation',
+        expect.objectContaining({ id: 'race-ready' })
+      );
+    });
+    useDownloadStore.getState().updateDownload('race-ready', { status: 'completed' });
+    resolveCancellation();
+    await assignment;
+
+    expect(useDownloadStore.getState().downloads.find(item => item.id === 'race-ready')).toMatchObject({
+      status: 'completed',
+      queueId: 'old'
+    });
+  });
+
+  it('cancels the rest of a queue start when pause is requested during dispatch', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'queue-first', url: 'http://test/first', fileName: 'first', destination: '/tmp', status: 'ready', category: 'Other', dateAdded: '', queueId: 'race-queue', queuePosition: 0 },
+        { id: 'queue-second', url: 'http://test/second', fileName: 'second', destination: '/tmp', status: 'ready', category: 'Other', dateAdded: '', queueId: 'race-queue', queuePosition: 1 }
+      ] as any[]
+    });
+
+    let resolveEnqueue!: (value: { id: string; filename: string }) => void;
+    const enqueue = new Promise<{ id: string; filename: string }>(resolve => {
+      resolveEnqueue = resolve;
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation((command: string) => {
+      if (command === 'enqueue_download') return enqueue as never;
+      return Promise.resolve(undefined) as never;
+    });
+
+    const start = useDownloadStore.getState().startQueue('race-queue');
+    await vi.waitFor(() => {
+      expect(ipc.invokeCommand).toHaveBeenCalledWith(
+        'enqueue_download',
+        expect.objectContaining({ item: expect.objectContaining({ id: 'queue-first' }) })
+      );
+    });
+    const pause = useDownloadStore.getState().pauseQueue('race-queue');
+    resolveEnqueue({ id: 'queue-first', filename: 'first' });
+
+    await expect(pause).resolves.toBe(1);
+    await expect(start).resolves.toEqual([]);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(([command, args]) =>
+        command === 'enqueue_download' && (args as any)?.item?.id === 'queue-second'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('uses one atomic backend move and keeps queue positions unique around active transfers', async () => {
+    useDownloadStore.setState({
+      downloads: [
+        { id: 'active', status: 'downloading', queueId: 'move-queue', queuePosition: 0 },
+        { id: 'one', status: 'queued', queueId: 'move-queue', queuePosition: 1 },
+        { id: 'two', status: 'queued', queueId: 'move-queue', queuePosition: 2 },
+        { id: 'three', status: 'queued', queueId: 'move-queue', queuePosition: 3 }
+      ] as any[],
+      backendRegisteredIds: new Set(['three']),
+      pendingOrder: ['one', 'two', 'three']
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (command: string) => {
+      if (command === 'move_many_in_queue') return ['one', 'three', 'two'];
+      if (command === 'get_pending_order') return ['one', 'three', 'two'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().moveInQueue('three', 'up');
+
+    expect(vi.mocked(ipc.invokeCommand)).toHaveBeenCalledWith('move_many_in_queue', {
+      ids: ['three'],
+      queueId: 'move-queue',
+      direction: 'up'
+    });
+    expect(vi.mocked(ipc.invokeCommand)).not.toHaveBeenCalledWith('move_in_queue', expect.anything());
+    const positions = useDownloadStore.getState().downloads
+      .filter(item => item.queueId === 'move-queue')
+      .map(item => item.queuePosition);
+    expect(new Set(positions).size).toBe(4);
+  });
+
+  it('detaches a registered queued item through the backend before reassigning it', async () => {
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'registered-queued',
+        url: 'https://example.com/file',
+        fileName: 'file.bin',
+        status: 'queued',
+        category: 'Other',
+        dateAdded: '',
+        queueId: 'old',
+        queuePosition: 0
+      }],
+      backendRegisteredIds: new Set(['registered-queued']),
+      pendingOrder: ['registered-queued']
+    });
+    vi.mocked(ipc.invokeCommand).mockResolvedValue(undefined as never);
+
+    await useDownloadStore.getState().assignToQueue(['registered-queued'], 'new');
+
+    expect(vi.mocked(ipc.invokeCommand)).toHaveBeenCalledWith(
+      'detach_download_for_reconfigure',
+      { id: 'registered-queued' }
+    );
+    expect(useDownloadStore.getState().pendingOrder).not.toContain('registered-queued');
+    expect(useDownloadStore.getState().downloads[0].status).toBe('staged');
   });
 
   it('disables scheduler when its last selected queue is deleted', async () => {

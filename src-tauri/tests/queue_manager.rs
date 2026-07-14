@@ -63,7 +63,7 @@ impl SidecarSpawner for DelayedAria2Spawner {
         Ok(())
     }
 
-    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload, _generation: u64) -> Result<(), String> {
         unreachable!("media is not used by delayed aria2 tests")
     }
 }
@@ -86,7 +86,7 @@ impl SidecarSpawner for FailFirstAria2Spawner {
         Ok(())
     }
 
-    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload, _generation: u64) -> Result<(), String> {
         unreachable!("media is not used by fail-first aria2 tests")
     }
 }
@@ -109,7 +109,7 @@ impl firelink_lib::queue::SidecarSpawner for CountingSpawner {
     async fn remove_uri(&self, _gid: &str) -> Result<(), String> {
         Ok(())
     }
-    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload, _generation: u64) -> Result<(), String> {
         self.media_calls.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -131,6 +131,7 @@ fn sample_task(id: &str) -> QueuedTask {
         id: id.to_string(),
         queue_id: "main".to_string(),
         kind: TaskKind::Aria2,
+        lifecycle_generation: 0,
         payload: SpawnPayload::default(),
     }
 }
@@ -498,6 +499,7 @@ fn aria2_task(id: &str) -> QueuedTask {
         id: id.to_string(),
         queue_id: "main".to_string(),
         kind: TaskKind::Aria2,
+        lifecycle_generation: 0,
         payload: SpawnPayload::default(),
     }
 }
@@ -507,6 +509,7 @@ fn media_task(id: &str) -> QueuedTask {
         id: id.to_string(),
         queue_id: "main".to_string(),
         kind: TaskKind::Media,
+        lifecycle_generation: 0,
         payload: SpawnPayload::default(),
     }
 }
@@ -525,7 +528,7 @@ impl SidecarSpawner for FixedMediaSpawner {
         unreachable!("aria2 is not used by media terminal-state tests")
     }
 
-    async fn run_media(&self, _id: &str, _payload: &SpawnPayload) -> Result<(), String> {
+    async fn run_media(&self, _id: &str, _payload: &SpawnPayload, _generation: u64) -> Result<(), String> {
         self.outcome.clone()
     }
 }
@@ -590,6 +593,7 @@ async fn media_cancellation_does_not_emit_completed() {
     assert!(!statuses.iter().any(|status| status == "failed"));
     assert!(!statuses.iter().any(|status| status == "completed"));
     assert_eq!(manager.available_permits(), 1);
+    assert!(!manager.is_registered("media-cancelled").await);
 
     dispatcher.abort();
 }
@@ -1077,6 +1081,28 @@ async fn move_up_down_reorders_pending() {
 
     mgr_arc.move_in_queue("c", "main", QueueDirection::Up).await;
     assert_eq!(mgr_arc.pending_order(None).await, vec!["c", "a", "b"]);
+}
+
+#[tokio::test]
+async fn multi_move_reorders_selected_items_as_one_atomic_block() {
+    use firelink_lib::ipc::QueueDirection;
+
+    let (mgr, _spawner) = make_manager(3);
+    for id in ["a", "b", "c", "d", "e"] {
+        mgr.push(sample_task(id)).await.unwrap();
+    }
+
+    let selected = vec!["b".to_string(), "d".to_string()];
+    assert_eq!(
+        mgr.move_many_in_queue(&selected, "main", QueueDirection::Up)
+            .await,
+        vec!["b", "d", "a", "c", "e"]
+    );
+    assert_eq!(
+        mgr.move_many_in_queue(&selected, "main", QueueDirection::Down)
+            .await,
+        vec!["a", "b", "d", "c", "e"]
+    );
 }
 
 #[tokio::test]

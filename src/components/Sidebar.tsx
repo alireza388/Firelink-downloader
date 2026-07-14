@@ -10,6 +10,7 @@ import { useDownloadStore, DownloadCategory, Queue } from '../store/useDownloadS
 import { ActiveView, useSettingsStore } from '../store/useSettingsStore';
 import { WindowDragRegion } from './WindowDragRegion';
 import { useToast } from '../contexts/ToastContext';
+import { isTransferActiveStatus } from '../utils/downloads';
 
 export type SidebarFilter = 'all' | 'active' | 'completed' | 'unfinished' | DownloadCategory | 'settings' | string;
 
@@ -100,7 +101,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     }
     switch (filter) {
       case 'all': return downloads.length;
-      case 'active': return downloads.filter(d => d.status === 'downloading').length;
+      case 'active': return downloads.filter(d => isTransferActiveStatus(d.status)).length;
       case 'completed': return downloads.filter(d => d.status === 'completed').length;
       case 'unfinished': return downloads.filter(d => d.status !== 'completed').length;
       default: return downloads.filter(d => d.category === filter as DownloadCategory).length;
@@ -330,14 +331,34 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         >
           <button
             className="w-full text-left px-3 py-1.5 flex items-center hover:bg-item-hover"
-            onClick={() => { startQueue(contextMenu.id); setContextMenu(null); }}
+            onClick={() => {
+              const queueId = contextMenu.id;
+              setContextMenu(null);
+              void startQueue(queueId).catch(error => {
+                addToast({
+                  message: `Could not start queue: ${String(error)}`,
+                  variant: 'error',
+                  isActionable: true
+                });
+              });
+            }}
           >
             <Play size={14} className="mr-2 text-text-secondary" />
             Start Queue
           </button>
           <button
             className="w-full text-left px-3 py-1.5 flex items-center hover:bg-item-hover"
-            onClick={() => { pauseQueue(contextMenu.id); setContextMenu(null); }}
+            onClick={() => {
+              const queueId = contextMenu.id;
+              setContextMenu(null);
+              void pauseQueue(queueId).catch(error => {
+                addToast({
+                  message: `Could not pause queue: ${String(error)}`,
+                  variant: 'error',
+                  isActionable: true
+                });
+              });
+            }}
           >
             <Pause size={14} className="mr-2 text-text-secondary" />
             Pause Queue

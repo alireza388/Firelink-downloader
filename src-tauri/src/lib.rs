@@ -3357,6 +3357,11 @@ async fn pause_download(
 
     let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let active_kind = state.queue_manager.active_kind(&id).await;
+    let media_lifecycle_generation = state
+        .queue_manager
+        .registered_lifecycle_generation(&id)
+        .await
+        .unwrap_or_default();
     let removed_pending = state.queue_manager.remove_from_pending(&id).await;
 
     let gid = state.queue_manager.aria2_gid_for_download(&id);
@@ -3447,7 +3452,7 @@ async fn pause_download(
     if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
         state
             .download_coordinator
-            .pause_media_with_ack(id.clone(), tx)
+            .pause_media_with_ack(id.clone(), media_lifecycle_generation, tx)
             .await?;
     } else {
         let _ = tx.send(());
@@ -3498,6 +3503,7 @@ async fn resume_download(
         "paused" => {
             let control_epoch = state.queue_manager.next_aria2_control_epoch(&id).await;
             state.queue_manager.allow_aria2_retries(&id).await;
+            state.queue_manager.reset_aria2_retry_strikes(&id).await;
             use tauri::Emitter;
             let _ = app_handle.emit(
                 "download-state",
@@ -3713,6 +3719,11 @@ async fn remove_download(
     let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
 
     let active_kind = state.queue_manager.active_kind(&id).await;
+    let media_lifecycle_generation = state
+        .queue_manager
+        .registered_lifecycle_generation(&id)
+        .await
+        .unwrap_or_default();
     state.queue_manager.remove_from_pending(&id).await;
 
     state.queue_manager.next_aria2_control_epoch(&id).await;
@@ -3748,7 +3759,7 @@ async fn remove_download(
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state
                 .download_coordinator
-                .pause_media_with_ack(id.clone(), tx)
+                .pause_media_with_ack(id.clone(), media_lifecycle_generation, tx)
                 .await?;
         } else {
             let _ = tx.send(());
@@ -3864,6 +3875,11 @@ async fn detach_download_for_reconfigure(
     log::info!("detach_download_for_reconfigure called for id: {}", id);
     let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
     let active_kind = state.queue_manager.active_kind(&id).await;
+    let media_lifecycle_generation = state
+        .queue_manager
+        .registered_lifecycle_generation(&id)
+        .await
+        .unwrap_or_default();
     state.queue_manager.remove_from_pending(&id).await;
     state.queue_manager.next_aria2_control_epoch(&id).await;
     state.queue_manager.cancel_aria2_retries(&id).await;
@@ -3908,7 +3924,7 @@ async fn detach_download_for_reconfigure(
         if matches!(active_kind, Some(crate::queue::TaskKind::Media)) {
             state
                 .download_coordinator
-                .pause_media_with_ack(id.clone(), tx)
+                .pause_media_with_ack(id.clone(), media_lifecycle_generation, tx)
                 .await?;
         } else {
             let _ = tx.send(()); // Fallback if no task exists
@@ -4458,6 +4474,19 @@ async fn move_in_queue(
     Ok(state
         .queue_manager
         .move_in_queue(&id, &queue_id, direction)
+        .await)
+}
+
+#[tauri::command]
+async fn move_many_in_queue(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<String>,
+    queue_id: String,
+    direction: crate::ipc::QueueDirection,
+) -> Result<Vec<String>, AppError> {
+    Ok(state
+        .queue_manager
+        .move_many_in_queue(&ids, &queue_id, direction)
         .await)
 }
 
@@ -6717,7 +6746,7 @@ pub fn run() {
             check_file_exists, toggle_tray_icon, set_extension_pairing_token,
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,
-            enqueue_download, enqueue_many, cancel_enqueue_generation, move_in_queue, remove_from_queue, get_pending_order,
+            enqueue_download, enqueue_many, cancel_enqueue_generation, move_in_queue, move_many_in_queue, remove_from_queue, get_pending_order,
             commands::reveal_in_file_manager, commands::open_downloaded_file,
             parity::get_system_proxy, parity::get_file_category, parity::check_for_updates, parity::is_supported_media, parity::get_supported_media_domains,
             parity::create_category_directories,

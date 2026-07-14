@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -17,8 +17,13 @@ import {
   canStartDownload,
   startActionLabel
 } from '../utils/downloadActions';
-import { isActiveDownloadStatus } from '../utils/downloads';
+import { isActiveDownloadStatus, isTransferActiveStatus } from '../utils/downloads';
 import { readClipboardDownloadUrls } from '../utils/clipboard';
+import {
+  sortDownloads,
+  type DownloadSortColumn,
+  type DownloadSortConfig
+} from '../utils/downloadTableSorting';
 
 interface DownloadTableProps {
   filter: SidebarFilter;
@@ -46,7 +51,11 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const [animationParent] = useAutoAnimate<HTMLDivElement>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [sortConfig, setSortConfig] = useState<{ column: string; direction: 'asc' | 'desc' } | null>({ column: 'Date Added', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState<DownloadSortConfig>({ column: 'Date Added', direction: 'desc' });
+  const [queueSortConfig, setQueueSortConfig] = useState<DownloadSortConfig | null>(null);
+  const selectedIdsRef = useRef(selectedIds);
+  const sortedDownloadsRef = useRef<DownloadItem[]>([]);
+  selectedIdsRef.current = selectedIds;
   const [columnWidths, setColumnWidths] = useState(() => {
     try {
       const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY) || 'null');
@@ -110,15 +119,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       if (!isInput) {
         if ((e.key === 'a' || e.key === 'A') && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          const allIds = sortedDownloads.map(d => d.id);
+          const allIds = sortedDownloadsRef.current.map(d => d.id);
           setSelectedIds(new Set(allIds));
           return;
         }
         
         if (e.key === 'Delete' || e.key === 'Backspace') {
           if (!activeEl || !activeEl.closest('.sidebar-inner')) {
-            if (selectedIds.size > 0) {
-              handleDelete(Array.from(selectedIds));
+            if (selectedIdsRef.current.size > 0) {
+              handleDelete(Array.from(selectedIdsRef.current));
             }
           }
         }
@@ -126,7 +135,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds]);
+  }, []);
 
 
   const showInteractionError = (message: string, error: unknown) => {
@@ -192,43 +201,24 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     openProperties(item.id);
   };
 
-  const filteredDownloads = downloads.filter((d: DownloadItem) => {
-    if (filter.startsWith('queue:')) {
+  const isQueueFilter = filter.startsWith('queue:');
+  const filteredDownloads = useMemo(() => downloads.filter((d: DownloadItem) => {
+    if (isQueueFilter) {
       return d.queueId === filter.replace('queue:', '') && d.status !== 'completed';
     }
     switch (filter) {
       case 'all': return true;
-      case 'active': return d.status === 'downloading';
+      case 'active': return isTransferActiveStatus(d.status);
       case 'completed': return d.status === 'completed';
       case 'unfinished': return d.status !== 'completed';
       default: return d.category === filter;
     }
-  });
+  }), [downloads, filter, isQueueFilter]);
 
-  const parseSpeed = (speedStr?: string) => {
-    if (!speedStr || speedStr === '-') return 0;
-    const val = parseFloat(speedStr);
-    if (speedStr.includes('KB/s')) return val * 1024;
-    if (speedStr.includes('MB/s')) return val * 1024 * 1024;
-    if (speedStr.includes('GB/s')) return val * 1024 * 1024 * 1024;
-    return val;
-  };
-
-  const parseEta = (etaStr?: string) => {
-    if (!etaStr || etaStr === '-') return Infinity;
-    let seconds = 0;
-    const hours = etaStr.match(/(\d+)h/);
-    const minutes = etaStr.match(/(\d+)m/);
-    const secs = etaStr.match(/(\d+)s/);
-    if (hours) seconds += parseInt(hours[1]) * 3600;
-    if (minutes) seconds += parseInt(minutes[1]) * 60;
-    if (secs) seconds += parseInt(secs[1]);
-    return seconds;
-  };
-
-  // Sort by queue position when viewing a specific queue so the visual
-  // order matches the queue order and move-up/down buttons reflect reality.
-  const sortedDownloads = filter.startsWith('queue:')
+  // Queue views use the persisted queue order until the user explicitly sorts
+  // a column. This keeps move-up/down controls truthful while still making
+  // every header a working sort target.
+  const sortedDownloads = useMemo(() => isQueueFilter && !queueSortConfig
     ? [...filteredDownloads].sort((left, right) => {
         const leftActive = isActiveDownloadStatus(left.status) && left.status !== 'queued';
         const rightActive = isActiveDownloadStatus(right.status) && right.status !== 'queued';
@@ -236,40 +226,26 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
         if (leftActive && !rightActive) return -1;
         if (!leftActive && rightActive) return 1;
         
-        return (left.queuePosition ?? 0) - (right.queuePosition ?? 0);
+        const positionComparison = (left.queuePosition ?? Number.MAX_SAFE_INTEGER) -
+          (right.queuePosition ?? Number.MAX_SAFE_INTEGER);
+        return positionComparison || left.id.localeCompare(right.id);
       })
-    : sortConfig
-      ? [...filteredDownloads].sort((a, b) => {
-          const aUnfinished = a.status !== 'completed';
-          const bUnfinished = b.status !== 'completed';
+    : sortDownloads(filteredDownloads, isQueueFilter ? queueSortConfig! : sortConfig),
+    [filteredDownloads, isQueueFilter, queueSortConfig, sortConfig]);
+  sortedDownloadsRef.current = sortedDownloads;
 
-          if (aUnfinished && !bUnfinished) return -1;
-          if (!aUnfinished && bUnfinished) return 1;
+  useEffect(() => {
+    const visibleIds = new Set(sortedDownloads.map(download => download.id));
+    setSelectedIds(current => {
+      const next = new Set(Array.from(current).filter(id => visibleIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+    setLastSelectedId(current => current && visibleIds.has(current) ? current : null);
+  }, [sortedDownloads]);
 
-          let comparison = 0;
-          switch (sortConfig.column) {
-            case 'File Name':
-              comparison = (a.fileName || a.url || '').localeCompare(b.fileName || b.url || '');
-              break;
-            case 'Size':
-              comparison = parseInt(a.size || '0', 10) - parseInt(b.size || '0', 10);
-              break;
-            case 'Status':
-              comparison = a.status.localeCompare(b.status);
-              break;
-            case 'Speed':
-              comparison = parseSpeed(a.speed) - parseSpeed(b.speed);
-              break;
-            case 'ETA':
-              comparison = parseEta(a.eta) - parseEta(b.eta);
-              break;
-            case 'Date Added':
-              comparison = new Date(a.dateAdded || 0).getTime() - new Date(b.dateAdded || 0).getTime();
-              break;
-          }
-          return sortConfig.direction === 'asc' ? comparison : -comparison;
-        })
-      : filteredDownloads;
+  useEffect(() => {
+    setQueueSortConfig(null);
+  }, [filter, isQueueFilter]);
   const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
     if (e.detail === 2) {
       handleDownloadDoubleClick(item);
@@ -312,15 +288,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     setContextMenu(menu);
   };
 
-  const handleSort = (column: string) => {
-    if (filter.startsWith('queue:')) return; // Disable custom sorting in queues
-    setSortConfig(current => {
-      if (current?.column === column) {
-        if (current.direction === 'desc') return null; // Reset sort
-        return { column, direction: 'desc' };
-      }
-      return { column, direction: 'asc' };
-    });
+  const handleSort = (column: DownloadSortColumn) => {
+    const update = (current: DownloadSortConfig | null): DownloadSortConfig =>
+      current?.column === column
+        ? { column, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: 'asc' };
+
+    if (isQueueFilter) {
+      setQueueSortConfig(update);
+    } else {
+      setSortConfig(current => update(current));
+    }
   };
 
 
@@ -356,8 +334,25 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
   };
 
-  const handleResume = (item: DownloadItem) => {
-    useDownloadStore.getState().resumeDownload(item.id);
+  const handleResume = async (item: DownloadItem) => {
+    try {
+      const resumed = await useDownloadStore.getState().resumeDownload(item.id);
+      if (!resumed) {
+        throw new Error('The backend rejected the start/resume request.');
+      }
+    } catch (error) {
+      console.error("Failed to resume:", error);
+      showInteractionError(`Could not resume ${item.fileName}`, error);
+    }
+  };
+
+  const resumeItemsSequentially = async (items: DownloadItem[]) => {
+    for (const item of items) {
+      const current = useDownloadStore.getState().downloads.find(download => download.id === item.id);
+      if (current && canStartDownload(current.status)) {
+        await handleResume(current);
+      }
+    }
   };
 
   const handleDelete = (ids: string | string[]) => {
@@ -449,9 +444,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             className="main-control-button" 
             disabled={sortedDownloads.length === 0}
             onClick={() => {
-              sortedDownloads
-                .filter(d => canStartDownload(d.status))
-                .forEach(d => handleResume(d));
+              void resumeItemsSequentially(sortedDownloads.filter(d => canStartDownload(d.status)));
             }}
             title="Resume All"
           >
@@ -497,13 +490,15 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             {['File Name', 'Size', 'Status', 'Speed', 'ETA', 'Date Added'].map((label, index) => (
               <div 
                 key={label} 
-                className={`${index === 5 ? 'download-cell-right' : ''} ${filter.startsWith('queue:') ? 'opacity-70 cursor-default' : 'cursor-pointer hover:text-text-primary transition-colors'} flex items-center justify-between`}
-                onClick={() => handleSort(label)}
+                className={`${index === 5 ? 'download-cell-right' : ''} cursor-pointer hover:text-text-primary transition-colors flex items-center justify-between`}
+                onClick={() => handleSort(label as DownloadSortColumn)}
               >
                 <div className="flex items-center gap-1 w-full h-full select-none">
                   <span>{label}</span>
-                  {sortConfig?.column === label && (
-                    sortConfig.direction === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />
+                  {(isQueueFilter ? queueSortConfig : sortConfig)?.column === label && (
+                    (isQueueFilter ? queueSortConfig : sortConfig)?.direction === 'asc'
+                      ? <ChevronUp size={14} />
+                      : <ChevronDown size={14} />
                   )}
                 </div>
                 <div
@@ -519,19 +514,29 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
               {sortedDownloads.length === 0 ? (
                 <div className="downloads-empty-state">
                   <ArrowDownCircle aria-hidden="true" />
-                  <div className="downloads-empty-title">No Downloads</div>
+                  <div className="downloads-empty-title">
+                    {isQueueFilter ? 'Queue is empty' : filter === 'completed' ? 'No Completed Downloads' : 'No Downloads'}
+                  </div>
                   <div className="downloads-empty-description flex items-center justify-center mt-2.5 text-[13px] text-text-muted">
-                    Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or 
-                    <span className="flex items-center mx-1.5">
-                      <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                        {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
-                      </span>
-                      <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
-                      <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
-                        <span className="text-[11px] font-bold text-text-primary">V</span>
-                      </span>
-                    </span>
-                    to add downloads
+                    {isQueueFilter ? (
+                      'Add downloads to this queue from an item menu or the Add window.'
+                    ) : filter === 'completed' ? (
+                      'Completed downloads will appear here.'
+                    ) : (
+                      <>
+                        Click <Plus size={15} className="text-accent stroke-[3] mx-1.5" /> button or
+                        <span className="flex items-center mx-1.5">
+                          <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                            {isMac ? <Command size={12} strokeWidth={2.5} className="text-text-primary" /> : <span className="text-[10px] font-bold text-text-primary">Ctrl</span>}
+                          </span>
+                          <span className="text-accent font-bold mx-1.5 text-[14px]">+</span>
+                          <span className="flex items-center justify-center px-1.5 py-0.5 bg-item-hover rounded border border-border-color shadow-sm min-w-[22px] min-h-[22px]">
+                            <span className="text-[11px] font-bold text-text-primary">V</span>
+                          </span>
+                        </span>
+                        to add downloads
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -576,27 +581,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
             
             const itemsToResume = selectedDownloads.filter(d => canStartDownload(d.status));
             const itemsToPause = selectedDownloads.filter(d => canPauseDownload(d.status));
+            const itemsToQueue = selectedDownloads.filter(d => d.status !== 'completed');
 
             return (
             <>
               {/* Multi-Select Context Menu */}
               {itemsToResume.length > 0 && (
               <button
-                onClick={() => {
-                  setContextMenu(null);
-                  if (itemsToResume.length > 0) {
-                    const activeQueueIds = Array.from(new Set(itemsToResume.map(i => i.queueId).filter(Boolean)));
-                    // We can use assignToQueue for bulk resume to the same queue
-                    if (activeQueueIds.length === 1 && activeQueueIds[0]) {
-                      void assignToQueue(itemsToResume.map(i => i.id), activeQueueIds[0]).catch(error => {
-                        showInteractionError('Could not bulk resume downloads', error);
-                      });
-                    } else {
-                      // Fallback for missing queue or multiple queues
-                      itemsToResume.forEach(handleResume);
-                    }
-                  }
-                }}
+              onClick={() => {
+                setContextMenu(null);
+                void resumeItemsSequentially(itemsToResume);
+              }}
                 className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors"
               >
                 Start/Resume
@@ -630,24 +625,26 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                 <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
               )}
 
-              <div className="group relative">
-                <button className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors flex justify-between items-center">
-                  Add to Queue
-                  <ChevronRight size={14} />
-                </button>
-                <div className="absolute left-full top-0 hidden group-hover:block ml-1 min-w-[150px] bg-bg-modal border border-border-modal rounded-lg shadow-lg py-1.5 z-50">
-                  {queues.map(q => (
-                    <button key={q.id} onClick={() => {
-                      setContextMenu(null);
-                      void assignToQueue(Array.from(selectedIds), q.id).catch(error => {
-                        showInteractionError('Could not move downloads to queue', error);
-                      });
-                    }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
-                      {q.name}
-                    </button>
-                  ))}
+              {itemsToQueue.length > 0 && (
+                <div className="group relative">
+                  <button className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors flex justify-between items-center">
+                    Add to Queue
+                    <ChevronRight size={14} />
+                  </button>
+                  <div className="absolute left-full top-0 hidden group-hover:block ml-1 min-w-[150px] bg-bg-modal border border-border-modal rounded-lg shadow-lg py-1.5 z-50">
+                    {queues.map(q => (
+                      <button key={q.id} onClick={() => {
+                        setContextMenu(null);
+                        void assignToQueue(itemsToQueue.map(item => item.id), q.id).catch(error => {
+                          showInteractionError('Could not move downloads to queue', error);
+                        });
+                      }} className="w-full text-left px-3 py-2 hover:bg-item-hover transition-colors text-[12px]">
+                        {q.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="h-[1px] bg-border-modal/60 my-1.5 mx-2"></div>
 

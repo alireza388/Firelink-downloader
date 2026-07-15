@@ -756,7 +756,14 @@ fn remove_persisted_transfer_secrets(value: &mut Value) {
     // These values are accepted from users, browser extensions, or URLs and
     // may contain credentials or bearer tokens. Portable queues keep their
     // useful metadata, but never persist these values beside the executable.
+    let mut removed_transfer_context = false;
     for key in ["password", "cookies", "headers", "mirrors", "proxy"] {
+        if object
+            .get(key)
+            .is_some_and(|value| !value.is_null() && !value_is_empty(value))
+        {
+            removed_transfer_context = true;
+        }
         object.remove(key);
     }
 
@@ -790,6 +797,20 @@ fn remove_persisted_transfer_secrets(value: &mut Value) {
             mark_portable_download_unresumable(object);
         }
     }
+
+    // Do not silently resume a queued transfer after removing request
+    // credentials or other transfer-specific context. The URL may still be
+    // valid, but its semantics have changed and the user must re-add it with
+    // the required request settings.
+    if removed_transfer_context {
+        mark_portable_download_unresumable(object);
+    }
+}
+
+fn value_is_empty(value: &Value) -> bool {
+    value.as_str().is_some_and(str::is_empty)
+        || value.as_array().is_some_and(Vec::is_empty)
+        || value.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
 fn mark_portable_download_unresumable(object: &mut serde_json::Map<String, Value>) {
@@ -803,7 +824,7 @@ fn mark_portable_download_unresumable(object: &mut serde_json::Map<String, Value
         object.insert(
             "lastError".to_string(),
             Value::String(
-                "Portable mode removed credentials from this persisted download; add it again to resume."
+                "Portable mode removed credentials or transfer settings from this persisted download; add it again to resume."
                     .to_string(),
             ),
         );
@@ -1642,6 +1663,33 @@ mod tests {
         for key in ["password", "cookies", "headers", "mirrors", "proxy"] {
             assert!(saved.get(key).is_none(), "portable data retained {key}");
         }
+    }
+
+    #[test]
+    fn portable_download_persistence_marks_context_dependent_queue_items_unresumable() {
+        let temp = TempDir::new().unwrap();
+        let state = init_at_path(temp.path()).unwrap();
+        let mut connection = state.lock().unwrap();
+        let data = json!([{
+            "id": "download-context",
+            "status": "queued",
+            "queueId": "main",
+            "url": "https://example.com/file",
+            "headers": "Authorization: Bearer secret"
+        }])
+        .to_string();
+
+        replace_downloads(&mut connection, &data, true).unwrap();
+
+        let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
+        assert_eq!(saved["url"], "https://example.com/file");
+        assert_eq!(saved["status"], "failed");
+        assert_eq!(saved["resumable"], false);
+        assert_eq!(
+            saved["lastError"],
+            "Portable mode removed credentials or transfer settings from this persisted download; add it again to resume."
+        );
+        assert!(saved.get("headers").is_none());
     }
 
     #[test]

@@ -3515,6 +3515,12 @@ async fn pause_download(
                 state.queue_manager.next_aria2_control_epoch(&id).await;
                 state.queue_manager.cancel_aria2_retries(&id).await;
                 if retrying && matches!(terminal, "error" | "removed") {
+                    // The terminal GID was forgotten above, so this
+                    // lifecycle can no longer be resumed in place. Release
+                    // backend ownership as well; otherwise a paused row
+                    // keeps a dead registration until another command happens
+                    // to repair it.
+                    state.queue_manager.release_registered_id(&id).await;
                     use tauri::Emitter;
                     let _ = app_handle.emit(
                         "download-state",

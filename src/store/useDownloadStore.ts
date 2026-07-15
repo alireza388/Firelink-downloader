@@ -818,6 +818,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       get().unregisterBackendIds([id]);
     } catch (e) {
       console.warn("Could not remove old download from backend", e);
+      throw e;
     }
 
     get().updateDownload(id, {
@@ -1175,9 +1176,12 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               .filter(result => !result.success)
               .map(result => [result.id, result.error || 'Backend rejected the queued download.'])
           );
-          const order = await invoke('get_pending_order', { queueId: null });
+
+          // Commit backend ownership as soon as enqueue_many accepts an item.
+          // The order query is a separate best-effort view read; if it fails,
+          // forgetting these registrations would let a later queue start
+          // enqueue the same backend lifecycle a second time.
           set(state => ({
-            pendingOrder: order,
             backendRegisteredIds: new Set([
               ...state.backendRegisteredIds,
               ...registeredIds
@@ -1189,11 +1193,18 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
                     status: 'failed' as const,
                     lastError: failedErrors.get(download.id)
                   }
-                : registeredIds.includes(download.id)
+                  : registeredIds.includes(download.id)
                   ? { ...download, hasBeenDispatched: true, lastError: undefined }
                   : download
             )
           }));
+
+          try {
+            const order = await invoke('get_pending_order', { queueId: null });
+            set({ pendingOrder: order });
+          } catch (e) {
+            console.error("Failed to refresh pending order after auto-resume:", e);
+          }
         } catch (e) {
           console.error("Failed to auto-resume active downloads:", e);
         }

@@ -589,6 +589,44 @@ describe('useDownloadStore', () => {
     });
   });
 
+  it('keeps accepted startup registrations when pending-order refresh fails', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'startup-accepted',
+          url: 'https://example.com/file.bin',
+          fileName: 'file.bin',
+          status: 'queued',
+          category: 'Other',
+          dateAdded: '',
+          queueId: '00000000-0000-0000-0000-000000000001',
+          hasBeenDispatched: true
+        })];
+      }
+      if (cmd === 'enqueue_many') {
+        return [{ id: 'startup-accepted', success: true, filename: 'file.bin' }];
+      }
+      if (cmd === 'get_pending_order') throw new Error('queue state unavailable');
+      if (cmd === 'resume_download') return true;
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+
+    expect(useDownloadStore.getState().backendRegisteredIds.has('startup-accepted')).toBe(true);
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'queued',
+      hasBeenDispatched: true
+    });
+
+    await expect(useDownloadStore.getState().startQueue('00000000-0000-0000-0000-000000000001'))
+      .resolves.toEqual(['startup-accepted']);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.filter(call => call[0] === 'enqueue_download')
+    ).toHaveLength(0);
+  });
+
   it('redownloads fallback media without requiring a format selector', async () => {
     useDownloadStore.setState({
       downloads: [{
@@ -618,6 +656,38 @@ describe('useDownloadStore', () => {
         })
       })
     );
+  });
+
+  it('does not claim a redownload when removing the old backend lifecycle fails', async () => {
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'redownload-remove-failed',
+        url: 'https://example.com/file.bin',
+        fileName: 'file.bin',
+        destination: '/tmp',
+        status: 'paused',
+        category: 'Other',
+        dateAdded: '2026-07-15T00:00:00.000Z',
+        hasBeenDispatched: true
+      }] as any[],
+      backendRegisteredIds: new Set(['redownload-remove-failed'])
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'remove_download') throw new Error('aria2 did not stop');
+      return undefined;
+    });
+
+    await expect(useDownloadStore.getState().redownload('redownload-remove-failed'))
+      .rejects.toThrow('aria2 did not stop');
+    expect(useDownloadStore.getState().downloads[0]).toMatchObject({
+      status: 'paused',
+      dateAdded: '2026-07-15T00:00:00.000Z',
+      hasBeenDispatched: true
+    });
+    expect(useDownloadStore.getState().backendRegisteredIds.has('redownload-remove-failed')).toBe(true);
+    expect(
+      vi.mocked(ipc.invokeCommand).mock.calls.some(call => call[0] === 'enqueue_download')
+    ).toBe(false);
   });
 
   it('starts and pauses all items regardless of legacy missing queue ids', async () => {

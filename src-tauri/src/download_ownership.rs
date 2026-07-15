@@ -59,7 +59,12 @@ pub fn expected_primary_path(
     }
 
     let safe_filename = canonical_download_filename(filename);
-    Ok(resolved_dest.join(safe_filename))
+    let path = resolved_dest.join(safe_filename);
+    if crate::path_has_symlink_component(&path) {
+        return Err("Download path may not contain symlink components".to_string());
+    }
+    crate::canonicalize_with_missing_components(&path)
+        .ok_or_else(|| "Download path could not be canonicalized".to_string())
 }
 
 pub fn register_expected(
@@ -88,13 +93,15 @@ pub fn set_primary_path(
     }) {
         return Err("Download ownership path traversal is not allowed".to_string());
     }
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Err("Download ownership path may not be a symlink".to_string());
+    if crate::path_has_symlink_component(path) {
+        return Err("Download ownership path may not contain symlink components".to_string());
     }
+    let canonical_path = crate::canonicalize_with_missing_components(path)
+        .ok_or_else(|| "Download ownership path could not be canonicalized".to_string())?;
 
     let database = app_handle.state::<crate::db::DbState>();
     let connection = database.lock()?;
-    crate::db::set_ownership(&connection, id, &path.to_string_lossy())
+    crate::db::set_ownership(&connection, id, &canonical_path.to_string_lossy())
 }
 
 pub fn remove(app_handle: &tauri::AppHandle, id: &str) -> Result<(), String> {
@@ -147,11 +154,7 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
     let downloads = {
         let database = app_handle.state::<crate::db::DbState>();
         let connection = database.lock()?;
-        crate::db::load_downloads(&connection)?
-            .into_iter()
-            .map(|value| serde_json::from_str::<crate::ipc::DownloadItem>(&value))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Invalid download queue ownership data: {error}"))?
+        parse_legacy_download_items(crate::db::load_downloads(&connection)?)
     };
 
     let mut paths = Vec::new();
@@ -223,9 +226,23 @@ fn legacy_download_queue_paths(app_handle: &tauri::AppHandle) -> Result<Vec<Path
     Ok(paths)
 }
 
+fn parse_legacy_download_items(values: Vec<String>) -> Vec<crate::ipc::DownloadItem> {
+    values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_str::<crate::ipc::DownloadItem>(&value) {
+            Ok(download) => Some(download),
+            Err(error) => {
+                log::warn!("Skipping malformed download ownership record: {error}");
+                None
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::canonical_download_filename;
+    use super::{canonical_download_filename, parse_legacy_download_items};
+    use serde_json::json;
 
     #[test]
     fn canonicalizes_untrusted_download_filenames() {
@@ -237,5 +254,23 @@ mod tests {
         assert_eq!(canonical_download_filename(".."), "download");
         assert_eq!(canonical_download_filename("CON.txt"), "CON-.txt");
         assert_eq!(canonical_download_filename("lpt9"), "lpt9-");
+    }
+
+    #[test]
+    fn malformed_legacy_download_does_not_block_valid_ownership_records() {
+        let valid = json!({
+            "id": "download-1",
+            "url": "https://example.com/file",
+            "fileName": "file",
+            "status": "completed",
+            "category": "Other",
+            "dateAdded": ""
+        })
+        .to_string();
+
+        let downloads = parse_legacy_download_items(vec!["not-json".to_string(), valid]);
+
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].id, "download-1");
     }
 }

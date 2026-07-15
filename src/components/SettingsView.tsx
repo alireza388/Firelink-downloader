@@ -1258,7 +1258,7 @@ className="app-button px-3 py-1.5 text-[12px] flex items-center gap-1.5 disabled
                     <p className="text-xs text-text-secondary m-0 mt-0.5">
                       {platform.portable
                         ? 'Your pairing token is stored with this portable Firelink folder and will persist when the folder is moved. Treat the folder as sensitive.'
-                        : 'Your pairing token is persisted in Firelink settings and will persist across restarts.'}
+                        : 'Your pairing token is stored in the system credential store and will persist across restarts.'}
                     </p>
                   </div>
                 </div>

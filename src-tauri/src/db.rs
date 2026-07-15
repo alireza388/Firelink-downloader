@@ -8,10 +8,19 @@ const DATABASE_NAME: &str = "firelink.sqlite";
 const LEGACY_STORE_NAME: &str = "store.bin";
 const LEGACY_BUNDLE_IDENTIFIER: &str = "com.nima.tauri-app";
 const CURRENT_SCHEMA_VERSION: i64 = 1;
-const TOKEN_CHANGED_NOTICE: &str = "pairing-token-changed";
+pub(crate) const TOKEN_CHANGED_NOTICE: &str = "pairing-token-changed";
 pub const PAIRING_TOKEN_KEYCHAIN_ID: &str = "extension-pairing-token";
 const KEYCHAIN_SERVICE: &str = "com.firelink.app";
 static KEYRING_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+
+fn is_database_path(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name == DATABASE_NAME
+            || name
+                .to_string_lossy()
+                .starts_with(&format!("{DATABASE_NAME}.backup-"))
+    })
+}
 
 pub struct DbState {
     conn: Mutex<Connection>,
@@ -26,20 +35,6 @@ impl DbState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PairingTokenSource {
-    Keychain,
-    LegacySettings,
-    Generated,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PairingTokenDecision {
-    token: String,
-    source: PairingTokenSource,
-    changed: bool,
-}
-
 #[derive(Default)]
 struct LegacyData {
     settings: Option<String>,
@@ -50,15 +45,19 @@ struct LegacyData {
 }
 
 pub fn init(storage_layout: &crate::storage::StorageLayout) -> Result<DbState, String> {
-    init_at_path_internal(storage_layout.data_dir(), storage_layout.is_portable())
+    init_at_path_internal(storage_layout.data_dir(), storage_layout.is_portable(), false)
 }
 
 #[cfg(test)]
 fn init_at_path(app_data_dir: &Path) -> Result<DbState, String> {
-    init_at_path_internal(app_data_dir, false)
+    init_at_path_internal(app_data_dir, false, false)
 }
 
-fn init_at_path_internal(app_data_dir: &Path, portable: bool) -> Result<DbState, String> {
+fn init_at_path_internal(
+    app_data_dir: &Path,
+    portable: bool,
+    migrate_legacy_keychain: bool,
+) -> Result<DbState, String> {
     fs::create_dir_all(app_data_dir)
         .map_err(|error| format!("failed to create app data directory: {error}"))?;
     let database_path = app_data_dir.join(DATABASE_NAME);
@@ -79,10 +78,12 @@ fn init_at_path_internal(app_data_dir: &Path, portable: bool) -> Result<DbState,
     }
     migrate_schema(&mut connection, version)?;
 
-    // We no longer touch the keychain on backend startup.
-    // Legacy imports will safely preserve any pairing token in the JSON payload.
-    // The frontend will manually trigger migration to the keychain via IPC if access is granted.
-    import_legacy_data(&mut connection, app_data_dir, false, portable)?;
+    import_legacy_data(
+        &mut connection,
+        app_data_dir,
+        portable,
+        migrate_legacy_keychain,
+    )?;
     if portable {
         sanitize_persisted_downloads(&mut connection)?;
     }
@@ -186,8 +187,8 @@ fn migrate_schema(connection: &mut Connection, from_version: i64) -> Result<(), 
 fn import_legacy_data(
     connection: &mut Connection,
     app_data_dir: &Path,
-    migrate_keychain: bool,
     portable: bool,
+    migrate_keychain: bool,
 ) -> Result<(), String> {
     let legacy_app_dir = app_data_dir
         .parent()
@@ -206,35 +207,49 @@ fn import_legacy_data(
         }
         let marker = format!("legacy-import:{}", candidate.to_string_lossy());
         if metadata_exists(connection, &marker)? {
-            if portable {
-                sanitize_legacy_source(&candidate)?;
-            }
+            sanitize_legacy_source(&candidate, !portable)?;
             continue;
         }
-        if !portable {
-            backup_file(&candidate, "legacy-import")?;
-        }
+        let backup = if !portable {
+            Some(backup_file(&candidate, "legacy-import")?)
+        } else {
+            None
+        };
         let mut legacy = if candidate
             .file_name()
             .is_some_and(|name| name == DATABASE_NAME)
         {
-            read_legacy_database(&candidate, migrate_keychain)?
+            read_legacy_database(&candidate, !portable)?
         } else {
-            read_legacy_store(&candidate, migrate_keychain)?
+            read_legacy_store(&candidate, !portable)?
         };
-        let mut migration_complete = true;
-        if migrate_keychain
-            && get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err()
-            && legacy.pairing_token.is_some()
-        {
-            if let Some(token) = legacy.pairing_token.as_deref() {
-                if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, token) {
-                    log::warn!(
-                        "Legacy pairing token could not be migrated yet; settings import will retry: {}",
-                        error
-                    );
-                    legacy.settings = None;
-                    migration_complete = false;
+        let mut pending_pairing_token = None;
+        if !portable {
+            if let Some(token) = legacy.pairing_token.take() {
+                let migrated = if migrate_keychain {
+                    let keychain_has_token = get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID)
+                        .ok()
+                        .is_some_and(|value| !value.trim().is_empty());
+                    if !keychain_has_token {
+                        if let Err(error) =
+                            set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token)
+                        {
+                            log::warn!(
+                                "Legacy pairing token could not be migrated to the credential store; it will remain pending in the current database: {}",
+                                error
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                } else {
+                    false
+                };
+                if !migrated {
+                    pending_pairing_token = Some(token);
                 }
             }
         }
@@ -245,67 +260,105 @@ fn import_legacy_data(
             sanitize_download_strings(&mut legacy.downloads)?;
         }
         merge_legacy_data(connection, legacy)?;
-        if migration_complete {
-            connection
-                .execute(
-                    "INSERT INTO metadata (key, value) VALUES (?1, 'complete')
-                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    params![marker],
-                )
-                .map_err(|error| format!("failed to record legacy import: {error}"))?;
-            if portable {
-                sanitize_legacy_source(&candidate)?;
+        if let Some(token) = pending_pairing_token {
+            if load_pairing_token_from_settings(connection)?.is_none() {
+                save_pairing_token_to_settings(connection, &token, true)?;
             }
         }
+        if let Some(backup) = backup.as_deref() {
+            sanitize_legacy_source(backup, !portable)?;
+        }
+        sanitize_legacy_source(&candidate, !portable)?;
+        connection
+            .execute(
+                "INSERT INTO metadata (key, value) VALUES (?1, 'complete')
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![marker],
+            )
+            .map_err(|error| format!("failed to record legacy import: {error}"))?;
     }
     Ok(())
 }
 
-fn sanitize_legacy_source(path: &Path) -> Result<(), String> {
-    if path
-        .file_name()
-        .is_some_and(|name| name == DATABASE_NAME)
-    {
+fn sanitize_legacy_source(path: &Path, remove_pairing_token: bool) -> Result<(), String> {
+    if is_database_path(path) {
         let mut connection = Connection::open(path).map_err(|error| {
             format!(
-                "failed to open legacy database '{}' for portable sanitization: {error}",
+                "failed to open legacy database '{}' for sanitization: {error}",
                 path.display()
             )
         })?;
+        if remove_pairing_token && table_exists(&connection, "settings")? {
+            if let Some(settings) = connection
+                .query_row("SELECT data FROM settings WHERE id = 1", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .optional()
+                .map_err(|error| format!("failed to read legacy settings for sanitization: {error}"))?
+            {
+                let sanitized = strip_pairing_token_from_settings(&settings)?;
+                connection
+                    .execute(
+                        "UPDATE settings SET data = ?1 WHERE id = 1",
+                        params![sanitized],
+                    )
+                    .map_err(|error| format!("failed to sanitize legacy settings: {error}"))?;
+            }
+        }
         if table_exists(&connection, "downloads")? {
-            return sanitize_persisted_downloads(&mut connection);
+            sanitize_persisted_downloads(&mut connection)?;
         }
         return Ok(());
     }
 
     let text = fs::read_to_string(path).map_err(|error| {
         format!(
-            "failed to read legacy store '{}' for portable sanitization: {error}",
+            "failed to read legacy store '{}' for sanitization: {error}",
             path.display()
         )
     })?;
     let mut document: Value = serde_json::from_str(&text).map_err(|error| {
         format!(
-            "failed to decode legacy store '{}' for portable sanitization: {error}",
+            "failed to decode legacy store '{}' for sanitization: {error}",
             path.display()
         )
     })?;
-    let Some(downloads) = document
+    if remove_pairing_token {
+        if let Some(settings) = document.get_mut("settings") {
+            let was_string = settings.is_string();
+            let (sanitized, _, _) = sanitize_settings_value(settings, true)?;
+            *settings = if was_string {
+                Value::String(sanitized)
+            } else {
+                serde_json::from_str(&sanitized).map_err(|error| {
+                    format!("failed to decode sanitized legacy settings: {error}")
+                })?
+            };
+        }
+    }
+    if let Some(downloads) = document
         .get_mut("download_queue")
         .and_then(Value::as_array_mut)
-    else {
-        return Ok(());
-    };
-    for download in downloads {
-        remove_persisted_transfer_secrets(download);
+    {
+        for download in downloads {
+            remove_persisted_transfer_secrets(download);
+        }
     }
+    write_sanitized_legacy_store(path, &text, &document)
+}
+
+fn write_sanitized_legacy_store(
+    path: &Path,
+    original: &str,
+    document: &Value,
+) -> Result<(), String> {
     let sanitized = serde_json::to_string(&document).map_err(|error| {
         format!(
-            "failed to encode legacy store '{}' for portable sanitization: {error}",
+            "failed to encode legacy store '{}' for sanitization: {error}",
             path.display()
         )
     })?;
-    if sanitized == text {
+    if sanitized == original {
         return Ok(());
     }
 
@@ -447,34 +500,6 @@ fn read_legacy_database(path: &Path, force_migrate: bool) -> Result<LegacyData, 
         data.queues = query_string_column(&connection, "SELECT data FROM queues")?;
     }
     Ok(data)
-}
-
-pub fn sanitize_current_settings_and_restore_token(
-    connection: &Connection,
-    force_migrate: bool,
-) -> Result<(bool, bool), String> {
-    let Some(settings) = load_settings(connection)? else {
-        return Ok((false, false));
-    };
-    let (sanitized, legacy_token, keychain_granted) =
-        sanitize_settings_text(&settings, force_migrate)?;
-    if sanitized == settings {
-        return Ok((false, keychain_granted));
-    }
-    let should_migrate = force_migrate || keychain_granted;
-    if should_migrate && get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).is_err() {
-        if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
-            if let Err(error) = set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &token) {
-                log::warn!(
-                        "Persisted pairing token could not be migrated yet; original settings retained: {}",
-                        error
-                    );
-                return Ok((true, keychain_granted));
-            }
-        }
-    }
-    save_settings(connection, &sanitized)?;
-    Ok((false, keychain_granted))
 }
 
 fn sanitize_settings_value(
@@ -998,61 +1023,8 @@ pub fn consume_notice(connection: &Connection, key: &str) -> Result<(), String> 
     Ok(())
 }
 
-pub fn hydrate_pairing_token(
-    connection: &mut Connection,
-    skip_keychain: bool,
-) -> Result<(String, bool), String> {
-    if skip_keychain {
-        return Ok((generate_pairing_token(), false));
-    }
-
-    let existing = get_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID).ok();
-    let generated = generate_pairing_token();
-    let decision = decide_pairing_token(
-        existing.as_deref(),
-        None,
-        has_user_data(connection)?,
-        &generated,
-    );
-    if decision.source != PairingTokenSource::Keychain {
-        set_keychain_password(PAIRING_TOKEN_KEYCHAIN_ID, &decision.token)?;
-    }
-    if decision.changed {
-        record_notice(connection, TOKEN_CHANGED_NOTICE)?;
-    }
-    let changed = has_pending_notice(connection, TOKEN_CHANGED_NOTICE)?;
-    Ok((decision.token, changed))
-}
-
 pub fn acknowledge_pairing_token_notice(connection: &Connection) -> Result<(), String> {
     consume_notice(connection, TOKEN_CHANGED_NOTICE)
-}
-
-fn decide_pairing_token(
-    keychain_token: Option<&str>,
-    legacy_token: Option<&str>,
-    has_existing_user_data: bool,
-    generated_token: &str,
-) -> PairingTokenDecision {
-    if let Some(token) = keychain_token.filter(|token| !token.trim().is_empty()) {
-        return PairingTokenDecision {
-            token: token.to_string(),
-            source: PairingTokenSource::Keychain,
-            changed: false,
-        };
-    }
-    if let Some(token) = legacy_token.filter(|token| !token.trim().is_empty()) {
-        return PairingTokenDecision {
-            token: token.to_string(),
-            source: PairingTokenSource::LegacySettings,
-            changed: false,
-        };
-    }
-    PairingTokenDecision {
-        token: generated_token.to_string(),
-        source: PairingTokenSource::Generated,
-        changed: has_existing_user_data,
-    }
 }
 
 pub(crate) fn generate_pairing_token() -> String {
@@ -1063,10 +1035,9 @@ pub(crate) fn generate_pairing_token() -> String {
     )
 }
 
-/// Read the extension pairing token from the persisted settings JSON.
-/// Returns `None` when the field is missing, empty, or the settings haven't
-/// been saved yet.  This is the **primary read path** — it does not touch the
-/// OS keychain and therefore never triggers a system credential prompt.
+/// Read the extension pairing token from portable settings JSON.
+/// Standard-mode settings are sanitized so this field is never a credential
+/// source outside the explicit portable-storage exception.
 pub fn load_pairing_token_from_settings(connection: &Connection) -> Result<Option<String>, String> {
     let Some(settings_json) = load_settings(connection)? else {
         return Ok(None);
@@ -1082,8 +1053,8 @@ pub fn load_pairing_token_from_settings(connection: &Connection) -> Result<Optio
     Ok(token)
 }
 
-/// Write (or update) the extension pairing token inside the persisted settings
-/// JSON document.  Keeps all other settings fields intact.
+/// Write (or update) the extension pairing token inside portable settings JSON.
+/// Keeps all other settings fields intact.
 pub fn save_pairing_token_to_settings(
     connection: &Connection,
     token: &str,
@@ -1092,7 +1063,7 @@ pub fn save_pairing_token_to_settings(
     let Some(settings_json) = load_settings(connection)? else {
         if !initialize_if_missing {
             // Settings have not been persisted yet. Standard mode keeps the
-            // first-run token session-only until the user grants credential
+            // first-run token session-only until the user grants credential-
             // store access; portable mode opts into initialization explicitly.
             return Ok(());
         }
@@ -1123,6 +1094,111 @@ pub fn save_pairing_token_to_settings(
     let updated = serde_json::to_string(&value)
         .map_err(|error| format!("failed to encode settings: {error}"))?;
     save_settings(connection, &updated)
+}
+
+/// Remove a pairing token from a serialized settings document.
+///
+/// Standard-mode settings must never carry the extension HMAC secret. The
+/// portable path deliberately preserves it separately through
+/// `preserve_portable_pairing_token`.
+pub fn strip_pairing_token_from_settings(data: &str) -> Result<String, String> {
+    let (sanitized, _, _) = sanitize_settings_text(data, true)?;
+    Ok(sanitized)
+}
+
+/// Keep a legacy token in the standard settings document while credential-store
+/// migration is pending. The backend never returns this copy to the frontend;
+/// it is retained only so an unavailable credential store cannot turn a later
+/// settings save into permanent pairing loss.
+pub fn preserve_legacy_pairing_token(
+    existing: Option<&str>,
+    incoming: &str,
+) -> Result<String, String> {
+    let Some(existing) = existing else {
+        return Ok(incoming.to_string());
+    };
+    let (_, token, _) = sanitize_settings_text(existing, true)?;
+    let Some(token) = token.filter(|value| !value.trim().is_empty()) else {
+        return Ok(incoming.to_string());
+    };
+
+    let mut document: Value = serde_json::from_str(incoming)
+        .map_err(|error| format!("failed to decode settings for legacy token preservation: {error}"))?;
+    let state = if document.get("state").is_some() {
+        document
+            .get_mut("state")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "persisted settings state must be an object".to_string())?
+    } else {
+        document
+            .as_object_mut()
+            .ok_or_else(|| "persisted settings must be an object".to_string())?
+    };
+    state.insert("extensionPairingToken".to_string(), Value::String(token));
+    serde_json::to_string(&document)
+        .map_err(|error| format!("failed to encode settings with pending pairing token: {error}"))
+}
+
+/// Read a legacy pairing token from the settings database without changing it.
+pub fn read_pairing_token_from_settings(
+    connection: &Connection,
+) -> Result<Option<String>, String> {
+    let Some(settings) = load_settings(connection)? else {
+        return Ok(None);
+    };
+    let (_, token, _) = sanitize_settings_text(&settings, true)?;
+    Ok(token.filter(|value| !value.trim().is_empty()))
+}
+
+/// Remove a legacy pairing token from the settings database.
+pub fn remove_pairing_token_from_settings(connection: &Connection) -> Result<(), String> {
+    let Some(settings) = load_settings(connection)? else {
+        return Ok(());
+    };
+    let (sanitized, _, _) = sanitize_settings_text(&settings, true)?;
+    if sanitized != settings {
+        save_settings(connection, &sanitized)?;
+    }
+    Ok(())
+}
+
+/// Migrate any legacy standard-mode token into the OS credential store.
+///
+/// The settings copy is removed only after the credential-store write succeeds.
+/// If cleanup fails after creating a new credential, the new entry is rolled
+/// back so a later retry can complete the migration without losing the token.
+pub fn migrate_legacy_pairing_token(connection: &Connection) -> Result<(), String> {
+    let Some(legacy_token) = read_pairing_token_from_settings(connection)? else {
+        return Ok(());
+    };
+
+    // Hold the same lock used by the public credential-store commands across
+    // the complete read/write/cleanup sequence. Otherwise a concurrent grant,
+    // regeneration, or delete could invalidate the rollback decision.
+    let _keyring_guard = lock_keyring_operations()?;
+    let keychain_has_token = get_keychain_password_unlocked(PAIRING_TOKEN_KEYCHAIN_ID)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let created_keychain_entry = !keychain_has_token;
+    if created_keychain_entry {
+        set_keychain_password_unlocked(PAIRING_TOKEN_KEYCHAIN_ID, &legacy_token)?;
+    }
+
+    if let Err(error) = remove_pairing_token_from_settings(connection) {
+        if created_keychain_entry {
+            if let Err(rollback_error) = delete_keychain_password_unlocked(PAIRING_TOKEN_KEYCHAIN_ID)
+            {
+                return Err(format!(
+                    "failed to remove the legacy pairing token after credential-store migration: {error}; credential-store rollback also failed: {rollback_error}"
+                ));
+            }
+        }
+        return Err(format!(
+            "failed to remove the legacy pairing token after credential-store migration: {error}"
+        ));
+    }
+
+    Ok(())
 }
 
 fn ensure_keyring_store() -> Result<(), String> {
@@ -1231,8 +1307,7 @@ fn unique_legacy_linux_keychain_entry(id: &str) -> Result<Option<keyring_core::E
     }
 }
 
-pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
-    let _guard = lock_keyring_operations()?;
+fn set_keychain_password_unlocked(id: &str, password: &str) -> Result<(), String> {
     let entry = keychain_entry(id)?;
 
     #[cfg(target_os = "linux")]
@@ -1254,8 +1329,12 @@ pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn get_keychain_password(id: &str) -> Result<String, String> {
+pub fn set_keychain_password(id: &str, password: &str) -> Result<(), String> {
     let _guard = lock_keyring_operations()?;
+    set_keychain_password_unlocked(id, password)
+}
+
+fn get_keychain_password_unlocked(id: &str) -> Result<String, String> {
     let entry = keychain_entry(id)?;
     match entry.get_password() {
         Ok(password) => Ok(password),
@@ -1271,8 +1350,12 @@ pub fn get_keychain_password(id: &str) -> Result<String, String> {
     }
 }
 
-pub fn delete_keychain_password(id: &str) -> Result<(), String> {
+pub fn get_keychain_password(id: &str) -> Result<String, String> {
     let _guard = lock_keyring_operations()?;
+    get_keychain_password_unlocked(id)
+}
+
+fn delete_keychain_password_unlocked(id: &str) -> Result<(), String> {
     let entry = keychain_entry(id)?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => {}
@@ -1288,6 +1371,11 @@ pub fn delete_keychain_password(id: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+pub fn delete_keychain_password(id: &str) -> Result<(), String> {
+    let _guard = lock_keyring_operations()?;
+    delete_keychain_password_unlocked(id)
 }
 
 #[cfg(test)]
@@ -1362,7 +1450,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let state = init_at_path_internal(temp.path(), true).unwrap();
+        let state = init_at_path_internal(temp.path(), true, true).unwrap();
         let connection = state.lock().unwrap();
         let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
         assert!(saved.get("password").is_none());
@@ -1375,7 +1463,7 @@ mod tests {
     }
 
     #[test]
-    fn imports_legacy_bundle_store_and_preserves_token() {
+    fn imports_legacy_bundle_store_with_pending_token_for_deferred_migration() {
         let root = TempDir::new().unwrap();
         let current = root.path().join("com.nimbold.firelink");
         let legacy = root.path().join(LEGACY_BUNDLE_IDENTIFIER);
@@ -1415,12 +1503,22 @@ mod tests {
         let settings = load_settings(&connection).unwrap().unwrap();
         assert!(settings.contains("\"theme\":\"dark\""));
         assert!(settings.contains("legacy-secret"));
-        assert!(fs::read_dir(&legacy).unwrap().flatten().any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("store.bin.backup-legacy-import-")
-        }));
+        let backup = fs::read_dir(&legacy)
+            .unwrap()
+            .flatten()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("store.bin.backup-legacy-import-")
+            })
+            .expect("legacy import should retain a sanitized backup");
+        assert!(!fs::read_to_string(backup.path())
+            .unwrap()
+            .contains("legacy-secret"));
+        assert!(!fs::read_to_string(legacy.join(LEGACY_STORE_NAME))
+            .unwrap()
+            .contains("legacy-secret"));
     }
 
     #[test]
@@ -1442,7 +1540,7 @@ mod tests {
         });
         fs::write(&store_path, serde_json::to_vec(&store).unwrap()).unwrap();
 
-        let state = init_at_path_internal(&current, true).unwrap();
+        let state = init_at_path_internal(&current, true, true).unwrap();
         let connection = state.lock().unwrap();
         let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
         assert!(saved.get("password").is_none());
@@ -1479,7 +1577,7 @@ mod tests {
                 );
                 INSERT INTO settings VALUES (
                     1,
-                    '{\"state\":{\"theme\":\"nord\"},\"version\":0}'
+                    '{\"state\":{\"theme\":\"nord\",\"extensionPairingToken\":\"legacy-sqlite-secret\"},\"version\":0}'
                 );
                 ",
             )
@@ -1490,16 +1588,30 @@ mod tests {
         let connection = state.lock().unwrap();
         assert_eq!(load_downloads(&connection).unwrap().len(), 1);
         assert_eq!(load_queues(&connection).unwrap().len(), 1);
-        assert!(load_settings(&connection)
+        let settings = load_settings(&connection).unwrap().unwrap();
+        assert!(settings.contains("\"nord\""));
+        assert!(settings.contains("legacy-sqlite-secret"));
+        let backup = fs::read_dir(&legacy)
             .unwrap()
-            .unwrap()
-            .contains("\"nord\""));
-        assert!(fs::read_dir(&legacy).unwrap().flatten().any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("firelink.sqlite.backup-legacy-import-")
-        }));
+            .flatten()
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("firelink.sqlite.backup-legacy-import-")
+            })
+            .unwrap();
+        let backup_connection = Connection::open(backup.path()).unwrap();
+        let backup_settings: String = backup_connection
+            .query_row("SELECT data FROM settings WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert!(!backup_settings.contains("legacy-sqlite-secret"));
+        drop(backup_connection);
+        let source_connection = Connection::open(legacy.join(DATABASE_NAME)).unwrap();
+        let source_settings: String = source_connection
+            .query_row("SELECT data FROM settings WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert!(!source_settings.contains("legacy-sqlite-secret"));
     }
 
     #[test]
@@ -1572,6 +1684,75 @@ mod tests {
     }
 
     #[test]
+    fn standard_pairing_token_is_stripped_from_settings_documents() {
+        let input = json!({
+            "state": {
+                "theme": "dark",
+                "extensionPairingToken": "redacted-pairing-token"
+            },
+            "version": 3
+        })
+        .to_string();
+
+        let stripped = strip_pairing_token_from_settings(&input).unwrap();
+        assert!(!stripped.contains("redacted-pairing-token"));
+        assert!(stripped.contains("\"theme\":\"dark\""));
+    }
+
+    #[test]
+    fn pending_legacy_pairing_token_survives_standard_settings_save() {
+        let existing = json!({
+            "state": { "theme": "dark", "extensionPairingToken": "pending-token" },
+            "version": 3
+        })
+        .to_string();
+        let incoming = json!({
+            "state": { "theme": "light" },
+            "version": 3
+        })
+        .to_string();
+
+        let sanitized = strip_pairing_token_from_settings(&incoming).unwrap();
+        let preserved = preserve_legacy_pairing_token(Some(&existing), &sanitized).unwrap();
+
+        assert!(preserved.contains("pending-token"));
+        assert!(preserved.contains("\"theme\":\"light\""));
+    }
+
+    #[test]
+    fn reading_legacy_pairing_token_does_not_remove_it_before_migration() {
+        let temp = TempDir::new().unwrap();
+        let state = init_at_path(temp.path()).unwrap();
+        let connection = state.lock().unwrap();
+        save_settings(
+            &connection,
+            &json!({
+                "state": { "extensionPairingToken": "redacted-legacy-token" },
+                "version": 3
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_pairing_token_from_settings(&connection)
+                .unwrap()
+                .as_deref(),
+            Some("redacted-legacy-token")
+        );
+        assert!(load_settings(&connection)
+            .unwrap()
+            .unwrap()
+            .contains("redacted-legacy-token"));
+
+        remove_pairing_token_from_settings(&connection).unwrap();
+        assert!(!load_settings(&connection)
+            .unwrap()
+            .unwrap()
+            .contains("redacted-legacy-token"));
+    }
+
+    #[test]
     fn portable_persistence_redacts_unparseable_download_urls() {
         let temp = TempDir::new().unwrap();
         let state = init_at_path(temp.path()).unwrap();
@@ -1608,7 +1789,7 @@ mod tests {
         drop(connection);
         drop(state);
 
-        let state = init_at_path_internal(temp.path(), true).unwrap();
+        let state = init_at_path_internal(temp.path(), true, true).unwrap();
         let connection = state.lock().unwrap();
         let saved: Value = serde_json::from_str(&load_downloads(&connection).unwrap()[0]).unwrap();
         assert!(saved.get("password").is_none());
@@ -1646,27 +1827,6 @@ mod tests {
             load_pairing_token_from_settings(&connection).unwrap().as_deref(),
             Some("initial-token")
         );
-    }
-
-    #[test]
-    fn token_decision_preserves_keychain_and_legacy_values() {
-        let keychain = decide_pairing_token(Some("keychain"), Some("legacy"), true, "generated");
-        assert_eq!(keychain.token, "keychain");
-        assert_eq!(keychain.source, PairingTokenSource::Keychain);
-        assert!(!keychain.changed);
-
-        let legacy = decide_pairing_token(None, Some("legacy"), true, "generated");
-        assert_eq!(legacy.token, "legacy");
-        assert_eq!(legacy.source, PairingTokenSource::LegacySettings);
-        assert!(!legacy.changed);
-
-        let recovery = decide_pairing_token(None, None, true, "generated");
-        assert_eq!(recovery.token, "generated");
-        assert_eq!(recovery.source, PairingTokenSource::Generated);
-        assert!(recovery.changed);
-
-        let fresh = decide_pairing_token(None, None, false, "generated");
-        assert!(!fresh.changed);
     }
 
     #[test]

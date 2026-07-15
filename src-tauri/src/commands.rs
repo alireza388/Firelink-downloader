@@ -61,9 +61,8 @@ fn known_download_paths(app_handle: &tauri::AppHandle) -> Result<Vec<PathBuf>, S
 }
 
 fn authorize_exact_path(requested: &Path, allowed_paths: &[PathBuf]) -> Result<PathBuf, String> {
-    if std::fs::symlink_metadata(requested).is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
-        return Err("Download path may not be a symlink".to_string());
+    if crate::path_has_symlink_component(requested) {
+        return Err("Download path may not contain symlink components".to_string());
     }
 
     let requested = canonicalize_with_missing_leaf(requested)?;
@@ -74,8 +73,9 @@ fn authorize_exact_path(requested: &Path, allowed_paths: &[PathBuf]) -> Result<P
     }
 
     let authorized = allowed_paths.iter().any(|allowed| {
-        canonicalize_with_missing_leaf(allowed)
-            .is_ok_and(|canonical_allowed| canonical_allowed == requested)
+        !crate::path_has_symlink_component(allowed)
+            && canonicalize_with_missing_leaf(allowed)
+                .is_ok_and(|canonical_allowed| canonical_allowed == requested)
     });
 
     if authorized {
@@ -98,14 +98,30 @@ fn canonicalize_with_missing_leaf(path: &Path) -> Result<PathBuf, String> {
 
     let mut existing = path;
     let mut missing = Vec::new();
-    while !existing.exists() {
-        let name = existing
-            .file_name()
-            .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
-        missing.push(name.to_owned());
-        existing = existing
-            .parent()
-            .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err("Download path may not contain symlink components".to_string());
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = existing
+                    .file_name()
+                    .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
+                missing.push(name.to_owned());
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| "Download path has no existing ancestor".to_string())?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect download path '{}': {error}",
+                    path.display()
+                ));
+            }
+        }
     }
 
     let mut canonical = std::fs::canonicalize(existing)
@@ -144,7 +160,8 @@ mod tests {
     #[test]
     fn authorizes_only_known_download_files_and_partials() {
         let root = tempfile::tempdir().unwrap();
-        let owned = root.path().join("owned.bin");
+        let root = fs::canonicalize(root.path()).unwrap();
+        let owned = root.join("owned.bin");
         let outside = tempfile::NamedTempFile::new().unwrap();
         fs::write(&owned, b"download").unwrap();
 
@@ -194,6 +211,24 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let escaped = root.path().join("owned.bin");
         symlink(outside.path().join("outside.bin"), &escaped).unwrap();
+
+        assert!(authorize_exact_path(&escaped, std::slice::from_ref(&escaped)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_parent_directory_symlink_escape_from_download_location() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let root_path = fs::canonicalize(root.path()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("owned.bin");
+        fs::write(&outside_file, b"outside").unwrap();
+
+        let redirected_parent = root_path.join("downloads");
+        symlink(outside.path(), &redirected_parent).unwrap();
+        let escaped = redirected_parent.join("owned.bin");
 
         assert!(authorize_exact_path(&escaped, std::slice::from_ref(&escaped)).is_err());
     }

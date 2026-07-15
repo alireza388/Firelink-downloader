@@ -102,8 +102,6 @@ const tauriStorage: StateStorage = {
  * explicit exception: its pairing token is persisted with the portable folder
  * so extension pairing follows that folder.
  */
-const PAIRING_TOKEN_KEYCHAIN_ID = 'extension-pairing-token';
-
 export type {
   ActiveView,
   AppFontSize,
@@ -206,32 +204,6 @@ export interface SettingsState {
   setShowKeychainModal: (show: boolean) => void;
   dismissKeychainPrompt: () => void;
 }
-
-const generateSecureToken = () => {
-  try {
-    const cryptoObj = typeof window !== 'undefined'
-      ? (window as Window & { msCrypto?: Crypto }).crypto
-        || (window as Window & { msCrypto?: Crypto }).msCrypto
-      : null;
-    if (cryptoObj && cryptoObj.getRandomValues) {
-      const arr = new Uint8Array(24);
-      cryptoObj.getRandomValues(arr);
-      let binary = '';
-      for (let i = 0; i < arr.byteLength; i++) {
-        binary += String.fromCharCode(arr[i]);
-      }
-      return btoa(binary);
-    }
-  } catch (e) {
-    console.warn("Secure token generation failed, falling back to random characters", e);
-  }
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let token = '';
-  for (let i = 0; i < 32; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return token;
-};
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -390,14 +362,20 @@ export const useSettingsStore = create<SettingsState>()(
         siteLogins: state.siteLogins.filter((login) => login.id !== id)
       })),
       regeneratePairingToken: async () => {
-        const token = generateSecureToken();
-        await invoke('set_keychain_password', { id: PAIRING_TOKEN_KEYCHAIN_ID, password: token });
-        set({ extensionPairingToken: token });
+        const result = await invoke('regenerate_pairing_token');
+        if (!result.persistent) {
+          throw new Error(result.error || 'Credential store access is unavailable.');
+        }
+        set({
+          extensionPairingToken: result.token,
+          isPairingTokenPersistent: true,
+          showKeychainModal: false
+        });
       },
       hydratePairingToken: async () => {
-        // Always use the safe hydration path that never touches the OS keychain
-        // on its own.  The modal will be shown when needed and only the explicit
-        // "Grant Access" action (→ grant_keychain_access) triggers the OS prompt.
+        // The backend migrates legacy settings copies and reads the token from
+        // the credential store after the app state is ready to receive it.
+        // Portable mode remains the explicit folder-contained exception.
         const result = await invoke('hydrate_extension_pairing_token');
         set({ 
           extensionPairingToken: result.token,
@@ -486,7 +464,6 @@ export const useSettingsStore = create<SettingsState>()(
         preventsSleepWhileDownloading: state.preventsSleepWhileDownloading,
         mediaCookieSource: state.mediaCookieSource,
         siteLogins: state.siteLogins,
-        extensionPairingToken: state.extensionPairingToken,
         keychainAccessGranted: state.keychainAccessGranted,
         keychainPromptDismissed: state.keychainPromptDismissed,
         autoCheckUpdates: state.autoCheckUpdates
@@ -500,6 +477,7 @@ export const useSettingsStore = create<SettingsState>()(
           ...currentState,
           ...persisted,
           ...locations,
+          extensionPairingToken: currentState.extensionPairingToken,
           theme: isAllowedSetting(THEME_VALUES, persisted.theme)
             ? persisted.theme
             : currentState.theme,
@@ -518,9 +496,6 @@ export const useSettingsStore = create<SettingsState>()(
           activeSettingsTab: isAllowedSetting(SETTINGS_TAB_VALUES, persisted.activeSettingsTab)
             ? persisted.activeSettingsTab
             : currentState.activeSettingsTab,
-          extensionPairingToken: typeof persisted.extensionPairingToken === 'string'
-            ? persisted.extensionPairingToken
-            : currentState.extensionPairingToken,
           showNotifications: persistedBoolean(persisted.showNotifications, currentState.showNotifications),
           playCompletionSound: persistedBoolean(persisted.playCompletionSound, currentState.playCompletionSound),
           showDockBadge: persistedBoolean(persisted.showDockBadge, currentState.showDockBadge),

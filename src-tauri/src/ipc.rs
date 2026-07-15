@@ -280,13 +280,6 @@ pub struct PersistedSettings {
     pub prevents_sleep_while_downloading: bool,
     pub media_cookie_source: MediaCookieSource,
     pub site_logins: Vec<SiteLogin>,
-    // HMAC shared secret for the browser extension. It is persisted in the
-    // settings database so startup never needs to touch the OS keychain.
-    // The keychain is still used as defense-in-depth by grant_keychain_access,
-    // but the DB copy is the primary read path, eliminating the OS credential
-    // prompt that macOS shows when the binary signature changes after an update.
-    #[serde(default)]
-    pub extension_pairing_token: String,
     pub auto_check_updates: bool,
     #[serde(default)]
     pub keychain_access_granted: bool,

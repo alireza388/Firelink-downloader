@@ -1329,6 +1329,23 @@ async fn validate_url_ssrf(url: &str) -> Result<Option<(String, std::net::Socket
     Ok(Some((host.to_string(), addr)))
 }
 
+fn same_origin(left: &reqwest::Url, right: &reqwest::Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host() == right.host()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn should_send_metadata_credentials(
+    original: Option<&reqwest::Url>,
+    current: Option<&reqwest::Url>,
+    redirects: usize,
+) -> bool {
+    redirects == 0
+        || original
+            .zip(current)
+            .is_some_and(|(original, current)| same_origin(original, current))
+}
+
 #[allow(clippy::too_many_arguments)] // Keep the metadata IPC fields explicit and independently typed.
 #[tauri::command]
 async fn fetch_metadata(
@@ -1344,7 +1361,7 @@ async fn fetch_metadata(
     ensure_reqwest_crypto_provider();
 
     let mut current_url = url.clone();
-    let original_host = reqwest::Url::parse(&url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
+    let original_origin = reqwest::Url::parse(&url).ok();
     let mut redirects = 0;
     let cookies_available = metadata_cookie_header_present(headers.as_deref(), cookies.as_deref());
     let defer_cookies = defer_cookies.unwrap_or(false);
@@ -1385,15 +1402,12 @@ async fn fetch_metadata(
             builder = builder.resolve(&host, addr);
         }
 
-        let current_host = reqwest::Url::parse(&current_url).ok().and_then(|u| u.host_str().map(|s| s.to_string()));
-        let mut should_send_auth = redirects == 0;
-        if !should_send_auth {
-            if let (Some(orig), Some(curr)) = (&original_host, &current_host) {
-                if curr == orig || curr.ends_with(&format!(".{}", orig)) {
-                    should_send_auth = true;
-                }
-            }
-        }
+        let current_origin = reqwest::Url::parse(&current_url).ok();
+        let should_send_auth = should_send_metadata_credentials(
+            original_origin.as_ref(),
+            current_origin.as_ref(),
+            redirects,
+        );
 
         let header_map = if should_send_auth {
             metadata_headers(headers.as_deref(), cookies.as_deref(), send_cookies)
@@ -1926,12 +1940,51 @@ pub(crate) fn is_safe_path<R: tauri::Runtime>(path: &std::path::Path, app_handle
         .any(|root| crate::platform::path_is_within(&canonical_path, &root))
 }
 
-fn canonicalize_with_missing_components(path: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn path_has_symlink_component(path: &std::path::Path) -> bool {
+    use std::path::Component;
+
+    let mut current = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                current.push(component.as_os_str());
+            }
+            Component::Normal(name) => {
+                current.push(name);
+                if std::fs::symlink_metadata(&current)
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return true;
+                }
+            }
+            Component::CurDir | Component::ParentDir => return true,
+        }
+    }
+    false
+}
+
+pub(crate) fn canonicalize_with_missing_components(
+    path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    if path_has_symlink_component(path) {
+        return None;
+    }
     let mut existing = path;
     let mut missing = Vec::new();
-    while !existing.exists() {
-        missing.push(existing.file_name()?.to_owned());
-        existing = existing.parent()?;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return None;
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(existing.file_name()?.to_owned());
+                existing = existing.parent()?;
+            }
+            Err(_) => return None,
+        }
     }
     let mut canonical = std::fs::canonicalize(existing).ok()?;
     for component in missing.iter().rev() {
@@ -4854,14 +4907,9 @@ struct PairingTokenHydration {
     error: Option<String>,
 }
 
-/// Hydrate the extension pairing token on startup **without touching the OS
-/// keychain**.  The token is read from the persisted settings (SQLite) so the
-/// operating system never presents a credential-access prompt before the UI is
-/// visible — even after a build update where the code signature changed.
-///
-/// When no token has been persisted yet (fresh install) a new one is generated
-/// and `persistent` is returned as `false`, which causes the frontend to show
-/// the `KeychainPermissionModal`.
+/// Hydrate the extension pairing token after the frontend is ready. Standard
+/// mode uses the OS credential store; portable mode intentionally keeps the
+/// token with the portable settings folder.
 #[tauri::command]
 fn hydrate_extension_pairing_token(
     database: tauri::State<'_, crate::db::DbState>,
@@ -4869,37 +4917,96 @@ fn hydrate_extension_pairing_token(
 ) -> Result<PairingTokenHydration, String> {
     let connection = database.lock()?;
 
-    // Primary path: read the token from the settings DB.  This is always safe
-    // and never triggers an OS prompt.
-    if let Some(existing) = crate::db::load_pairing_token_from_settings(&connection)? {
+    if app_state.storage_layout.is_portable() {
+        let token = crate::db::load_pairing_token_from_settings(&connection)?
+            .unwrap_or_else(crate::db::generate_pairing_token);
+        crate::db::save_pairing_token_to_settings(&connection, &token, true)?;
         if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
-            *pairing_token = existing.clone();
+            *pairing_token = token.clone();
         }
         return Ok(PairingTokenHydration {
-            token: existing,
+            token,
             token_changed: false,
             persistent: true,
             error: None,
         });
     }
 
-    // No token in the DB yet — generate one. Portable mode initializes the
-    // settings row immediately so the pairing secret travels with the folder;
-    // standard mode remains session-only until the user grants credential-store
-    // access when settings have not been persisted yet.
+    let migration_error = crate::db::migrate_legacy_pairing_token(&connection).err();
+    let keychain_token = crate::db::get_keychain_password(crate::db::PAIRING_TOKEN_KEYCHAIN_ID)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let persistent = keychain_token.is_some();
+    let token = keychain_token.unwrap_or_else(crate::db::generate_pairing_token);
+    if !persistent && crate::db::has_user_data(&connection)? {
+        crate::db::record_notice(&connection, crate::db::TOKEN_CHANGED_NOTICE)?;
+    }
+    let token_changed =
+        crate::db::has_pending_notice(&connection, crate::db::TOKEN_CHANGED_NOTICE)?;
+    if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+        *pairing_token = token.clone();
+    }
+    Ok(PairingTokenHydration {
+        token,
+        token_changed,
+        persistent,
+        error: migration_error.or_else(|| {
+            (!persistent).then(|| {
+                "Credential store access is unavailable; browser pairing is session-only.".to_string()
+            })
+        }),
+    })
+}
+
+#[tauri::command]
+fn regenerate_pairing_token(
+    database: tauri::State<'_, crate::db::DbState>,
+    app_state: tauri::State<'_, AppState>,
+) -> Result<PairingTokenHydration, String> {
+    let connection = database.lock()?;
     let generated = crate::db::generate_pairing_token();
-    crate::db::save_pairing_token_to_settings(
-        &connection,
-        &generated,
-        app_state.storage_layout.is_portable(),
-    )?;
+
+    if app_state.storage_layout.is_portable() {
+        crate::db::save_pairing_token_to_settings(&connection, &generated, true)?;
+    } else {
+        if let Err(error) = crate::db::migrate_legacy_pairing_token(&connection) {
+            let token = app_state
+                .extension_pairing_token
+                .read()
+                .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+                .clone();
+            return Ok(PairingTokenHydration {
+                token,
+                token_changed: false,
+                persistent: false,
+                error: Some(error),
+            });
+        }
+        if let Err(error) = crate::db::set_keychain_password(
+            crate::db::PAIRING_TOKEN_KEYCHAIN_ID,
+            &generated,
+        ) {
+            let token = app_state
+                .extension_pairing_token
+                .read()
+                .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+                .clone();
+            return Ok(PairingTokenHydration {
+                token,
+                token_changed: false,
+                persistent: false,
+                error: Some(error),
+            });
+        }
+    }
+
     if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
         *pairing_token = generated.clone();
     }
     Ok(PairingTokenHydration {
         token: generated,
         token_changed: false,
-        persistent: app_state.storage_layout.is_portable(),
+        persistent: true,
         error: None,
     })
 }
@@ -4909,7 +5016,7 @@ fn grant_keychain_access(
     database: tauri::State<'_, crate::db::DbState>,
     app_state: tauri::State<'_, AppState>,
 ) -> Result<PairingTokenHydration, String> {
-    let mut connection = database.lock()?;
+    let connection = database.lock()?;
 
     if app_state.storage_layout.is_portable() {
         let token = if let Some(existing) = crate::db::load_pairing_token_from_settings(&connection)?
@@ -4931,41 +5038,55 @@ fn grant_keychain_access(
         });
     }
 
-    // Explicitly force migration of any legacy token to the keychain.
-    // This is the ONLY code path that touches the OS keychain and it is
-    // reached exclusively through the frontend's "Grant Access" button,
-    // so any system prompt is user-initiated.
-    let _ = crate::db::sanitize_current_settings_and_restore_token(&connection, true);
+    if let Err(error) = crate::db::migrate_legacy_pairing_token(&connection) {
+        let token = app_state
+            .extension_pairing_token
+            .read()
+            .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+            .clone();
+        return Ok(PairingTokenHydration {
+            token,
+            token_changed: false,
+            persistent: false,
+            error: Some(error),
+        });
+    }
 
-    match crate::db::hydrate_pairing_token(&mut connection, false) {
-        Ok((token, token_changed)) => {
-            // Persist the token to the settings DB so future startups
-            // can read it without touching the keychain at all.
-            let _ = crate::db::save_pairing_token_to_settings(&connection, &token, false);
-            if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
-                *pairing_token = token.clone();
+    let token = match crate::db::get_keychain_password(crate::db::PAIRING_TOKEN_KEYCHAIN_ID) {
+        Ok(token) if !token.trim().is_empty() => token,
+        _ => {
+            let generated = crate::db::generate_pairing_token();
+            if let Err(error) = crate::db::set_keychain_password(
+                crate::db::PAIRING_TOKEN_KEYCHAIN_ID,
+                &generated,
+            ) {
+                let current = app_state
+                    .extension_pairing_token
+                    .read()
+                    .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+                    .clone();
+                return Ok(PairingTokenHydration {
+                    token: current,
+                    token_changed: false,
+                    persistent: false,
+                    error: Some(error),
+                });
             }
-            Ok(PairingTokenHydration {
-                token,
-                token_changed,
-                persistent: true,
-                error: None,
-            })
+            generated
         }
-        Err(error) => {
-            let token = app_state
-                .extension_pairing_token
-                .read()
-                .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
-                .clone();
-            Ok(PairingTokenHydration {
-                token,
-                token_changed: false,
-                persistent: false,
-                error: Some(error),
-            })
+    };
+
+    {
+        if let Ok(mut pairing_token) = app_state.extension_pairing_token.write() {
+            *pairing_token = token.clone();
         }
     }
+    Ok(PairingTokenHydration {
+        token,
+        token_changed: false,
+        persistent: true,
+        error: None,
+    })
 }
 
 #[tauri::command]
@@ -4988,7 +5109,8 @@ fn db_save_settings(
     let merged = if state.is_portable() {
         crate::settings::preserve_portable_pairing_token(existing.as_deref(), &merged)?
     } else {
-        merged
+        let sanitized = crate::db::strip_pairing_token_from_settings(&merged)?;
+        crate::db::preserve_legacy_pairing_token(existing.as_deref(), &sanitized)?
     };
     crate::db::save_settings(&connection, &merged)?;
     let decoded = crate::settings::decode_stored_settings(&serde_json::Value::String(merged))?;
@@ -5001,7 +5123,13 @@ fn db_save_settings(
 #[tauri::command]
 fn db_load_settings(state: tauri::State<'_, crate::db::DbState>) -> Result<Option<String>, String> {
     let connection = state.lock()?;
-    crate::db::load_settings(&connection)
+    let settings = crate::db::load_settings(&connection)?;
+    if state.is_portable() {
+        return Ok(settings);
+    }
+    settings
+        .map(|data| crate::db::strip_pairing_token_from_settings(&data))
+        .transpose()
 }
 
 #[tauri::command]
@@ -5046,27 +5174,59 @@ fn check_file_exists(app_handle: tauri::AppHandle, path: String) -> bool {
     resolved_dest.exists()
 }
 
+fn collect_log_files(log_dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let directory_metadata = match std::fs::symlink_metadata(log_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("failed to inspect log directory: {error}")),
+    };
+    if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let canonical_log_dir = match std::fs::canonicalize(log_dir) {
+        Ok(path) if path.is_dir() => path,
+        Ok(_) | Err(_) => return Ok(Vec::new()),
+    };
+    let entries = match std::fs::read_dir(log_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("failed to read log directory: {error}")),
+    };
+
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("failed to inspect log directory entry: {error}"))?
+            .path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("failed to inspect log file '{}': {error}", path.display()))?;
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || !path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().contains(".log"))
+        {
+            continue;
+        }
+
+        let canonical_path = std::fs::canonicalize(&path)
+            .map_err(|error| format!("failed to resolve log file '{}': {error}", path.display()))?;
+        if canonical_path.starts_with(&canonical_log_dir) {
+            files.push(canonical_path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 async fn log_files(app_handle: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
     let log_dir = app_handle
         .state::<AppState>()
         .storage_layout
         .log_dir()
         .to_path_buf();
-    let mut files = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(&log_dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if path.is_file()
-                && path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().contains(".log"))
-            {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
+    collect_log_files(&log_dir)
 }
 
 pub(crate) fn redact_sensitive_text(line: &str) -> String {
@@ -5386,7 +5546,8 @@ mod tests {
         parse_firelink_deep_link, parse_ffmpeg_version, parse_media_progress_line,
         redact_log_line, redact_log_line_for_output, sanitize_ytdlp_config_value,
         has_resumable_download_assets, should_cleanup_media_artifacts_after_failure,
-        retry_metadata_with_cookies, should_retry_metadata_with_cookies, FirelinkDeepLink,
+        retry_metadata_with_cookies, should_retry_metadata_with_cookies,
+        should_send_metadata_credentials, collect_log_files, FirelinkDeepLink,
         MediaProgress,
         MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
@@ -5417,6 +5578,66 @@ mod tests {
             metadata_response_error(reqwest::StatusCode::NOT_FOUND).as_deref(),
             Some("Metadata request failed with HTTP 404 (Not Found)")
         );
+    }
+
+    #[test]
+    fn metadata_redirect_credentials_require_the_exact_origin() {
+        let original = reqwest::Url::parse("https://example.com/file").unwrap();
+        let same_origin = reqwest::Url::parse("https://example.com/other").unwrap();
+        let subdomain = reqwest::Url::parse("https://cdn.example.com/file").unwrap();
+        let different_port = reqwest::Url::parse("https://example.com:8443/file").unwrap();
+        let downgraded = reqwest::Url::parse("http://example.com/file").unwrap();
+
+        assert!(should_send_metadata_credentials(
+            Some(&original),
+            Some(&original),
+            0
+        ));
+        assert!(should_send_metadata_credentials(
+            Some(&original),
+            Some(&same_origin),
+            1
+        ));
+        assert!(!should_send_metadata_credentials(
+            Some(&original),
+            Some(&subdomain),
+            1
+        ));
+        assert!(!should_send_metadata_credentials(
+            Some(&original),
+            Some(&different_port),
+            1
+        ));
+        assert!(!should_send_metadata_credentials(
+            Some(&original),
+            Some(&downgraded),
+            1
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn log_collection_rejects_symlink_files_and_directories() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("logs");
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(&log_dir).unwrap();
+        std::fs::write(log_dir.join("firelink.log"), "safe").unwrap();
+        std::fs::write(outside.path().join("secret.log"), "redacted-fixture").unwrap();
+        symlink(
+            outside.path().join("secret.log"),
+            log_dir.join("attacker.log"),
+        )
+        .unwrap();
+
+        let files = collect_log_files(&log_dir).unwrap();
+        assert_eq!(files, vec![std::fs::canonicalize(log_dir.join("firelink.log")).unwrap()]);
+
+        let redirected_logs = root.path().join("redirected-logs");
+        symlink(outside.path(), &redirected_logs).unwrap();
+        assert!(collect_log_files(&redirected_logs).unwrap().is_empty());
     }
 
     #[test]
@@ -6905,7 +7126,8 @@ pub fn run() {
             ack_schedule_trigger,
             check_automation_permission, request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
-            hydrate_extension_pairing_token, grant_keychain_access, acknowledge_pairing_token_change,
+            hydrate_extension_pairing_token, regenerate_pairing_token, grant_keychain_access,
+            acknowledge_pairing_token_change,
             check_file_exists, toggle_tray_icon, set_extension_pairing_token,
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,
             detach_download_for_reconfigure,

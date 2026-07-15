@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDownloadBytes, resolveDownloadSizeDisplay } from './downloadProgress';
+import { formatDownloadBytes, formatDownloadTotal, resolveDownloadSizeDisplay } from './downloadProgress';
 
 describe('download progress size display', () => {
   it('formats byte counts using the binary units used by the download engines', () => {
@@ -32,5 +32,15 @@ describe('download progress size display', () => {
       total: '2.00',
       unit: 'GB'
     });
+  });
+
+  it('formats a completed download using only its total size', () => {
+    const display = resolveDownloadSizeDisplay({
+      downloadedBytes: 1.2 * 1024 ** 3,
+      totalBytes: 2.4 * 1024 ** 3,
+      fallbackSize: '2.4 GB'
+    });
+
+    expect(formatDownloadTotal(display)).toBe('2.40 GB');
   });
 });

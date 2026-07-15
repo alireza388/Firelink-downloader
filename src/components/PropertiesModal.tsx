@@ -12,6 +12,7 @@ import {
 } from '../utils/downloadActions';
 import {
   downloadProgressColorClass,
+  formatDownloadTotal,
   resolveDownloadSizeDisplay
 } from '../utils/downloadProgress';
 
@@ -195,7 +196,11 @@ export const PropertiesModal = () => {
     totalIsEstimate: liveProgress?.total_is_estimate ?? item.totalIsEstimate,
     fallbackSize: item.size
   });
-  const hasDownloadedAmount = Boolean(sizeDisplay.downloaded && sizeDisplay.total);
+  const hasDownloadedAmount = item.status !== 'completed' &&
+    Boolean(sizeDisplay.downloaded && sizeDisplay.total);
+  const completedSizeLabel = item.status === 'completed'
+    ? formatDownloadTotal(sizeDisplay)
+    : sizeDisplay.fallback;
 
   let statusColor = 'text-text-secondary';
   let StatusIcon = Info;
@@ -238,7 +243,7 @@ export const PropertiesModal = () => {
                   className="truncate"
                   title={hasDownloadedAmount
                     ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
-                    : sizeDisplay.fallback}
+                    : completedSizeLabel}
                 >
                   {hasDownloadedAmount ? (
                     <>
@@ -248,7 +253,7 @@ export const PropertiesModal = () => {
                         {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total} {sizeDisplay.unit}
                       </span>
                     </>
-                  ) : sizeDisplay.fallback}
+                  ) : completedSizeLabel}
                 </span>
               </div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{displayedSpeed}</span></div>

@@ -34,6 +34,11 @@ export const formatDownloadBytes = (bytes: number): string => {
   return `${formatDownloadBytesInUnit(bytes, unitIndex)} ${BYTE_UNITS[unitIndex]}`;
 };
 
+export const formatDownloadTotal = (display: DownloadSizeDisplay): string =>
+  display.total && display.unit
+    ? `${display.totalIsEstimate ? '~' : ''}${display.total} ${display.unit}`
+    : display.fallback;
+
 export const resolveDownloadSizeDisplay = ({
   downloadedBytes,
   totalBytes,

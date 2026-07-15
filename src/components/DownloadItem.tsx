@@ -8,6 +8,7 @@ import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/d
 import { isActiveDownloadStatus } from '../utils/downloads';
 import {
   downloadProgressColorClass,
+  formatDownloadTotal,
   resolveDownloadSizeDisplay
 } from '../utils/downloadProgress';
 
@@ -74,7 +75,11 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
     totalIsEstimate: liveProgress?.total_is_estimate ?? download.totalIsEstimate,
     fallbackSize: download.size
   });
-  const hasDownloadedAmount = Boolean(sizeDisplay.downloaded && sizeDisplay.total);
+  const hasDownloadedAmount = download.status !== 'completed' &&
+    Boolean(sizeDisplay.downloaded && sizeDisplay.total);
+  const completedSizeLabel = download.status === 'completed'
+    ? formatDownloadTotal(sizeDisplay)
+    : sizeDisplay.fallback;
 
   return (
     <div
@@ -100,10 +105,10 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           className="tabular-nums"
           title={hasDownloadedAmount
             ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? '~' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
-            : sizeDisplay.fallback}
+            : completedSizeLabel}
           aria-label={hasDownloadedAmount
             ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
-            : sizeDisplay.fallback}
+            : completedSizeLabel}
         >
           {hasDownloadedAmount ? (
             <>
@@ -113,7 +118,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total} {sizeDisplay.unit}
               </span>
             </>
-          ) : sizeDisplay.fallback}
+          ) : completedSizeLabel}
         </span>
       </div>
       

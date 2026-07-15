@@ -8,12 +8,28 @@ type SpeedUnit = 'KB/s' | 'MB/s';
 
 const MAX_LIMIT_KIB = 10_485_760;
 const MAX_LIMIT_MB = 10240;
+const KIB_PER_MIB = 1024;
+
+export function speedValueToKiB(value: number, unit: SpeedUnit): number {
+  const numericValue = Number.isFinite(value) ? value : 1;
+  const valueKiB = unit === 'MB/s' ? numericValue * KIB_PER_MIB : numericValue;
+  return Math.max(1, Math.min(MAX_LIMIT_KIB, Math.round(valueKiB)));
+}
+
+export function speedValueFromKiB(valueKiB: number, unit: SpeedUnit): number {
+  const normalizedKiB = Math.max(1, Math.min(MAX_LIMIT_KIB, Math.round(valueKiB)));
+  return unit === 'MB/s' ? normalizedKiB / KIB_PER_MIB : normalizedKiB;
+}
+
+export function convertSpeedValue(value: number, fromUnit: SpeedUnit, toUnit: SpeedUnit): number {
+  return speedValueFromKiB(speedValueToKiB(value, fromUnit), toUnit);
+}
 
 export function parseLimit(limit: string, fallback: number): { value: number; unit: SpeedUnit } {
   const match = limit.trim().match(/^(\d+(?:\.\d+)?)\s*([km]?)b?(?:\/s)?$/i);
   const valueKiB = match
-    ? Math.max(1, Math.round(Number(match[1]) * (match[2].toLowerCase() === 'm' ? 1024 : 1)))
-    : fallback;
+    ? speedValueToKiB(Number(match[1]) * (match[2].toLowerCase() === 'm' ? KIB_PER_MIB : 1), 'KB/s')
+    : speedValueToKiB(fallback, 'KB/s');
 
   return valueKiB >= 1024 && valueKiB % 1024 === 0
     ? { value: valueKiB / 1024, unit: 'MB/s' }
@@ -24,17 +40,17 @@ function sanitizePresetValues(values: number[]): number[] {
   const cleaned = values
     .map(value => Number(value))
     .filter(value => Number.isFinite(value) && value > 0)
-    .map(value => Math.min(MAX_LIMIT_MB, Math.round(value * 100) / 100));
+    .map(value => speedValueFromKiB(speedValueToKiB(value, 'MB/s'), 'MB/s'));
 
   return Array.from(new Set(cleaned)).sort((a, b) => a - b);
 }
 
 export function presetBaseFromDisplayValue(value: number, unit: SpeedUnit): number {
-  return unit === 'MB/s' ? value : value / 1024;
+  return speedValueFromKiB(speedValueToKiB(value, unit), 'MB/s');
 }
 
 export function displayValueFromPresetBase(value: number, unit: SpeedUnit): number {
-  return unit === 'MB/s' ? value : Math.round(value * 1024);
+  return speedValueFromKiB(speedValueToKiB(value, 'MB/s'), unit);
 }
 
 function formatPresetValue(value: number): string {
@@ -75,7 +91,7 @@ export default function SpeedLimiterView() {
     if (savingRef.current) return;
     savingRef.current = true;
     const numericValue = Math.max(1, Math.min(Number(value) || 1, unit === 'MB/s' ? 10240 : MAX_LIMIT_KIB));
-    const valueKiB = Math.min(MAX_LIMIT_KIB, Math.round(unit === 'MB/s' ? numericValue * 1024 : numericValue));
+    const valueKiB = speedValueToKiB(numericValue, unit);
     setIsSaving(true);
     try {
       await setGlobalSpeedLimit(enabled ? `${valueKiB}K` : '');
@@ -127,6 +143,13 @@ export default function SpeedLimiterView() {
     });
   };
 
+  const changeUnit = (nextUnit: SpeedUnit) => {
+    if (nextUnit === unit) return;
+    setValue(convertSpeedValue(value, unit, nextUnit));
+    setCustomPresetValue(convertSpeedValue(customPresetValue, unit, nextUnit));
+    setUnit(nextUnit);
+  };
+
   return (
     <div className="flex-1 flex h-full flex-col overflow-hidden bg-main-bg">
       <WindowDragRegion />
@@ -169,6 +192,7 @@ export default function SpeedLimiterView() {
             <input
               type="number"
               min="1"
+              step="any"
               value={value}
               disabled={!enabled || isSaving}
               onChange={event => setValue(Math.max(1, Number(event.target.value) || 1))}
@@ -180,7 +204,7 @@ export default function SpeedLimiterView() {
                   key={option}
                   type="button"
                   disabled={!enabled || isSaving}
-                  onClick={() => setUnit(option)}
+                  onClick={() => changeUnit(option)}
                   className={`rounded px-3 py-1.5 text-[12px] font-medium ${
                     unit === option ? 'bg-accent text-white' : 'text-text-secondary hover:bg-item-hover'
                   }`}
@@ -228,6 +252,7 @@ export default function SpeedLimiterView() {
               <input
                 type="number"
                 min="1"
+                step="any"
                 value={customPresetValue}
                 disabled={!enabled || isSaving}
                 onChange={event => setCustomPresetValue(Math.max(1, Number(event.target.value) || 1))}

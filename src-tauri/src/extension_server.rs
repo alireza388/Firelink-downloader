@@ -203,7 +203,15 @@ async fn ping_handler(
         None => return Err(StatusCode::FORBIDDEN),
     };
 
-    if verify_signature(signature, timestamp_str, &body, &state.pairing_token).is_err() {
+    let timestamp = match verify_signature(signature, timestamp_str, &body, &state.pairing_token) {
+        Ok(timestamp) => timestamp,
+        Err(_) => return Err(StatusCode::FORBIDDEN),
+    };
+
+    // Discovery probes are authenticated requests too. Claim the verified
+    // signature before signing a proof so a captured /ping signature cannot
+    // be replayed with arbitrary client nonces during its validity window.
+    if !claim_request(signature, timestamp, &state.replay_cache) {
         return Err(StatusCode::FORBIDDEN);
     }
 

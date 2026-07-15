@@ -38,12 +38,20 @@ fn percent_decode_metadata_value(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;
+    let hex_value = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    };
 
     while index < bytes.len() {
         if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).ok()?;
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                decoded.push(byte);
+            if let (Some(high), Some(low)) = (
+                hex_value(bytes[index + 1]),
+                hex_value(bytes[index + 2]),
+            ) {
+                decoded.push((high << 4) | low);
                 index += 3;
                 continue;
             }
@@ -103,7 +111,12 @@ fn filename_from_url_disposition_query(raw_url: &str) -> Option<String> {
 fn filename_from_url_path(raw_url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(raw_url).ok()?;
     let last = parsed.path_segments()?.next_back()?;
-    sanitize_metadata_filename(last)
+    // URL path segments retain their percent-encoded representation. Decode
+    // before applying the same filename sanitization used by header metadata.
+    // If the escape sequence cannot form valid UTF-8, retain the raw segment
+    // so a malformed URL cannot erase an otherwise usable filename.
+    let decoded = percent_decode_metadata_value(last).unwrap_or_else(|| last.to_string());
+    sanitize_metadata_filename(&decoded)
 }
 
 fn metadata_filename_from_response(
@@ -5577,7 +5590,7 @@ mod tests {
         has_resumable_download_assets, should_cleanup_media_artifacts_after_failure,
         retry_metadata_with_cookies, should_retry_metadata_with_cookies,
         should_send_metadata_credentials, collect_log_files, FirelinkDeepLink,
-        MediaProgress,
+        percent_decode_metadata_value, MediaProgress,
         MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
@@ -5902,6 +5915,42 @@ mod tests {
         assert_eq!(
             filename_from_url_path(redirected),
             Some("7aae36e6-00ec-4e7d-8dec-f14ace170bdb".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_filename_decodes_url_path_segments_before_sanitizing() {
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/Rick%20and%20Morty%20-%20S09E08.mkv"),
+            Some("Rick and Morty - S09E08.mkv".to_string())
+        );
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/%E2%98%83%20episode.mkv"),
+            Some("☃ episode.mkv".to_string())
+        );
+    }
+
+    #[test]
+    fn metadata_filename_preserves_invalid_utf8_and_rejects_decoded_dot_segments() {
+        assert_eq!(
+            percent_decode_metadata_value("literal%☃"),
+            Some("literal%☃".to_string())
+        );
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/file%FF.mkv"),
+            Some("file%FF.mkv".to_string())
+        );
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/file%ZZ.mkv"),
+            Some("file%ZZ.mkv".to_string())
+        );
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/%2e%2e"),
+            None
+        );
+        assert_eq!(
+            filename_from_url_path("https://example.com/files/a%2Fb.mkv"),
+            Some("b.mkv".to_string())
         );
     }
 

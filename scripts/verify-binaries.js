@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import net from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -365,6 +366,34 @@ async function terminateProcess(proc, label) {
   return true;
 }
 
+function findAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen({ host: '127.0.0.1', port: 0 }, () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Could not determine the verifier RPC port.'));
+        return;
+      }
+
+      const port = address.port;
+      server.close(error => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(port);
+        }
+      });
+    });
+  });
+}
+
+function isPortBindingFailure(message) {
+  return /address already in use|failed to bind|could not bind|listen failed/i.test(message);
+}
+
 const coldStartTimeout = isMacOS ? 120000 : 30000;
 if (canExecuteTarget) {
   runEngine('yt-dlp cold start', 'yt-dlp', ['--version'], coldStartTimeout);
@@ -393,25 +422,6 @@ if (canExecuteTarget) {
       return;
     }
 
-    const port = 16801 + (process.pid % 1000);
-    const proc = spawn(p, [
-      '--enable-rpc',
-      `--rpc-listen-port=${port}`,
-      '--rpc-max-request-size=1K',
-      '--quiet',
-      '--console-log-level=error',
-      '--rpc-listen-all=false',
-    ], {
-      env: engineEnv('aria2c'),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15000,
-    });
-
-    let rpcStderr = '';
-    proc.stderr.on('data', (d) => {
-      rpcStderr += d.toString();
-    });
-
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: 'firelink-verify',
@@ -419,35 +429,114 @@ if (canExecuteTarget) {
       params: [],
     });
 
-    const result = await new Promise((resolve) => {
-      const maxAttempts = 20;
-      let attempts = 0;
-
-      function tryFetch() {
-        attempts++;
-        fetch(`http://127.0.0.1:${port}/jsonrpc`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-        })
-          .then(async (res) => {
-            resolve({ ok: true, data: await res.text() });
-          })
-          .catch(() => {
-            if (attempts >= maxAttempts) {
-              resolve({ ok: false, error: `RPC not ready after ${maxAttempts} attempts` });
-              return;
-            }
-            setTimeout(tryFetch, 300);
-          });
+    let result = { ok: false, error: 'RPC test did not run.' };
+    let rpcStderr = '';
+    const maxPortAttempts = 3;
+    for (let portAttempt = 0; portAttempt < maxPortAttempts; portAttempt += 1) {
+      let port;
+      try {
+        port = await findAvailablePort();
+      } catch (error) {
+        result = { ok: false, error: `Could not reserve an RPC port: ${error.message}` };
+        break;
       }
 
-      tryFetch();
-    });
+      const proc = spawn(p, [
+        '--enable-rpc',
+        `--rpc-listen-port=${port}`,
+        '--rpc-max-request-size=1K',
+        '--quiet',
+        '--console-log-level=error',
+        '--rpc-listen-all=false',
+      ], {
+        env: engineEnv('aria2c'),
+        stdio: ['ignore', 'ignore', 'pipe'],
+        timeout: 15000,
+      });
 
-    // Clean up and wait before the verifier exits so a stuck daemon cannot be
-    // left behind on a runner and contaminate later package or smoke checks.
-    await terminateProcess(proc, 'aria2 RPC verifier process');
+      let spawnError = null;
+      let childExit = null;
+      let attemptStderr = '';
+      proc.once('error', error => {
+        spawnError = error;
+      });
+      proc.once('exit', (code, signal) => {
+        childExit = { code, signal };
+      });
+      proc.stderr.on('data', data => {
+        attemptStderr += data.toString();
+      });
+
+      const attemptResult = await new Promise(resolve => {
+        const maxAttempts = 20;
+        let attempts = 0;
+
+        function resolveProcessFailure() {
+          if (spawnError) {
+            resolve({ ok: false, error: `aria2c failed to spawn: ${spawnError.message}` });
+          } else if (childExit) {
+            resolve({
+              ok: false,
+              error: `aria2c exited before RPC became ready with code ${childExit.code} signal ${childExit.signal}.`,
+            });
+          }
+        }
+
+        function tryFetch() {
+          if (spawnError || childExit) {
+            resolveProcessFailure();
+            return;
+          }
+
+          attempts += 1;
+          fetch(`http://127.0.0.1:${port}/jsonrpc`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          })
+            .then(async response => {
+              resolve({ ok: true, data: await response.text() });
+            })
+            .catch(() => {
+              if (spawnError || childExit) {
+                resolveProcessFailure();
+              } else if (attempts >= maxAttempts) {
+                resolve({ ok: false, error: `RPC not ready after ${maxAttempts} attempts` });
+              } else {
+                setTimeout(tryFetch, 300);
+              }
+            });
+        }
+
+        tryFetch();
+      });
+
+      const exitedBeforeCleanup = childExit;
+      const terminated = proc.pid
+        ? await terminateProcess(proc, 'aria2 RPC verifier process')
+        : true;
+      rpcStderr = attemptStderr;
+      result = attemptResult;
+
+      if (
+        result.ok
+        && exitedBeforeCleanup
+        && (exitedBeforeCleanup.code !== 0 || exitedBeforeCleanup.signal !== null)
+      ) {
+        result = {
+          ok: false,
+          error: `aria2c exited after responding with code ${exitedBeforeCleanup.code} signal ${exitedBeforeCleanup.signal}.`,
+        };
+      }
+
+      if (!terminated || result.ok || !isPortBindingFailure(`${result.error || ''}\n${rpcStderr}`)) {
+        break;
+      }
+
+      if (portAttempt + 1 < maxPortAttempts) {
+        console.log(`[INFO] RPC port ${port} became unavailable; retrying with a new port.`);
+      }
+    }
 
     if (result.ok) {
       try {

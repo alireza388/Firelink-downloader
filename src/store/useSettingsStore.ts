@@ -135,6 +135,7 @@ export interface SettingsState {
   schedulerLastStartKey: string;
   schedulerLastStopKey: string;
   lastCustomSpeedLimitKiB: number;
+  lastCustomSpeedLimitUnit: string;
 
   // Replicated SwiftUI App Settings
   perServerConnections: number;
@@ -175,6 +176,7 @@ export interface SettingsState {
   setSchedulerLastStartKey: (key: string) => void;
   setSchedulerLastStopKey: (key: string) => void;
   setLastCustomSpeedLimitKiB: (limit: number) => void;
+  setLastCustomSpeedLimitUnit: (unit: string) => void;
   toggleSidebar: () => void;
 
   setPerServerConnections: (count: number) => void;
@@ -236,6 +238,7 @@ export const useSettingsStore = create<SettingsState>()(
       schedulerLastStartKey: '',
       schedulerLastStopKey: '',
       lastCustomSpeedLimitKiB: 1024,
+      lastCustomSpeedLimitUnit: 'MB/s',
 
       // Replicated SwiftUI defaults
       perServerConnections: 16,
@@ -298,6 +301,7 @@ export const useSettingsStore = create<SettingsState>()(
       setSchedulerLastStartKey: (schedulerLastStartKey) => set({ schedulerLastStartKey }),
       setSchedulerLastStopKey: (schedulerLastStopKey) => set({ schedulerLastStopKey }),
       setLastCustomSpeedLimitKiB: (lastCustomSpeedLimitKiB) => set({ lastCustomSpeedLimitKiB }),
+      setLastCustomSpeedLimitUnit: (lastCustomSpeedLimitUnit) => set({ lastCustomSpeedLimitUnit }),
       toggleSidebar: () => set((state) => ({ isSidebarVisible: !state.isSidebarVisible })),
 
       setPerServerConnections: (perServerConnections) => set({
@@ -447,6 +451,7 @@ export const useSettingsStore = create<SettingsState>()(
         schedulerLastStartKey: state.schedulerLastStartKey,
         schedulerLastStopKey: state.schedulerLastStopKey,
         lastCustomSpeedLimitKiB: state.lastCustomSpeedLimitKiB,
+        lastCustomSpeedLimitUnit: state.lastCustomSpeedLimitUnit,
         
         perServerConnections: state.perServerConnections,
         maxAutomaticRetries: state.maxAutomaticRetries,
@@ -538,6 +543,10 @@ export const useSettingsStore = create<SettingsState>()(
           speedLimitPresetValues: Array.isArray(persisted.speedLimitPresetValues)
             ? persisted.speedLimitPresetValues
             : currentState.speedLimitPresetValues,
+          lastCustomSpeedLimitUnit: persisted.lastCustomSpeedLimitUnit === 'KB/s'
+            || persisted.lastCustomSpeedLimitUnit === 'MB/s'
+            ? persisted.lastCustomSpeedLimitUnit
+            : currentState.lastCustomSpeedLimitUnit,
           logsEnabled: persisted.logsEnabled === true,
           approvedDownloadRoots: Array.isArray(persisted.approvedDownloadRoots)
             ? persisted.approvedDownloadRoots

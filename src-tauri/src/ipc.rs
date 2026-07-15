@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use ts_rs::TS;
 
+fn default_speed_limit_unit() -> String {
+    "MB/s".to_string()
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export, export_to = "../../src/bindings/")]
@@ -264,6 +268,8 @@ pub struct PersistedSettings {
     pub scheduler_last_start_key: String,
     pub scheduler_last_stop_key: String,
     pub last_custom_speed_limit_ki_b: u32,
+    #[serde(default = "default_speed_limit_unit")]
+    pub last_custom_speed_limit_unit: String,
     pub per_server_connections: i32,
     pub max_automatic_retries: i32,
     pub show_notifications: bool,

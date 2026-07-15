@@ -266,6 +266,12 @@ fn validate_settings(settings: &mut PersistedSettings) {
     settings.max_concurrent_downloads = settings.max_concurrent_downloads.min(12);
     settings.per_server_connections = settings.per_server_connections.clamp(1, 16);
     settings.max_automatic_retries = settings.max_automatic_retries.clamp(0, 10);
+    if !matches!(
+        settings.last_custom_speed_limit_unit.as_str(),
+        "KB/s" | "MB/s"
+    ) {
+        settings.last_custom_speed_limit_unit = default_settings().last_custom_speed_limit_unit;
+    }
 }
 
 fn default_category_subfolders() -> HashMap<String, String> {
@@ -430,6 +436,7 @@ fn default_settings() -> PersistedSettings {
         scheduler_last_start_key: String::new(),
         scheduler_last_stop_key: String::new(),
         last_custom_speed_limit_ki_b: 1024,
+        last_custom_speed_limit_unit: "MB/s".to_string(),
         per_server_connections: 16,
         max_automatic_retries: 3,
         show_notifications: true,
@@ -532,6 +539,7 @@ mod tests {
 
         assert_eq!(settings.max_concurrent_downloads, 5);
         assert_eq!(settings.global_speed_limit, "512K");
+        assert_eq!(settings.last_custom_speed_limit_unit, "MB/s");
         assert_eq!(settings.speed_limit_preset_values, vec![1.0, 5.0, 10.0]);
         assert!(!settings.logs_enabled);
         assert!(!settings.scheduler.enabled);

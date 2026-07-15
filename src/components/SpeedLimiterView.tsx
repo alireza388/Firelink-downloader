@@ -25,15 +25,46 @@ export function convertSpeedValue(value: number, fromUnit: SpeedUnit, toUnit: Sp
   return speedValueFromKiB(speedValueToKiB(value, fromUnit), toUnit);
 }
 
-export function parseLimit(limit: string, fallback: number): { value: number; unit: SpeedUnit } {
+export function parseLimit(
+  limit: string,
+  fallback: number,
+  fallbackUnit: SpeedUnit = 'MB/s'
+): { value: number; unit: SpeedUnit } {
   const match = limit.trim().match(/^(\d+(?:\.\d+)?)\s*([km]?)b?(?:\/s)?$/i);
+  const suffix = match?.[2].toLowerCase();
   const valueKiB = match
-    ? speedValueToKiB(Number(match[1]) * (match[2].toLowerCase() === 'm' ? KIB_PER_MIB : 1), 'KB/s')
+    ? speedValueToKiB(Number(match[1]) * (suffix === 'm' ? KIB_PER_MIB : 1), 'KB/s')
     : speedValueToKiB(fallback, 'KB/s');
+
+  if (!match) {
+    return { value: speedValueFromKiB(valueKiB, fallbackUnit), unit: fallbackUnit };
+  }
+
+  if (suffix === 'm') {
+    return { value: speedValueFromKiB(valueKiB, 'MB/s'), unit: 'MB/s' };
+  }
+
+  if (suffix === 'k') {
+    return { value: valueKiB, unit: 'KB/s' };
+  }
 
   return valueKiB >= 1024 && valueKiB % 1024 === 0
     ? { value: valueKiB / 1024, unit: 'MB/s' }
     : { value: valueKiB, unit: 'KB/s' };
+}
+
+export function formatSpeedLimitForStorage(value: number, unit: SpeedUnit): string {
+  const valueKiB = speedValueToKiB(value, unit);
+  return unit === 'MB/s'
+    ? `${speedValueFromKiB(valueKiB, 'MB/s')}M`
+    : `${valueKiB}K`;
+}
+
+export function clampSpeedDisplayValue(value: number, unit: SpeedUnit): number {
+  const numericValue = Number.isFinite(value) ? value : speedValueFromKiB(1, unit);
+  const minimum = speedValueFromKiB(1, unit);
+  const maximum = speedValueFromKiB(MAX_LIMIT_KIB, unit);
+  return Math.max(minimum, Math.min(maximum, numericValue));
 }
 
 function sanitizePresetValues(values: number[]): number[] {
@@ -53,22 +84,25 @@ export function displayValueFromPresetBase(value: number, unit: SpeedUnit): numb
   return speedValueFromKiB(speedValueToKiB(value, 'MB/s'), unit);
 }
 
-function formatPresetValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '');
+export function formatPresetValue(value: number): string {
+  return String(value);
 }
 
 export default function SpeedLimiterView() {
   const globalSpeedLimit = useSettingsStore(state => state.globalSpeedLimit);
   const lastCustomSpeedLimitKiB = useSettingsStore(state => state.lastCustomSpeedLimitKiB);
+  const lastCustomSpeedLimitUnit = useSettingsStore(state => state.lastCustomSpeedLimitUnit);
   const speedLimitPresetValues = useSettingsStore(state => state.speedLimitPresetValues);
   const setGlobalSpeedLimit = useSettingsStore(state => state.setGlobalSpeedLimit);
   const setLastCustomSpeedLimitKiB = useSettingsStore(state => state.setLastCustomSpeedLimitKiB);
+  const setLastCustomSpeedLimitUnit = useSettingsStore(state => state.setLastCustomSpeedLimitUnit);
   const setSpeedLimitPresetValues = useSettingsStore(state => state.setSpeedLimitPresetValues);
-  const initial = parseLimit(globalSpeedLimit, lastCustomSpeedLimitKiB);
+  const fallbackUnit: SpeedUnit = lastCustomSpeedLimitUnit === 'KB/s' ? 'KB/s' : 'MB/s';
+  const initial = parseLimit(globalSpeedLimit, lastCustomSpeedLimitKiB, fallbackUnit);
   const [enabled, setEnabled] = useState(Boolean(globalSpeedLimit));
-  const [value, setValue] = useState(initial.value);
+  const [value, setValue] = useState(String(initial.value));
   const [unit, setUnit] = useState<SpeedUnit>(initial.unit);
-  const [customPresetValue, setCustomPresetValue] = useState(initial.value);
+  const [customPresetValue, setCustomPresetValue] = useState(String(initial.value));
   const { addToast } = useToast();
   const savingRef = useRef(false);
   const presetValues = useMemo(
@@ -77,12 +111,12 @@ export default function SpeedLimiterView() {
   );
 
   useEffect(() => {
-    const parsed = parseLimit(globalSpeedLimit, lastCustomSpeedLimitKiB);
+    const parsed = parseLimit(globalSpeedLimit, lastCustomSpeedLimitKiB, fallbackUnit);
     setEnabled(Boolean(globalSpeedLimit));
-    setValue(parsed.value);
+    setValue(String(parsed.value));
     setUnit(parsed.unit);
-    setCustomPresetValue(parsed.value);
-  }, [globalSpeedLimit, lastCustomSpeedLimitKiB]);
+    setCustomPresetValue(String(parsed.value));
+  }, [globalSpeedLimit, lastCustomSpeedLimitKiB, fallbackUnit]);
 
 
   const [isSaving, setIsSaving] = useState(false);
@@ -90,12 +124,13 @@ export default function SpeedLimiterView() {
   const save = async () => {
     if (savingRef.current) return;
     savingRef.current = true;
-    const numericValue = Math.max(1, Math.min(Number(value) || 1, unit === 'MB/s' ? 10240 : MAX_LIMIT_KIB));
+    const numericValue = clampSpeedDisplayValue(Number(value), unit);
     const valueKiB = speedValueToKiB(numericValue, unit);
     setIsSaving(true);
     try {
-      await setGlobalSpeedLimit(enabled ? `${valueKiB}K` : '');
+      await setGlobalSpeedLimit(enabled ? formatSpeedLimitForStorage(numericValue, unit) : '');
       setLastCustomSpeedLimitKiB(valueKiB);
+      setLastCustomSpeedLimitUnit(unit);
       addToast({
         message: enabled ? `Global limit saved at ${numericValue} ${unit}` : 'Global speed limit disabled',
         variant: 'success'
@@ -114,21 +149,22 @@ export default function SpeedLimiterView() {
 
   const preset = (presetValue: number) => {
     setEnabled(true);
-    setValue(displayValueFromPresetBase(presetValue, unit));
+    setValue(String(displayValueFromPresetBase(presetValue, unit)));
   };
 
   const applyCustomPreset = () => {
-    const numericValue = Math.max(1, Math.min(Number(customPresetValue) || 1, unit === 'MB/s' ? MAX_LIMIT_MB : MAX_LIMIT_KIB));
+    const numericValue = clampSpeedDisplayValue(Number(customPresetValue), unit);
     const presetBaseValue = Math.min(MAX_LIMIT_MB, presetBaseFromDisplayValue(numericValue, unit));
     const nextPresets = sanitizePresetValues([...presetValues, presetBaseValue]);
     const alreadyExists = nextPresets.length === presetValues.length;
+    const storedPresetDisplayValue = displayValueFromPresetBase(presetBaseValue, unit);
     setSpeedLimitPresetValues(nextPresets);
     setEnabled(true);
-    setValue(numericValue);
+    setValue(String(storedPresetDisplayValue));
     addToast({
       message: alreadyExists
-        ? `${formatPresetValue(numericValue)} ${unit} is already in quick presets`
-        : `Added ${formatPresetValue(numericValue)} ${unit} quick preset`,
+        ? `${formatPresetValue(storedPresetDisplayValue)} ${unit} is already in quick presets`
+        : `Added ${formatPresetValue(storedPresetDisplayValue)} ${unit} quick preset`,
       variant: alreadyExists ? 'info' : 'success'
     });
   };
@@ -145,10 +181,14 @@ export default function SpeedLimiterView() {
 
   const changeUnit = (nextUnit: SpeedUnit) => {
     if (nextUnit === unit) return;
-    setValue(convertSpeedValue(value, unit, nextUnit));
-    setCustomPresetValue(convertSpeedValue(customPresetValue, unit, nextUnit));
+    setValue(String(convertSpeedValue(Number(value), unit, nextUnit)));
+    setCustomPresetValue(String(convertSpeedValue(Number(customPresetValue), unit, nextUnit)));
     setUnit(nextUnit);
   };
+
+  const currentDisplayValue = Number.isFinite(Number(value)) && Number(value) > 0
+    ? value
+    : String(speedValueFromKiB(1, unit));
 
   return (
     <div className="flex-1 flex h-full flex-col overflow-hidden bg-main-bg">
@@ -172,7 +212,7 @@ export default function SpeedLimiterView() {
         <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
           enabled ? 'bg-accent/15 text-accent' : 'bg-item-hover text-text-muted'
         }`}>
-          {enabled ? `${value} ${unit}` : 'Unlimited'}
+          {enabled ? `${currentDisplayValue} ${unit}` : 'Unlimited'}
         </span>
         <button onClick={() => void save()} disabled={isSaving} className="app-button app-button-primary ml-auto px-3 text-[11px] disabled:opacity-50">
           <Save size={14} /> Save Limit
@@ -191,11 +231,11 @@ export default function SpeedLimiterView() {
           <div className="mt-6 flex items-center gap-3">
             <input
               type="number"
-              min="1"
+              min={speedValueFromKiB(1, unit)}
               step="any"
               value={value}
               disabled={!enabled || isSaving}
-              onChange={event => setValue(Math.max(1, Number(event.target.value) || 1))}
+              onChange={event => setValue(event.target.value)}
               className="app-control w-28 px-3 py-2 text-right font-mono"
             />
             <div className="flex rounded-md border border-border-modal bg-bg-input p-1">
@@ -251,11 +291,11 @@ export default function SpeedLimiterView() {
             <div className="ml-1 flex h-8 items-center gap-1.5 rounded-md border border-border-modal bg-bg-input px-2">
               <input
                 type="number"
-                min="1"
+                min={speedValueFromKiB(1, unit)}
                 step="any"
                 value={customPresetValue}
                 disabled={!enabled || isSaving}
-                onChange={event => setCustomPresetValue(Math.max(1, Number(event.target.value) || 1))}
+                onChange={event => setCustomPresetValue(event.target.value)}
                 className="w-12 bg-transparent text-right font-mono text-[12px] text-text-primary outline-none disabled:opacity-50"
                 aria-label={`Custom preset in ${unit}`}
               />

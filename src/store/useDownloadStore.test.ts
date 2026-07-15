@@ -571,6 +571,38 @@ describe('useDownloadStore', () => {
     );
   });
 
+  it('treats the legacy media zero sentinel as inheriting the global limit', async () => {
+    const defaultSettings = useSettingsStore.getState();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...defaultSettings,
+      globalSpeedLimit: '2M'
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['legacy-media-limit'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().addDownload({
+      id: 'legacy-media-limit',
+      url: 'https://www.youtube.com/watch?v=legacy',
+      fileName: 'media.mp4',
+      category: 'Movies',
+      dateAdded: '',
+      isMedia: true,
+      speedLimit: '0'
+    }, { type: 'start-now' });
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({
+          id: 'legacy-media-limit',
+          speed_limit: '2M'
+        })
+      })
+    );
+  });
+
   it('reports a rejected immediate start instead of claiming success', async () => {
     vi.mocked(ipc.invokeCommand).mockImplementation(async (command: string) => {
       if (command === 'enqueue_download') {

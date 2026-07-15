@@ -801,7 +801,7 @@ export const AddDownloadsModal = () => {
           category,
           dateAdded: new Date().toISOString(),
           connections: Number(connections),
-          speedLimit: speedLimitEnabled ? `${speedLimit}K` : '0',
+          speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
           username: useAuth ? username.trim() : undefined,
           password: useAuth ? password.trim() : undefined,
           headers: headersForRow(item.sourceUrl) || undefined,

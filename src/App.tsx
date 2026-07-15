@@ -762,12 +762,14 @@ function App() {
     };
 
     window.addEventListener('focus', handleForegroundChange);
+    window.addEventListener('blur', handleForegroundChange);
     document.addEventListener('visibilitychange', handleForegroundChange);
     handleForegroundChange();
 
     return () => {
       active = false;
       window.removeEventListener('focus', handleForegroundChange);
+      window.removeEventListener('blur', handleForegroundChange);
       document.removeEventListener('visibilitychange', handleForegroundChange);
     };
   }, [autoAddClipboardLinks, coreReady]);

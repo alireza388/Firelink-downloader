@@ -147,6 +147,12 @@ const speedLimitForDispatch = (
   globalSpeedLimit: string,
   isMedia: boolean | undefined
 ): string | null => {
+  // Older Add-window rows used "0" as the no-override sentinel. Media
+  // downloads do not have aria2's daemon-wide cap, so preserve the intended
+  // inherit-global behavior when dispatching those persisted rows.
+  if (isMedia && itemSpeedLimit?.trim() === '0') {
+    return normalizeSpeedLimitForBackend(globalSpeedLimit);
+  }
   const explicitLimit = explicitSpeedLimitForDispatch(itemSpeedLimit);
   if (explicitLimit !== null || !isMedia) return explicitLimit;
   return normalizeSpeedLimitForBackend(globalSpeedLimit);

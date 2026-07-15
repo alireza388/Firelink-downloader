@@ -30,4 +30,15 @@ describe('download persistence progress snapshots', () => {
     expect(persisted.totalBytes).toBe(4096);
     expect(persisted.totalIsEstimate).toBe(false);
   });
+
+  it.each(['queued', 'staged', 'retrying', 'processing'] as const)(
+    'keeps byte counters for %s snapshots',
+    (status) => {
+      const persisted = redactDownloadForPersistence(item(status));
+
+      expect(persisted.downloadedBytes).toBe(1024);
+      expect(persisted.totalBytes).toBe(4096);
+      expect(persisted.totalIsEstimate).toBe(false);
+    }
+  );
 });

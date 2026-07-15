@@ -61,7 +61,7 @@ const startDownloadListeners = async () => {
       if (payload.total_bytes !== null && payload.total_bytes !== undefined) {
         updates.totalBytes = payload.total_bytes;
       }
-      if (payload.downloaded_bytes !== null && payload.downloaded_bytes !== undefined) {
+      if (payload.total_is_estimate !== null && payload.total_is_estimate !== undefined) {
         updates.totalIsEstimate = payload.total_is_estimate;
       }
       if (Object.keys(updates).length > 0) {
@@ -84,13 +84,24 @@ const startDownloadListeners = async () => {
         return;
       }
 
+      const progress = useDownloadProgressStore.getState().progressMap[payload.id];
       if (['queued', 'retrying', 'completed', 'failed', 'paused'].includes(status)) {
         useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
       }
-      const progress = useDownloadProgressStore.getState().progressMap[payload.id];
       const updates: Partial<DownloadItem> = {
         status,
-        ...(progress ? { fraction: progress.fraction } : {}),
+        ...(progress ? {
+          fraction: progress.fraction,
+          ...(progress.downloaded_bytes != null
+            ? { downloadedBytes: progress.downloaded_bytes }
+            : {}),
+          ...(progress.total_bytes != null
+            ? { totalBytes: progress.total_bytes }
+            : {}),
+          ...(progress.total_is_estimate != null
+            ? { totalIsEstimate: progress.total_is_estimate }
+            : {})
+        } : {}),
         ...(payload.error ? { lastError: payload.error } : {}),
         ...((status === 'downloading' || status === 'retrying')
           ? { lastTry: new Date().toISOString() }
@@ -121,9 +132,6 @@ const startDownloadListeners = async () => {
         mainStore.registerBackendIds([payload.id]);
       } else if (status === 'completed' || status === 'failed') {
         mainStore.unregisterBackendIds([payload.id]);
-      }
-      if (['queued', 'retrying', 'completed', 'failed', 'paused'].includes(status)) {
-        useDownloadProgressStore.getState().clearDownloadProgress(payload.id);
       }
     }),
     listen('tray-action', (event) => {

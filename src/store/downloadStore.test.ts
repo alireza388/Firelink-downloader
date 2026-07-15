@@ -11,6 +11,7 @@ vi.mock('../ipc', () => ({
 describe('useDownloadProgressStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(ipc.invokeCommand).mockResolvedValue(undefined);
     useDownloadProgressStore.setState({ progressMap: {} });
   });
 
@@ -153,6 +154,50 @@ describe('useDownloadProgressStore', () => {
       size_is_final: false
     } });
 
+    expect(useDownloadProgressStore.getState().progressMap).toEqual({});
+    release();
+  });
+
+  it('snapshots live progress before clearing it on a terminal transition', async () => {
+    const handlers: Record<string, (event: any) => void> = {};
+    vi.mocked(ipc.listenEvent).mockImplementation((event, handler) => {
+      handlers[event] = handler as (event: any) => void;
+      return Promise.resolve(vi.fn());
+    });
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'snapshot',
+        url: 'https://example.com/file',
+        fileName: 'file.bin',
+        status: 'downloading',
+        category: 'Other',
+        dateAdded: ''
+      }]
+    });
+
+    const release = await initDownloadListener();
+    handlers['download-progress']({ payload: {
+      id: 'snapshot',
+      fraction: 0.8,
+      speed: '1 MB/s',
+      eta: '2s',
+      size: '8 MB',
+      size_is_final: false,
+      downloaded_bytes: 8192,
+      total_bytes: 10240,
+      total_is_estimate: true
+    } });
+    handlers['download-state']({ payload: {
+      id: 'snapshot',
+      status: 'paused'
+    } });
+
+    const row = useDownloadStore.getState().downloads[0];
+    expect(row.status).toBe('paused');
+    expect(row.fraction).toBe(0.8);
+    expect(row.downloadedBytes).toBe(8192);
+    expect(row.totalBytes).toBe(10240);
+    expect(row.totalIsEstimate).toBe(true);
     expect(useDownloadProgressStore.getState().progressMap).toEqual({});
     release();
   });

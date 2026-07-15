@@ -120,12 +120,7 @@ export const isMediaUrl = (rawUrl: string): boolean => {
  */
 const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
 const VOLATILE_PROGRESS_STATUSES = new Set([
-  'ready',
-  'staged',
-  'queued',
-  'downloading',
-  'processing',
-  'retrying'
+  'downloading'
 ]);
 
 /**
@@ -133,8 +128,10 @@ const VOLATILE_PROGRESS_STATUSES = new Set([
  * progress fields (`fraction`, `speed`, `eta`) are also dropped as in the
  * existing persistence path. Numeric byte totals remain for paused, failed,
  * and completed rows so those snapshots keep their accurate Size-column
- * display after restart; active-transfer counters stay in memory to avoid a
- * database write for every progress tick.
+ * display after restart; counters for the actively ticking `downloading`
+ * state stay in memory to avoid a database write for every progress tick.
+ * Non-ticking states retain counters so paused, queued, staged, retrying, and
+ * processing snapshots remain useful across restart and reconfiguration.
  *
  * Note: standard persistence intentionally retains `url` because it is the
  * download source. The backend applies a stricter portable-mode policy: URL

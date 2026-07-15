@@ -887,9 +887,9 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         let progress: serde_json::Value =
             serde_json::from_str(line[prefix_index + MEDIA_PROGRESS_PREFIX.len()..].trim()).ok()?;
         let downloaded = progress_json_number(&progress, "downloaded_bytes").unwrap_or(0.0);
-        let total = progress_json_number(&progress, "total_bytes")
-            .or_else(|| progress_json_number(&progress, "total_bytes_estimate"))
-            .unwrap_or(0.0);
+        let exact_total = progress_json_number(&progress, "total_bytes");
+        let estimated_total = progress_json_number(&progress, "total_bytes_estimate");
+        let total = exact_total.or(estimated_total).unwrap_or(0.0);
         let fragment_index = progress_json_number(&progress, "fragment_index");
         let fragment_count = progress_json_number(&progress, "fragment_count");
         let fraction = if let (Some(fragment_index), Some(fragment_count)) =
@@ -930,8 +930,7 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         let size = progress_json_string(&progress, "_total_bytes_str")
             .or_else(|| progress_json_string(&progress, "_total_bytes_estimate_str"))
             .or_else(|| (total > 0.0).then(|| crate::download::format_size(total)));
-        let total_is_estimate = progress.get("total_bytes").is_none()
-            && progress.get("total_bytes_estimate").is_some();
+        let total_is_estimate = exact_total.is_none() && estimated_total.is_some();
 
         return Some(MediaProgress {
             fraction: fraction.clamp(0.0, 1.0),
@@ -1168,12 +1167,16 @@ fn aggregate_media_byte_progress(
 ) -> Option<(u64, u64, bool)> {
     if track_changed {
         if let Some(total_bytes) = state.current_track_total_bytes {
+            let completed_downloaded = state
+                .current_track_downloaded_bytes
+                .unwrap_or(total_bytes)
+                .clamp(0.0, total_bytes.max(0.0));
             *state
                 .completed_tracks_total_bytes
                 .get_or_insert(0.0) += total_bytes;
             *state
                 .completed_tracks_downloaded_bytes
-                .get_or_insert(0.0) += total_bytes;
+                .get_or_insert(0.0) += completed_downloaded;
             state.completed_tracks_total_is_estimate |= state.current_track_total_is_estimate;
         } else {
             state.completed_tracks_total_bytes = None;
@@ -1186,7 +1189,10 @@ fn aggregate_media_byte_progress(
     state.current_track_total_bytes = progress.total_bytes;
     state.current_track_downloaded_bytes = progress
         .downloaded_bytes
-        .or_else(|| progress.total_bytes.map(|total| total * progress.fraction));
+        .or_else(|| progress.total_bytes.map(|total| total * progress.fraction))
+        .zip(progress.total_bytes)
+        .map(|(downloaded, total)| downloaded.clamp(0.0, total.max(0.0)))
+        .or(progress.downloaded_bytes);
     state.current_track_total_is_estimate = progress.total_is_estimate;
 
     match (
@@ -6423,6 +6429,26 @@ mod tests {
     }
 
     #[test]
+    fn marks_structured_estimated_total_when_exact_total_is_null() {
+        let line = format!(
+            "{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":5242880,\"total_bytes\":null,\"total_bytes_estimate\":10485760,\"_total_bytes_estimate_str\":\"~10.00MiB\"}}"
+        );
+
+        assert_eq!(
+            parse_media_progress_line(&line),
+            Some(MediaProgress {
+                fraction: 0.5,
+                speed: "-".to_string(),
+                eta: "-".to_string(),
+                size: Some("~10.00MiB".to_string()),
+                downloaded_bytes: Some(5242880.0),
+                total_bytes: Some(10485760.0),
+                total_is_estimate: true,
+            })
+        );
+    }
+
+    #[test]
     fn parses_chunked_structured_ytdlp_progress() {
         let mut buffer = String::new();
         let first = format!("{MEDIA_PROGRESS_PREFIX}{{\"downloaded_bytes\":5242880,");
@@ -6544,7 +6570,7 @@ mod tests {
         );
         assert_eq!(
             aggregate_media_byte_progress(&second, true, &mut state),
-            Some((102, 300, true))
+            Some((101, 300, true))
         );
     }
 

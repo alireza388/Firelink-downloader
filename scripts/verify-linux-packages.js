@@ -96,6 +96,15 @@ export function parseDebianPackagePath(line) {
   return match[1].replace(/^\.\//, '');
 }
 
+export function isSafePackagePath(packagePath) {
+  if (packagePath === '') {
+    return true;
+  }
+
+  const parts = packagePath.split('/');
+  return !parts.includes('..') && (parts[0] === 'usr' || packagePath === 'usr');
+}
+
 function assertSafePackageListing(listing, packageType) {
   const lines = listing.split('\n').filter(Boolean);
   const paths = packageType === 'deb'
@@ -109,8 +118,7 @@ function assertSafePackageListing(listing, packageType) {
     : lines.map(line => line.replace(/^\/+/, ''));
 
   for (const packagePath of paths) {
-    const parts = packagePath.split('/');
-    if (parts.includes('..') || (parts[0] !== 'usr' && packagePath !== 'usr')) {
+    if (!isSafePackagePath(packagePath)) {
       fail(`${packageType} package contains an unsafe path: ${packagePath}`);
     }
   }

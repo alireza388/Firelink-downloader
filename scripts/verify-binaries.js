@@ -317,6 +317,54 @@ function runEngine(label, engine, args, timeout = 30000) {
   }
 }
 
+function waitForProcessExit(proc, timeoutMs) {
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise(resolve => {
+    let settled = false;
+    let timer;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      proc.removeListener('exit', onExit);
+      resolve(value);
+    };
+    const onExit = () => finish(true);
+
+    timer = setTimeout(() => finish(false), timeoutMs);
+    proc.once('exit', onExit);
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      finish(true);
+    }
+  });
+}
+
+async function terminateProcess(proc, label) {
+  if (proc.exitCode === null && proc.signalCode === null) {
+    try {
+      proc.kill('SIGTERM');
+    } catch {}
+    if (await waitForProcessExit(proc, 2000)) {
+      return true;
+    }
+
+    try {
+      proc.kill('SIGKILL');
+    } catch {}
+    if (await waitForProcessExit(proc, 2000)) {
+      return true;
+    }
+
+    fail(`${label} did not terminate after SIGTERM and SIGKILL.`);
+    return false;
+  }
+
+  return true;
+}
+
 const coldStartTimeout = isMacOS ? 120000 : 30000;
 if (canExecuteTarget) {
   runEngine('yt-dlp cold start', 'yt-dlp', ['--version'], coldStartTimeout);
@@ -397,13 +445,9 @@ if (canExecuteTarget) {
       tryFetch();
     });
 
-    // Clean up
-    proc.kill('SIGTERM');
-    setTimeout(() => {
-      try {
-        proc.kill('SIGKILL');
-      } catch {}
-    }, 2000);
+    // Clean up and wait before the verifier exits so a stuck daemon cannot be
+    // left behind on a runner and contaminate later package or smoke checks.
+    await terminateProcess(proc, 'aria2 RPC verifier process');
 
     if (result.ok) {
       try {

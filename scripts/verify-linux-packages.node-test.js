@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseDebianPackagePath } from './verify-linux-packages.js';
+import { isSafePackagePath, parseDebianPackagePath } from './verify-linux-packages.js';
 
 test('parses current dpkg-deb listings without a ./ prefix', () => {
   assert.equal(
@@ -15,6 +15,19 @@ test('parses legacy dpkg-deb listings with a ./ prefix', () => {
     parseDebianPackagePath('-rwxr-xr-x root/root     123 2026-07-12 07:24 ./usr/bin/firelink'),
     'usr/bin/firelink'
   );
+});
+
+test('accepts the package root in legacy dpkg-deb listings', () => {
+  assert.equal(
+    parseDebianPackagePath('drwxr-xr-x root/root       0 2026-07-12 07:24 ./'),
+    ''
+  );
+  assert.equal(isSafePackagePath(''), true);
+});
+
+test('rejects paths outside the package usr tree', () => {
+  assert.equal(isSafePackagePath('../tmp/firelink'), false);
+  assert.equal(isSafePackagePath('etc/firelink'), false);
 });
 
 test('rejects malformed dpkg-deb listing lines', () => {

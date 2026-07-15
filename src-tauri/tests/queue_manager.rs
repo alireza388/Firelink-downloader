@@ -228,6 +228,24 @@ async fn ensure_aria2_permit_does_not_double_acquire() {
 }
 
 #[tokio::test]
+async fn stale_aria2_permit_candidate_cannot_replace_current_permit() {
+    let (mgr, _spawner) = make_manager(2);
+    let existing = mgr.acquire_permit().await.unwrap();
+    assert!(mgr
+        .park_aria2_permit_if_missing("a", existing)
+        .await);
+
+    let candidate = mgr.acquire_aria2_permit_candidate().await.unwrap();
+    assert!(!mgr
+        .park_aria2_permit_if_missing("a", candidate)
+        .await);
+    assert_eq!(mgr.available_permits(), 1);
+
+    mgr.release_permit("a").await;
+    assert_eq!(mgr.available_permits(), 2);
+}
+
+#[tokio::test]
 async fn aria2_control_epoch_invalidates_stale_resume_workers() {
     let (mgr, _spawner) = make_manager(1);
     let first_resume = mgr.next_aria2_control_epoch("a").await;

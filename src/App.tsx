@@ -243,12 +243,79 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    let cleanupListeners: (() => void) | null = null;
     const initialize = async () => {
+      let unlistenDownload: (() => void) | null = null;
+      let unlistenTerminalState: (() => void) | null = null;
+      let unlistenExtension: (() => void) | null = null;
+      let unlistenDeepLink: (() => void) | null = null;
+      const disposeListeners = () => {
+        invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
+        unlistenTerminalState?.();
+        unlistenTerminalState = null;
+        unlistenExtension?.();
+        unlistenExtension = null;
+        unlistenDeepLink?.();
+        unlistenDeepLink = null;
+        unlistenDownload?.();
+        unlistenDownload = null;
+      };
+
       try {
+        unlistenDownload = await initDownloadListener();
+        unlistenTerminalState = await listen('download-state', (event) => {
+          if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
+          const settings = useSettingsStore.getState();
+          if (event.payload.status === 'completed' && settings.playCompletionSound) {
+            playCompletionChime().catch(error => {
+              console.error('Completion sound failed:', error);
+            });
+          }
+          if (!settings.showNotifications) return;
+
+          const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload.id);
+          const fileName = item?.fileName || 'A file';
+          if (event.payload.status === 'completed') {
+            try {
+              sendNotification({
+                title: 'Download Complete',
+                body: `${fileName} has finished downloading.`
+              });
+            } catch (error) {
+              console.error('Completion notification failed:', error);
+            }
+          } else {
+            try {
+              sendNotification({
+                title: 'Download Failed',
+                body: `${fileName} failed to download.`,
+              });
+            } catch (error) {
+              console.error('Failure notification failed:', error);
+            }
+          }
+        });
+        unlistenExtension = await listen('extension-add-download', (event) => {
+          useDownloadStore.getState().handleExtensionDownload(event.payload).catch(error => {
+            console.error('Failed to handle browser extension download:', error);
+          });
+        });
+        unlistenDeepLink = await listen('deep-link-add-download', (event) => {
+          useDownloadStore.getState().openAddModalWithUrls(event.payload);
+        });
+
+        cleanupListeners = disposeListeners;
+        if (!active) {
+          disposeListeners();
+          cleanupListeners = null;
+          return;
+        }
+
         await initializeDownloadState();
         if (!active) return;
-        setCoreReady(true);
       } catch (error) {
+        disposeListeners();
+        cleanupListeners = null;
         if (!active) return;
         console.error('Failed to initialize Firelink state:', error);
         addToast({
@@ -315,10 +382,18 @@ function App() {
           isActionable: true
         });
       }
+
+      if (!active) return;
+      setCoreReady(true);
+      invoke('set_extension_frontend_ready', { ready: true }).catch(error => {
+        console.error('Failed to activate browser extension integration:', error);
+      });
     };
     void initialize();
     return () => {
       active = false;
+      cleanupListeners?.();
+      cleanupListeners = null;
     };
   }, [addToast]);
 
@@ -603,69 +678,6 @@ function App() {
       return () => mediaQuery.removeEventListener('change', listener);
     }
   }, [theme]);
-
-  useEffect(() => {
-    if (!coreReady) return;
-    let disposed = false;
-    const unlistenDownload = initDownloadListener();
-
-    const unlistenTerminalState = listen('download-state', (event) => {
-      if (event.payload.status !== 'completed' && event.payload.status !== 'failed') return;
-      const settings = useSettingsStore.getState();
-      if (event.payload.status === 'completed' && settings.playCompletionSound) {
-        playCompletionChime().catch(error => {
-          console.error('Completion sound failed:', error);
-        });
-      }
-      if (!settings.showNotifications) return;
-
-      const item = useDownloadStore.getState().downloads.find(d => d.id === event.payload.id);
-      const fileName = item?.fileName || 'A file';
-      if (event.payload.status === 'completed') {
-        try {
-          sendNotification({
-            title: 'Download Complete',
-            body: `${fileName} has finished downloading.`
-          });
-        } catch (error) {
-          console.error('Completion notification failed:', error);
-        }
-      } else {
-        try {
-          sendNotification({
-            title: 'Download Failed',
-            body: `${fileName} failed to download.`,
-          });
-        } catch (error) {
-          console.error('Failure notification failed:', error);
-        }
-      }
-    });
-
-    const unlistenExtension = listen('extension-add-download', (event) => {
-      useDownloadStore.getState().handleExtensionDownload(event.payload).catch(error => {
-        console.error('Failed to handle browser extension download:', error);
-      });
-    });
-    const unlistenDeepLink = listen('deep-link-add-download', (event) => {
-      useDownloadStore.getState().openAddModalWithUrls(event.payload);
-    });
-    Promise.all([unlistenExtension, unlistenDeepLink])
-      .then(() => {
-        if (disposed) return;
-        return invoke('set_extension_frontend_ready', { ready: true });
-      })
-      .catch(error => console.error('Failed to activate browser extension integration:', error));
-
-    return () => {
-      disposed = true;
-      invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
-      unlistenTerminalState.then(f => f());
-      unlistenExtension.then(f => f());
-      unlistenDeepLink.then(f => f());
-      unlistenDownload.then(f => { if (f) f(); });
-    };
-  }, [coreReady]);
 
   return (
     <div className={`app-shell flex h-screen w-screen overflow-hidden text-text-primary ${

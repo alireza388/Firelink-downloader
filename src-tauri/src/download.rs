@@ -147,40 +147,39 @@ async fn run_coordinator(
         HashMap::<(String, u64), tokio::sync::oneshot::Sender<()>>::new();
     let mut pending_captured_urls = Vec::<String>::new();
     let mut frontend_ready = false;
+    let mut command_open = true;
+    let mut media_open = true;
 
-    loop {
+    while command_open || media_open {
         tokio::select! {
-            command = command_rx.recv() => {
-                let Some(command) = command else {
-                    break;
-                };
-
+            command = command_rx.recv(), if command_open => {
                 match command {
-                    DownloadCmd::CaptureUrls(urls) => {
-                        append_unique_urls(&mut pending_captured_urls, urls);
-                        if frontend_ready && !pending_captured_urls.is_empty() {
-                            let payload = pending_captured_urls.join("\n");
-                            if events.emit_captured_urls(payload) {
-                                pending_captured_urls.clear();
+                    Some(command) => match command {
+                        DownloadCmd::CaptureUrls(urls) => {
+                            append_unique_urls(&mut pending_captured_urls, urls);
+                            if frontend_ready && !pending_captured_urls.is_empty() {
+                                let payload = pending_captured_urls.join("\n");
+                                if events.emit_captured_urls(payload) {
+                                    pending_captured_urls.clear();
+                                }
                             }
                         }
-                    }
-                    DownloadCmd::FrontendReady(ready) => {
-                        frontend_ready = ready;
-                        if ready && !pending_captured_urls.is_empty() {
-                            let payload = pending_captured_urls.join("\n");
-                            if events.emit_captured_urls(payload) {
-                                pending_captured_urls.clear();
+                        DownloadCmd::FrontendReady(ready) => {
+                            frontend_ready = ready;
+                            if ready && !pending_captured_urls.is_empty() {
+                                let payload = pending_captured_urls.join("\n");
+                                if events.emit_captured_urls(payload) {
+                                    pending_captured_urls.clear();
+                                }
                             }
                         }
-                    }
+                    },
+                    None => command_open = false,
                 }
             }
-            command = media_rx.recv() => {
-                let Some(command) = command else {
-                    continue;
-                };
+            command = media_rx.recv(), if media_open => {
                 match command {
+                    Some(command) => match command {
                     MediaCmd::Register { id, lifecycle_generation, cancel_tx } => {
                         if active_media
                             .get(&id)
@@ -248,6 +247,8 @@ async fn run_coordinator(
                             cancelled_media_generations.remove(&id);
                         }
                     }
+                    },
+                    None => media_open = false,
                 }
             }
         }
@@ -297,8 +298,29 @@ pub(crate) fn format_duration(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadCmd, DownloadCoordinator, DownloadEvent};
+    use super::{CoordinatorEventSink, DownloadCmd, DownloadCoordinator, DownloadEvent};
+    use tokio::sync::mpsc;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn coordinator_exits_when_both_command_channels_close() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::channel(1);
+        let (media_tx, media_rx) = mpsc::channel(1);
+        let coordinator = tokio::spawn(super::run_coordinator(
+            CoordinatorEventSink::Headless(event_tx),
+            command_rx,
+            media_rx,
+        ));
+
+        drop(command_tx);
+        drop(media_tx);
+
+        tokio::time::timeout(Duration::from_secs(1), coordinator)
+            .await
+            .expect("coordinator did not exit after both channels closed")
+            .expect("coordinator task panicked");
+    }
 
     #[tokio::test]
     async fn buffers_captured_urls_until_frontend_is_ready() {

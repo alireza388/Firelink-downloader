@@ -488,6 +488,13 @@ impl<R: tauri::Runtime> QueueManager<R> {
         }
     }
 
+    /// Acquire a permit without attaching it to a download yet. Resume
+    /// workers use this while they are outside the per-download control lock;
+    /// the permit is parked only after the worker revalidates its epoch.
+    pub async fn acquire_aria2_permit_candidate(&self) -> Option<OwnedSemaphorePermit> {
+        self.acquire_permit_after_retirement().await
+    }
+
     fn retire_slot_if_needed(&self) -> bool {
         let mut debt = self.slots_to_retire.load(Ordering::Relaxed);
         while debt > 0 {
@@ -510,6 +517,26 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .lock()
             .await
             .insert(id.to_string(), permit);
+    }
+
+    /// Park a candidate only when no newer lifecycle has already claimed the
+    /// download. Dropping a duplicate candidate returns its slot safely.
+    pub async fn park_aria2_permit_if_missing(
+        &self,
+        id: &str,
+        permit: OwnedSemaphorePermit,
+    ) -> bool {
+        let mut permits = self.active_permits.lock().await;
+        if permits.contains_key(id) {
+            return false;
+        }
+        permits.insert(id.to_string(), permit);
+        drop(permits);
+        self.active_kinds
+            .lock()
+            .await
+            .insert(id.to_string(), TaskKind::Aria2);
+        true
     }
 
     async fn tag_permit_generation(&self, id: &str, generation: u64) {

@@ -76,18 +76,45 @@ pub fn backoff_for(strike: usize) -> Duration {
 /// that also mentions "timeout" in a URL) still fails fast.
 pub fn is_permanent_network_error(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
-    const PERMANENT: [&str; 9] = [
-        "http 401",
-        "http 403",
-        "http 404",
-        "http 404.",
-        "http 410",
-        "http 451",
+    const PERMANENT_HTTP_STATUS: [&str; 5] = ["401", "403", "404", "410", "451"];
+    if PERMANENT_HTTP_STATUS
+        .iter()
+        .any(|status| contains_http_status(&m, status))
+    {
+        return true;
+    }
+    const PERMANENT: [&str; 3] = [
         "404 not found",
         "permission denied",
         "no space left on device",
     ];
     PERMANENT.iter().any(|p| m.contains(p))
+}
+
+/// Match the HTTP status formats emitted by both clients, including
+/// `HTTP/1.1 403` and `HTTP Error 403`, not only the shorthand `HTTP 403`.
+fn contains_http_status(message: &str, status: &str) -> bool {
+    let tokens = message
+        .split(|character: char| {
+            character.is_ascii_whitespace()
+                || matches!(character, '/' | '.' | ':' | '-' | '_')
+        })
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+
+    tokens.windows(2).any(|window| window[0] == "http" && window[1] == status)
+        || tokens.windows(3).any(|window| {
+            window[0] == "http"
+                && (window[1] == "error"
+                    || window[1].chars().all(|character| character.is_ascii_digit()))
+                && window[2] == status
+        })
+        || tokens.windows(4).any(|window| {
+            window[0] == "http"
+                && window[1].chars().all(|character| character.is_ascii_digit())
+                && window[2].chars().all(|character| character.is_ascii_digit())
+                && window[3] == status
+        })
 }
 
 pub fn is_transient_network_error(message: &str) -> bool {
@@ -97,7 +124,7 @@ pub fn is_transient_network_error(message: &str) -> bool {
 
     let m = message.to_ascii_lowercase();
 
-    const TRANSIENT: [&str; 38] = [
+    const TRANSIENT: [&str; 34] = [
         // socket-layer / HTTP-client phrasing surfaced by aria2 and yt-dlp
         "timed out",
         "timeout",
@@ -117,12 +144,8 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "tls handshake failure",
         "ssl/tls handshake failure",
         // HTTP-level transient
-        "http 408",
         "request timeout",
-        "http 503",
         "503 service unavailable",
-        "http 429",
-        "http error 429",
         "429 too many requests",
         // aria2c HTTP error formats
         "status=408",
@@ -141,7 +164,10 @@ pub fn is_transient_network_error(message: &str) -> bool {
         "timeout.",
         "invalid range header",
     ];
-    TRANSIENT.iter().any(|t| m.contains(t))
+    contains_http_status(&m, "408")
+        || contains_http_status(&m, "429")
+        || contains_http_status(&m, "503")
+        || TRANSIENT.iter().any(|t| m.contains(t))
 }
 
 /// Outcome of a cancel-safe backoff sleep wrapped around a transient retry.
@@ -252,6 +278,7 @@ mod tests {
     #[test]
     fn classifies_http_503_as_transient() {
         assert!(is_transient_network_error("HTTP 503 Service Unavailable"));
+        assert!(is_transient_network_error("HTTP/1.1 503 Service Unavailable"));
         assert!(is_transient_network_error(
             "http://127.0.0.1/file returned HTTP 503 Service Unavailable"
         ));
@@ -291,6 +318,8 @@ mod tests {
     #[test]
     fn refuses_to_retry_permanent_http_statuses() {
         assert!(!is_transient_network_error("HTTP 404 Not Found"));
+        assert!(!is_transient_network_error("HTTP/1.1 403 Forbidden"));
+        assert!(!is_transient_network_error("HTTP Error 404: Not Found"));
         assert!(!is_transient_network_error("HTTP 403 Forbidden"));
         assert!(!is_transient_network_error("HTTP 410 Gone"));
         assert!(!is_transient_network_error("HTTP 401 Unauthorized"));

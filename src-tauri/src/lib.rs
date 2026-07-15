@@ -3389,6 +3389,12 @@ async fn pause_download(
                     .await
                     {
                         Ok(status) if status == "paused" => {
+                            // forcePause may have returned an RPC error after
+                            // the daemon actually paused the GID. Invalidate
+                            // terminal events already in flight before
+                            // preserving the resumable mapping.
+                            state.queue_manager.next_aria2_control_epoch(&id).await;
+                            state.queue_manager.cancel_aria2_retries(&id).await;
                             log::info!(
                                 "aria2 pause [{}]: forcePause failed but gid {} is paused",
                                 id,
@@ -3574,20 +3580,25 @@ async fn resume_download(
             let app_handle_clone = app_handle.clone();
             drop(control_guard);
             tauri::async_runtime::spawn(async move {
-                let acquired = queue_manager.ensure_aria2_permit(&id_clone).await;
-                if !acquired && !queue_manager.has_active_permit(&id_clone).await {
+                let had_permit = queue_manager.has_active_permit(&id_clone).await;
+                let permit_candidate = if had_permit {
+                    None
+                } else {
+                    queue_manager.acquire_aria2_permit_candidate().await
+                };
+                if permit_candidate.is_none() && !had_permit {
                     return;
                 }
                 let _control_guard = queue_manager.acquire_aria2_control(&id_clone).await;
+                let current_epoch = queue_manager
+                    .is_aria2_control_epoch_current(&id_clone, control_epoch)
+                    .await;
                 if queue_manager.is_aria2_retry_cancelled(&id_clone).await
-                    || !queue_manager
-                        .is_aria2_control_epoch_current(&id_clone, control_epoch)
-                        .await
+                    || !current_epoch
                     || queue_manager.aria2_gid_for_download(&id_clone).as_deref()
                         != Some(gid_clone.as_str())
                     || !queue_manager.is_registered(&id_clone).await
                 {
-                    queue_manager.release_permit(&id_clone).await;
                     return;
                 }
                 if !queue_manager
@@ -3599,8 +3610,12 @@ async fn resume_download(
                         id_clone,
                         gid_clone
                     );
-                    queue_manager.release_permit(&id_clone).await;
                     return;
+                }
+                if let Some(permit) = permit_candidate {
+                    let _ = queue_manager
+                        .park_aria2_permit_if_missing(&id_clone, permit)
+                        .await;
                 }
                 let _ = app_handle_clone.emit(
                     "download-state",
@@ -3649,15 +3664,50 @@ async fn resume_download(
                                 .await;
                             return;
                         }
-                        Ok(status) => {
+                        Ok(status) if status == "paused" => {
+                            queue_manager.next_aria2_control_epoch(&id_clone).await;
+                            queue_manager.cancel_aria2_retries(&id_clone).await;
                             queue_manager.release_permit(&id_clone).await;
                             log::error!(
-                                "aria2 resume [{}]: {}; daemon reports gid {} as {}",
+                                "aria2 resume [{}]: {}; daemon kept gid {} paused",
+                                id_clone,
+                                unpause_error,
+                                gid_clone
+                            );
+                            let _ = app_handle_clone.emit(
+                                "download-state",
+                                crate::ipc::DownloadStateEvent::new(
+                                    &id_clone,
+                                    crate::ipc::DownloadStatus::Paused,
+                                ),
+                            );
+                            return;
+                        }
+                        Ok(status) if matches!(status.as_str(), "error" | "removed") => {
+                            let terminal_error = format!(
+                                "{unpause_error}; daemon reports gid {gid_clone} as {status}"
+                            );
+                            queue_manager
+                                .apply_completion_locked(
+                                    &id_clone,
+                                    crate::queue::PendingOutcome::Error(terminal_error),
+                                )
+                                .await;
+                            return;
+                        }
+                        Ok(status) => {
+                            // An unrecognized daemon state is not proof that
+                            // the transfer stopped. Keep its permit and
+                            // mapping so a later reconciliation can observe
+                            // the real terminal state.
+                            log::error!(
+                                "aria2 resume [{}]: {}; daemon reports gid {} as {}; retaining permit",
                                 id_clone,
                                 unpause_error,
                                 gid_clone,
                                 status
                             );
+                            return;
                         }
                         Err(status_error) => {
                             log::error!(
@@ -3667,29 +3717,15 @@ async fn resume_download(
                                 gid_clone,
                                 status_error
                             );
-                            let _ = app_handle_clone.emit(
-                                "download-state",
-                                crate::ipc::DownloadStateEvent::new(
-                                    &id_clone,
-                                    crate::ipc::DownloadStatus::Failed,
-                                ),
-                            );
                             return;
                         }
                     }
-                    let _ = app_handle_clone.emit(
-                        "download-state",
-                        crate::ipc::DownloadStateEvent::new(
-                            &id_clone,
-                            crate::ipc::DownloadStatus::Failed,
-                        ),
-                    );
-                    return;
                 }
+                let current_epoch = queue_manager
+                    .is_aria2_control_epoch_current(&id_clone, control_epoch)
+                    .await;
                 if queue_manager.is_aria2_retry_cancelled(&id_clone).await
-                    || !queue_manager
-                        .is_aria2_control_epoch_current(&id_clone, control_epoch)
-                        .await
+                    || !current_epoch
                     || queue_manager.aria2_gid_for_download(&id_clone).as_deref()
                         != Some(gid_clone.as_str())
                 {
@@ -3700,7 +3736,6 @@ async fn resume_download(
                         serde_json::json!([gid_clone]),
                     )
                     .await;
-                    queue_manager.release_permit(&id_clone).await;
                     return;
                 }
                 log::info!("aria2 resume [{}]: unpaused gid {}", id_clone, gid_clone);
@@ -3710,7 +3745,16 @@ async fn resume_download(
         "active" | "waiting" => {
             let resume_epoch = state.queue_manager.current_aria2_control_epoch(&id).await;
             drop(control_guard);
-            state.queue_manager.ensure_aria2_permit(&id).await;
+            state.queue_manager.allow_aria2_retries(&id).await;
+            let had_permit = state.queue_manager.has_active_permit(&id).await;
+            let permit_candidate = if had_permit {
+                None
+            } else {
+                state.queue_manager.acquire_aria2_permit_candidate().await
+            };
+            if permit_candidate.is_none() && !had_permit {
+                return Ok(true);
+            }
             let _control_guard = state.queue_manager.acquire_aria2_control(&id).await;
             let still_current = state.queue_manager.is_registered(&id).await
                 && !state.queue_manager.is_aria2_retry_cancelled(&id).await
@@ -3720,6 +3764,12 @@ async fn resume_download(
                     .await
                 && state.queue_manager.aria2_gid_for_download(&id).as_deref() == Some(gid.as_str());
             if still_current {
+                if let Some(permit) = permit_candidate {
+                    let _ = state
+                        .queue_manager
+                        .park_aria2_permit_if_missing(&id, permit)
+                        .await;
+                }
                 log::info!(
                     "aria2 resume [{}]: gid {} already {}; no duplicate job created",
                     id,
@@ -4113,6 +4163,27 @@ async fn aria2_daemon_is_reachable(port: u16, secret: &str) -> bool {
         }
     }
     false
+}
+
+/// Distinguish a temporary RPC/WebSocket outage from a daemon that actually
+/// exited. The latter invalidates Aria2 GIDs and permits; the former must leave
+/// them intact so reconnect reconciliation can recover the transfer.
+fn aria2_daemon_process_exited(app_handle: &tauri::AppHandle) -> bool {
+    let guard = app_handle.state::<Aria2DaemonGuard>();
+    let Ok(mut child) = guard.child.lock() else {
+        return false;
+    };
+    match child.as_mut() {
+        Some(child) => match child.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) => false,
+            Err(error) => {
+                log::warn!("could not verify aria2 process state after RPC outage: {error}");
+                false
+            }
+        },
+        None => true,
+    }
 }
 
 fn aria2_gid_not_found(error: &str) -> bool {
@@ -6540,7 +6611,9 @@ pub fn run() {
                     ws_retries += 1;
                     let state = app_handle_bg.state::<AppState>();
                     let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
-                    if !aria2_daemon_is_reachable(port, &state.aria2_secret).await {
+                    if !aria2_daemon_is_reachable(port, &state.aria2_secret).await
+                        && aria2_daemon_process_exited(&app_handle_bg)
+                    {
                         state.queue_manager.clear_aria2_permits().await;
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(4)).await;

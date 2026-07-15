@@ -143,6 +143,7 @@ export interface SettingsState {
   maxAutomaticRetries: number;
   showNotifications: boolean;
   playCompletionSound: boolean;
+  autoAddClipboardLinks: boolean;
   appFontSize: AppFontSize;
   listRowDensity: ListRowDensity;
   showDockBadge: boolean;
@@ -186,6 +187,7 @@ export interface SettingsState {
   setMaxAutomaticRetries: (count: number) => void;
   setShowNotifications: (show: boolean) => void;
   setPlayCompletionSound: (play: boolean) => void;
+  setAutoAddClipboardLinks: (enabled: boolean) => void;
   setAppFontSize: (size: AppFontSize) => void;
   setListRowDensity: (density: ListRowDensity) => void;
   setShowDockBadge: (show: boolean) => void;
@@ -250,6 +252,7 @@ export const useSettingsStore = create<SettingsState>()(
       maxAutomaticRetries: 3,
       showNotifications: true,
       playCompletionSound: false,
+      autoAddClipboardLinks: false,
       appFontSize: 'standard',
       listRowDensity: 'standard',
       showDockBadge: true,
@@ -319,6 +322,7 @@ export const useSettingsStore = create<SettingsState>()(
       }),
       setShowNotifications: (showNotifications) => set({ showNotifications }),
       setPlayCompletionSound: (playCompletionSound) => set({ playCompletionSound }),
+      setAutoAddClipboardLinks: (autoAddClipboardLinks) => set({ autoAddClipboardLinks }),
       setAppFontSize: (appFontSize) => set({ appFontSize }),
       setListRowDensity: (listRowDensity) => set({ listRowDensity }),
       setShowDockBadge: (showDockBadge) => {
@@ -477,6 +481,7 @@ export const useSettingsStore = create<SettingsState>()(
         maxAutomaticRetries: state.maxAutomaticRetries,
         showNotifications: state.showNotifications,
         playCompletionSound: state.playCompletionSound,
+        autoAddClipboardLinks: state.autoAddClipboardLinks,
         appFontSize: state.appFontSize,
         listRowDensity: state.listRowDensity,
         showDockBadge: state.showDockBadge,
@@ -525,6 +530,10 @@ export const useSettingsStore = create<SettingsState>()(
             : currentState.activeSettingsTab,
           showNotifications: persistedBoolean(persisted.showNotifications, currentState.showNotifications),
           playCompletionSound: persistedBoolean(persisted.playCompletionSound, currentState.playCompletionSound),
+          autoAddClipboardLinks: persistedBoolean(
+            persisted.autoAddClipboardLinks,
+            currentState.autoAddClipboardLinks
+          ),
           showDockBadge: persistedBoolean(persisted.showDockBadge, currentState.showDockBadge),
           showMenuBarIcon: persistedBoolean(persisted.showMenuBarIcon, currentState.showMenuBarIcon),
           askWhereToSaveEachFile: persistedBoolean(

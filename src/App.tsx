@@ -8,6 +8,7 @@ import SettingsView from "./components/SettingsView";
 import { PropertiesModal } from "./components/PropertiesModal";
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { extractValidDownloadUrls } from './utils/url';
+import { readClipboardDownloadUrls } from './utils/clipboard';
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
 import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
 import { initDownloadListener } from './store/downloadStore';
@@ -110,6 +111,7 @@ function App() {
   const appFontSize = useSettingsStore(state => state.appFontSize);
   const listRowDensity = useSettingsStore(state => state.listRowDensity);
   const autoCheckUpdates = useSettingsStore(state => state.autoCheckUpdates);
+  const autoAddClipboardLinks = useSettingsStore(state => state.autoAddClipboardLinks);
   const showNotifications = useSettingsStore(state => state.showNotifications);
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
@@ -694,6 +696,81 @@ function App() {
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, []);
+
+  useEffect(() => {
+    if (!coreReady || !autoAddClipboardLinks) return;
+
+    let active = true;
+    let wasForeground = false;
+    let readInFlight = false;
+    let lastClipboardKey: string | null = null;
+
+    const isForeground = () =>
+      document.visibilityState === 'visible' &&
+      (typeof document.hasFocus !== 'function' || document.hasFocus());
+
+    const readClipboardOnForeground = async () => {
+      if (!active || readInFlight || !isForeground()) return;
+
+      const storeBeforeRead = useDownloadStore.getState();
+      const requestVersionBeforeRead = storeBeforeRead.pendingAddRequestVersion;
+      readInFlight = true;
+      try {
+        const clipboardUrls = await readClipboardDownloadUrls();
+        if (!active) return;
+
+        const currentSettings = useSettingsStore.getState();
+        const currentStore = useDownloadStore.getState();
+        // A user action or extension handoff won while the native clipboard
+        // read was pending. Let that newer Add-modal request win unchanged.
+        if (
+          !currentSettings.autoAddClipboardLinks ||
+          currentStore.pendingAddRequestVersion !== requestVersionBeforeRead
+        ) {
+          return;
+        }
+
+        const clipboardKey = [...clipboardUrls].sort().join('\n');
+        if (clipboardKey === lastClipboardKey) return;
+        lastClipboardKey = clipboardKey;
+        if (clipboardUrls.length === 0) return;
+
+        const existingUrls = new Set(extractValidDownloadUrls(currentStore.pendingAddUrls));
+        const newUrls = clipboardUrls.filter(url => !existingUrls.has(url));
+        if (newUrls.length > 0) {
+          currentStore.openAddModalWithUrls(newUrls.join('\n'));
+        }
+      } catch (error) {
+        // Clipboard permissions are optional and this feature is explicitly
+        // opt-in, so a read failure should not interrupt normal app use.
+        console.warn('Automatic clipboard capture failed:', error);
+      } finally {
+        readInFlight = false;
+      }
+    };
+
+    const handleForegroundChange = () => {
+      const foreground = isForeground();
+      if (!foreground) {
+        wasForeground = false;
+        return;
+      }
+      if (!wasForeground) {
+        wasForeground = true;
+        void readClipboardOnForeground();
+      }
+    };
+
+    window.addEventListener('focus', handleForegroundChange);
+    document.addEventListener('visibilitychange', handleForegroundChange);
+    handleForegroundChange();
+
+    return () => {
+      active = false;
+      window.removeEventListener('focus', handleForegroundChange);
+      document.removeEventListener('visibilitychange', handleForegroundChange);
+    };
+  }, [autoAddClipboardLinks, coreReady]);
 
   useEffect(() => {
     const root = window.document.documentElement;

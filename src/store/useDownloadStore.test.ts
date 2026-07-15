@@ -510,7 +510,7 @@ describe('useDownloadStore', () => {
     );
   });
 
-  it('uses the global speed limit only when an item has no explicit speed override', async () => {
+  it('does not copy the global speed limit into a normal download task', async () => {
     const defaultSettings = useSettingsStore.getState();
     vi.mocked(useSettingsStore.getState).mockReturnValue({
       ...defaultSettings,
@@ -534,6 +534,37 @@ describe('useDownloadStore', () => {
       expect.objectContaining({
         item: expect.objectContaining({
           id: 'inherits-global',
+          speed_limit: null
+        })
+      })
+    );
+  });
+
+  it('passes the global speed limit to a new media process when it has no item override', async () => {
+    const defaultSettings = useSettingsStore.getState();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...defaultSettings,
+      globalSpeedLimit: '2M'
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_pending_order') return ['inherits-global-media'];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().addDownload({
+      id: 'inherits-global-media',
+      url: 'https://www.youtube.com/watch?v=example',
+      fileName: 'media.mp4',
+      category: 'Movies',
+      dateAdded: '',
+      isMedia: true
+    }, { type: 'start-now' });
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_download',
+      expect.objectContaining({
+        item: expect.objectContaining({
+          id: 'inherits-global-media',
           speed_limit: '2M'
         })
       })

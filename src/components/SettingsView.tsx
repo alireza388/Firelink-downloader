@@ -700,6 +700,18 @@ runEngineChecks(false);
                     className="mac-switch"
                   />
                 </label>
+                <label className="mac-settings-row cursor-default">
+                  <div className="settings-row-label">
+                    <span>Add clipboard links when Firelink becomes active</span>
+                    <small>Opens supported copied links in the Add window. Off by default.</small>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.autoAddClipboardLinks}
+                    onChange={(e) => settings.setAutoAddClipboardLinks(e.target.checked)}
+                    className="mac-switch"
+                  />
+                </label>
               </div>
             </div>
           )}

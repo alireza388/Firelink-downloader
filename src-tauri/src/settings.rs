@@ -441,6 +441,7 @@ fn default_settings() -> PersistedSettings {
         max_automatic_retries: 3,
         show_notifications: true,
         play_completion_sound: false,
+        auto_add_clipboard_links: false,
         app_font_size: AppFontSize::Standard,
         list_row_density: ListRowDensity::Standard,
         show_dock_badge: true,
@@ -696,8 +697,9 @@ mod tests {
     }
 
     #[test]
-    fn completion_sound_default_matches_the_frontend_default() {
+    fn opt_in_defaults_match_the_frontend_defaults() {
         assert!(!default_settings().play_completion_sound);
+        assert!(!default_settings().auto_add_clipboard_links);
     }
 
     #[test]

@@ -134,11 +134,21 @@ const stripCookieHeaders = (value: string | null | undefined): string =>
     .join('\n')
     .trim();
 
-const speedLimitForDispatch = (itemSpeedLimit: string | undefined, globalSpeedLimit: string): string | null => {
+const explicitSpeedLimitForDispatch = (itemSpeedLimit: string | undefined): string | null => {
   const explicitLimit = itemSpeedLimit?.trim();
   if (explicitLimit) {
     return normalizeSpeedLimitForBackend(explicitLimit) || (explicitLimit === '0' ? '0' : null);
   }
+  return null;
+};
+
+const speedLimitForDispatch = (
+  itemSpeedLimit: string | undefined,
+  globalSpeedLimit: string,
+  isMedia: boolean | undefined
+): string | null => {
+  const explicitLimit = explicitSpeedLimitForDispatch(itemSpeedLimit);
+  if (explicitLimit !== null || !isMedia) return explicitLimit;
   return normalizeSpeedLimitForBackend(globalSpeedLimit);
 };
 
@@ -186,7 +196,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
         destination,
         filename: item.fileName,
         connections: item.connections || settings.perServerConnections || null,
-        speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
+        speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit, item.isMedia),
         username: item.username || (login ? login.username : null),
         password: item.password || keychainPassword,
         headers: item.headers || null,
@@ -842,6 +852,9 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
       fraction: 0,
       speed: '-',
       eta: '-',
+      downloadedBytes: undefined,
+      totalBytes: undefined,
+      totalIsEstimate: undefined,
       hasBeenDispatched: false,
       dateAdded: new Date().toISOString()
     });
@@ -1159,7 +1172,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             destination: destPath,
             filename: item.fileName,
             connections: item.connections || settings.perServerConnections || null,
-            speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
+            speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit, item.isMedia),
             username: item.username || (login ? login.username : null),
             password: item.password || keychainPassword,
             headers: item.headers || null,

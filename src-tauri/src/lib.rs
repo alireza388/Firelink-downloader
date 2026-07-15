@@ -827,6 +827,8 @@ struct MediaProgress {
     eta: String,
     size: Option<String>,
     downloaded_bytes: Option<f64>,
+    total_bytes: Option<f64>,
+    total_is_estimate: bool,
 }
 
 fn progress_json_number(progress: &serde_json::Value, key: &str) -> Option<f64> {
@@ -928,13 +930,17 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
         let size = progress_json_string(&progress, "_total_bytes_str")
             .or_else(|| progress_json_string(&progress, "_total_bytes_estimate_str"))
             .or_else(|| (total > 0.0).then(|| crate::download::format_size(total)));
+        let total_is_estimate = progress.get("total_bytes").is_none()
+            && progress.get("total_bytes_estimate").is_some();
 
         return Some(MediaProgress {
             fraction: fraction.clamp(0.0, 1.0),
             speed,
             eta,
             size,
-            downloaded_bytes: (downloaded > 0.0).then_some(downloaded),
+            downloaded_bytes: (total > 0.0 || downloaded > 0.0).then_some(downloaded),
+            total_bytes: (total > 0.0).then_some(total),
+            total_is_estimate,
         });
     }
 
@@ -961,12 +967,20 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             .map(|value| value.as_str().to_string())
             .unwrap_or_else(|| "-".to_string());
         let size = captures.get(2).map(|value| value.as_str().to_string());
+        let downloaded_bytes = captures
+            .get(1)
+            .and_then(|value| parse_human_size(value.as_str()));
+        let total_bytes = captures
+            .get(2)
+            .and_then(|value| parse_human_size(value.as_str()));
         return Some(MediaProgress {
             fraction: fraction.clamp(0.0, 1.0),
             speed,
             eta,
             size,
-            downloaded_bytes: None,
+            downloaded_bytes,
+            total_bytes,
+            total_is_estimate: false,
         });
     }
 
@@ -976,16 +990,24 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
     let fraction = captures.get(1)?.as_str().parse::<f64>().ok()? / 100.0;
     let speed_re = YTDLP_SPD_RE.get_or_init(|| Regex::new(r"\bat\s+([^\s]+)").unwrap());
     let eta_re = YTDLP_ETA_RE.get_or_init(|| Regex::new(r"\bETA\s+([^\s]+)").unwrap());
-    let size_re = YTDLP_SIZE_RE.get_or_init(|| Regex::new(r"of\s+~?\s*([0-9.]+[a-zA-Z]+)").unwrap());
+    let size_re = YTDLP_SIZE_RE
+        .get_or_init(|| Regex::new(r"of\s+(~?)\s*([0-9.]+[a-zA-Z]+)").unwrap());
     let mut parsed_size_str = None;
     let mut downloaded_bytes = None;
+    let mut total_bytes = None;
+    let mut total_is_estimate = false;
     if let Some(captures) = size_re.captures(line) {
-        if let Some(size_str) = captures.get(1) {
+        if let Some(size_str) = captures.get(2) {
             parsed_size_str = Some(size_str.as_str().to_string());
-            if let Some(total_bytes) = parse_human_size(size_str.as_str()) {
-                downloaded_bytes = Some(total_bytes * fraction);
+            if let Some(parsed_total_bytes) = parse_human_size(size_str.as_str()) {
+                downloaded_bytes = Some(parsed_total_bytes * fraction);
+                total_bytes = Some(parsed_total_bytes);
             }
         }
+        total_is_estimate = captures
+            .get(1)
+            .map(|marker| !marker.as_str().is_empty())
+            .unwrap_or(false);
     }
 
     Some(MediaProgress {
@@ -1002,6 +1024,8 @@ fn parse_media_progress_line(line: &str) -> Option<MediaProgress> {
             .unwrap_or_else(|| "-".to_string()),
         size: parsed_size_str,
         downloaded_bytes,
+        total_bytes,
+        total_is_estimate,
     })
 }
 
@@ -1110,6 +1134,12 @@ struct MediaProgressEmitterState {
     last_fraction: f64,
     speed_sampler: MediaSpeedSampler,
     last_progress_at: Instant,
+    completed_tracks_downloaded_bytes: Option<f64>,
+    completed_tracks_total_bytes: Option<f64>,
+    completed_tracks_total_is_estimate: bool,
+    current_track_downloaded_bytes: Option<f64>,
+    current_track_total_bytes: Option<f64>,
+    current_track_total_is_estimate: bool,
 }
 
 impl MediaProgressEmitterState {
@@ -1121,7 +1151,61 @@ impl MediaProgressEmitterState {
             last_progress_at: Instant::now()
                 .checked_sub(MEDIA_PROGRESS_EMIT_INTERVAL)
                 .unwrap_or_else(Instant::now),
+            completed_tracks_downloaded_bytes: Some(0.0),
+            completed_tracks_total_bytes: Some(0.0),
+            completed_tracks_total_is_estimate: false,
+            current_track_downloaded_bytes: None,
+            current_track_total_bytes: None,
+            current_track_total_is_estimate: false,
         }
+    }
+}
+
+fn aggregate_media_byte_progress(
+    progress: &MediaProgress,
+    track_changed: bool,
+    state: &mut MediaProgressEmitterState,
+) -> Option<(u64, u64, bool)> {
+    if track_changed {
+        if let Some(total_bytes) = state.current_track_total_bytes {
+            *state
+                .completed_tracks_total_bytes
+                .get_or_insert(0.0) += total_bytes;
+            *state
+                .completed_tracks_downloaded_bytes
+                .get_or_insert(0.0) += total_bytes;
+            state.completed_tracks_total_is_estimate |= state.current_track_total_is_estimate;
+        } else {
+            state.completed_tracks_total_bytes = None;
+            state.completed_tracks_downloaded_bytes = None;
+        }
+        state.current_track_downloaded_bytes = None;
+        state.current_track_total_bytes = None;
+        state.current_track_total_is_estimate = false;
+    }
+    state.current_track_total_bytes = progress.total_bytes;
+    state.current_track_downloaded_bytes = progress
+        .downloaded_bytes
+        .or_else(|| progress.total_bytes.map(|total| total * progress.fraction));
+    state.current_track_total_is_estimate = progress.total_is_estimate;
+
+    match (
+        state.completed_tracks_downloaded_bytes,
+        state.completed_tracks_total_bytes,
+        state.current_track_downloaded_bytes,
+        state.current_track_total_bytes,
+    ) {
+        (
+            Some(completed_downloaded),
+            Some(completed_total),
+            Some(current_downloaded),
+            Some(current_total),
+        ) if current_total > 0.0 => Some((
+            (completed_downloaded + current_downloaded).max(0.0).round() as u64,
+            (completed_total + current_total).max(0.0).round() as u64,
+            state.completed_tracks_total_is_estimate || state.current_track_total_is_estimate,
+        )),
+        _ => None,
     }
 }
 
@@ -1139,9 +1223,11 @@ fn emit_media_progress(
         &mut state.last_fraction,
         progress.fraction,
     );
-    if state.current_track != previous_track {
+    let track_changed = state.current_track != previous_track;
+    if track_changed {
         state.speed_sampler.reset();
     }
+    let byte_progress = aggregate_media_byte_progress(&progress, track_changed, state);
     let (speed, eta) = media_progress_speed(&progress, Instant::now(), &mut state.speed_sampler);
 
     let now = Instant::now();
@@ -1155,6 +1241,9 @@ fn emit_media_progress(
                 eta,
                 size: progress.size,
                 size_is_final: false,
+                downloaded_bytes: byte_progress.map(|value| value.0 as f64),
+                total_bytes: byte_progress.map(|value| value.1 as f64),
+                total_is_estimate: byte_progress.map(|value| value.2),
             },
         );
         state.last_progress_at = now;
@@ -2169,6 +2258,12 @@ pub struct DownloadProgressEvent {
     eta: String,
     size: Option<String>,
     size_is_final: bool,
+    #[ts(optional)]
+    downloaded_bytes: Option<f64>,
+    #[ts(optional)]
+    total_bytes: Option<f64>,
+    #[ts(optional)]
+    total_is_estimate: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -3271,6 +3366,9 @@ pub(crate) async fn start_media_download_internal(
                                         eta: "-".to_string(),
                                         size: None,
                                         size_is_final: false,
+                                        downloaded_bytes: None,
+                                        total_bytes: None,
+                                        total_is_estimate: Some(false),
                                     });
                                 }
                                 let lower = line.to_lowercase();
@@ -3339,6 +3437,9 @@ pub(crate) async fn start_media_download_internal(
                                             eta: "-".to_string(),
                                             size: Some(crate::download::format_size(metadata.len() as f64)),
                                             size_is_final: true,
+                                            downloaded_bytes: Some(metadata.len() as f64),
+                                            total_bytes: Some(metadata.len() as f64),
+                                            total_is_estimate: Some(false),
                                         });
                                     }
                                 }
@@ -5577,7 +5678,8 @@ fn set_extension_frontend_ready(state: tauri::State<'_, AppState>, ready: bool) 
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_media_fraction, append_ytdlp_config_option, append_ytdlp_http_headers,
+        aggregate_media_byte_progress, aggregate_media_fraction, append_ytdlp_config_option,
+        append_ytdlp_http_headers,
         build_media_format_options,
         collect_download_uris, drain_media_output_lines, filename_from_content_disposition,
         filename_from_url_disposition_query, filename_from_url_path, is_excluded_yt_dlp_format,
@@ -5591,7 +5693,7 @@ mod tests {
         retry_metadata_with_cookies, should_retry_metadata_with_cookies,
         should_send_metadata_credentials, collect_log_files, FirelinkDeepLink,
         percent_decode_metadata_value, MediaProgress,
-        MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
+        MediaProgressEmitterState, MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -6314,6 +6416,8 @@ mod tests {
                 eta: "00:05".to_string(),
                 size: Some("10.00MiB".to_string()),
                 downloaded_bytes: Some(5242880.0),
+                total_bytes: Some(10485760.0),
+                total_is_estimate: false,
             })
         );
     }
@@ -6401,6 +6505,50 @@ mod tests {
     }
 
     #[test]
+    fn aggregates_media_byte_progress_across_tracks() {
+        let mut state = MediaProgressEmitterState::new();
+        let first = MediaProgress {
+            fraction: 0.99,
+            speed: "-".to_string(),
+            eta: "-".to_string(),
+            size: Some("100B".to_string()),
+            downloaded_bytes: Some(99.0),
+            total_bytes: Some(100.0),
+            total_is_estimate: false,
+        };
+        let second = MediaProgress {
+            fraction: 0.01,
+            speed: "-".to_string(),
+            eta: "-".to_string(),
+            size: Some("200B".to_string()),
+            downloaded_bytes: Some(2.0),
+            total_bytes: Some(200.0),
+            total_is_estimate: true,
+        };
+
+        aggregate_media_fraction(
+            2.0,
+            &mut state.current_track,
+            &mut state.last_fraction,
+            first.fraction,
+        );
+        assert_eq!(
+            aggregate_media_byte_progress(&first, false, &mut state),
+            Some((99, 100, false))
+        );
+        aggregate_media_fraction(
+            2.0,
+            &mut state.current_track,
+            &mut state.last_fraction,
+            second.fraction,
+        );
+        assert_eq!(
+            aggregate_media_byte_progress(&second, true, &mut state),
+            Some((102, 300, true))
+        );
+    }
+
+    #[test]
     fn derives_main_window_speed_from_downloaded_byte_delta() {
         let first = MediaProgress {
             fraction: 0.25,
@@ -6408,6 +6556,8 @@ mod tests {
             eta: "-".to_string(),
             size: None,
             downloaded_bytes: Some(1_000_000.0),
+            total_bytes: None,
+            total_is_estimate: false,
         };
         let second = MediaProgress {
             fraction: 0.5,
@@ -6415,6 +6565,8 @@ mod tests {
             eta: "-".to_string(),
             size: None,
             downloaded_bytes: Some(3_097_152.0),
+            total_bytes: None,
+            total_is_estimate: false,
         };
         let start = Instant::now();
         let mut sampler = MediaSpeedSampler::default();
@@ -6439,6 +6591,8 @@ mod tests {
             eta: "-".to_string(),
             size: None,
             downloaded_bytes: Some(1_000_000.0),
+            total_bytes: None,
+            total_is_estimate: false,
         };
 
         assert_eq!(
@@ -6471,14 +6625,16 @@ mod tests {
                 speed: "910KiB/s".to_string(),
                 eta: "25s".to_string(),
                 size: Some("34MiB".to_string()),
-                downloaded_bytes: None,
+                downloaded_bytes: Some(12.0 * 1024.0 * 1024.0),
+                total_bytes: Some(34.0 * 1024.0 * 1024.0),
+                total_is_estimate: false,
             })
         );
     }
 
     #[test]
     fn retains_legacy_ytdlp_progress_fallback() {
-        let line = "[download]  42.5% of 10.00MiB at 2.00MiB/s ETA 00:03";
+        let line = "[download]  42.5% of ~10.00MiB at 2.00MiB/s ETA 00:03";
 
         assert_eq!(
             parse_media_progress_line(line),
@@ -6488,6 +6644,8 @@ mod tests {
                 eta: "00:03".to_string(),
                 size: Some("10.00MiB".to_string()),
                 downloaded_bytes: Some(4456448.0),
+                total_bytes: Some(10485760.0),
+                total_is_estimate: true,
             })
         );
     }
@@ -7043,9 +7201,12 @@ pub fn run() {
                                         id: id.clone(),
                                         fraction,
                                         speed,
-                                    eta,
-                                    size,
+                                        eta,
+                                        size,
                                         size_is_final: false,
+                                        downloaded_bytes: Some(completed as f64),
+                                        total_bytes: (total > 0).then_some(total as f64),
+                                        total_is_estimate: Some(false),
                                     });
 
                                     if should_refresh {

@@ -80,6 +80,12 @@ pub struct DownloadItem {
     pub eta: Option<String>,
     #[ts(optional)]
     pub size: Option<String>,
+    #[ts(optional)]
+    pub downloaded_bytes: Option<f64>,
+    #[ts(optional)]
+    pub total_bytes: Option<f64>,
+    #[ts(optional)]
+    pub total_is_estimate: Option<bool>,
     pub category: DownloadCategory,
     pub date_added: String,
     #[ts(optional)]
@@ -274,6 +280,8 @@ pub struct PersistedSettings {
     pub max_automatic_retries: i32,
     pub show_notifications: bool,
     pub play_completion_sound: bool,
+    #[serde(default)]
+    pub auto_add_clipboard_links: bool,
     pub app_font_size: AppFontSize,
     pub list_row_density: ListRowDensity,
     pub show_dock_badge: bool,

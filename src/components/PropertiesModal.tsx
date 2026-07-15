@@ -10,6 +10,10 @@ import {
   isIdentityLocked as getIdentityLocked,
   isTransferLocked as getTransferLocked
 } from '../utils/downloadActions';
+import {
+  downloadProgressColorClass,
+  resolveDownloadSizeDisplay
+} from '../utils/downloadProgress';
 
 type LoginMode = 'matching' | 'custom' | 'none';
 
@@ -185,6 +189,13 @@ export const PropertiesModal = () => {
   const displayedEta = item.status === 'completed'
     ? '-'
     : liveProgress?.eta ?? item.eta ?? '-';
+  const sizeDisplay = resolveDownloadSizeDisplay({
+    downloadedBytes: liveProgress?.downloaded_bytes ?? item.downloadedBytes,
+    totalBytes: liveProgress?.total_bytes ?? item.totalBytes,
+    totalIsEstimate: liveProgress?.total_is_estimate ?? item.totalIsEstimate,
+    fallbackSize: item.size
+  });
+  const hasDownloadedAmount = Boolean(sizeDisplay.downloaded && sizeDisplay.total);
 
   let statusColor = 'text-text-secondary';
   let StatusIcon = Info;
@@ -221,7 +232,25 @@ export const PropertiesModal = () => {
           
             <div className="grid grid-cols-4 gap-y-2 gap-x-4 text-[11px] leading-tight">
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Progress</span><span className="text-text-secondary truncate">{`${(displayedFraction * 100).toFixed(0)}%`}</span></div>
-              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Size</span><span className="text-text-secondary truncate">{item.size || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0">
+                <span className="text-text-muted font-medium w-[40px] shrink-0">Size</span>
+                <span
+                  className="truncate"
+                  title={hasDownloadedAmount
+                    ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total}`
+                    : sizeDisplay.fallback}
+                >
+                  {hasDownloadedAmount ? (
+                    <>
+                      <span className={downloadProgressColorClass(item.status)}>{sizeDisplay.downloaded}</span>
+                      <span className="text-text-muted"> / </span>
+                      <span className="text-text-secondary">
+                        {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total}
+                      </span>
+                    </>
+                  ) : sizeDisplay.fallback}
+                </span>
+              </div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{displayedSpeed}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[30px] shrink-0">ETA</span><span className="text-text-secondary truncate">{displayedEta}</span></div>
 

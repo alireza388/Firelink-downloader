@@ -6,6 +6,10 @@ import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-rea
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
 import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/downloadActions';
 import { isActiveDownloadStatus } from '../utils/downloads';
+import {
+  downloadProgressColorClass,
+  resolveDownloadSizeDisplay
+} from '../utils/downloadProgress';
 
 interface DownloadItemProps {
   downloadId: string;
@@ -64,6 +68,13 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
     : download.status === 'processing'
       ? 'Muxing...'
       : '-';
+  const sizeDisplay = resolveDownloadSizeDisplay({
+    downloadedBytes: liveProgress?.downloaded_bytes ?? download.downloadedBytes,
+    totalBytes: liveProgress?.total_bytes ?? download.totalBytes,
+    totalIsEstimate: liveProgress?.total_is_estimate ?? download.totalIsEstimate,
+    fallbackSize: download.size
+  });
+  const hasDownloadedAmount = Boolean(sizeDisplay.downloaded && sizeDisplay.total);
 
   return (
     <div
@@ -85,8 +96,24 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       </div>
       
       <div className="download-cell-truncate">
-        <span className="tabular-nums" title={download.size && download.size !== '-' ? download.size : 'Unknown'}>
-          {download.size && download.size !== '-' ? download.size : 'Unknown'}
+        <span
+          className="tabular-nums"
+          title={hasDownloadedAmount
+            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? '~' : ''}${sizeDisplay.total}`
+            : sizeDisplay.fallback}
+          aria-label={hasDownloadedAmount
+            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total}`
+            : sizeDisplay.fallback}
+        >
+          {hasDownloadedAmount ? (
+            <>
+              <span className={downloadProgressColorClass(download.status)}>{sizeDisplay.downloaded}</span>
+              <span className="text-text-muted"> / </span>
+              <span>
+                {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total}
+              </span>
+            </>
+          ) : sizeDisplay.fallback}
         </span>
       </div>
       

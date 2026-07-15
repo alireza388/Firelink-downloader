@@ -119,11 +119,22 @@ export const isMediaUrl = (rawUrl: string): boolean => {
  * persistence boundary so the user-data database contains no plaintext credentials.
  */
 const DOWNLOAD_SECRET_FIELDS = ['password', 'cookies', 'headers'] as const;
+const VOLATILE_PROGRESS_STATUSES = new Set([
+  'ready',
+  'staged',
+  'queued',
+  'downloading',
+  'processing',
+  'retrying'
+]);
 
 /**
  * Returns a shallow copy of `item` with secret fields removed. Volatile
  * progress fields (`fraction`, `speed`, `eta`) are also dropped as in the
- * existing persistence path.
+ * existing persistence path. Numeric byte totals remain for paused, failed,
+ * and completed rows so those snapshots keep their accurate Size-column
+ * display after restart; active-transfer counters stay in memory to avoid a
+ * database write for every progress tick.
  *
  * Note: standard persistence intentionally retains `url` because it is the
  * download source. The backend applies a stricter portable-mode policy: URL
@@ -135,6 +146,11 @@ export const redactDownloadForPersistence = (item: DownloadItem): DownloadItem =
   delete copy.fraction;
   delete copy.speed;
   delete copy.eta;
+  if (VOLATILE_PROGRESS_STATUSES.has(item.status)) {
+    delete copy.downloadedBytes;
+    delete copy.totalBytes;
+    delete copy.totalIsEstimate;
+  }
   for (const field of DOWNLOAD_SECRET_FIELDS) {
     delete copy[field];
   }

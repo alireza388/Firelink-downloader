@@ -55,6 +55,15 @@ const startDownloadListeners = async () => {
       if (shouldUpdateSize && current.size !== payload.size) {
         updates.size = payload.size!;
       }
+      if (payload.downloaded_bytes !== null && payload.downloaded_bytes !== undefined) {
+        updates.downloadedBytes = payload.downloaded_bytes;
+      }
+      if (payload.total_bytes !== null && payload.total_bytes !== undefined) {
+        updates.totalBytes = payload.total_bytes;
+      }
+      if (payload.downloaded_bytes !== null && payload.downloaded_bytes !== undefined) {
+        updates.totalIsEstimate = payload.total_is_estimate;
+      }
       if (Object.keys(updates).length > 0) {
         mainStore.updateDownload(payload.id, updates);
       }

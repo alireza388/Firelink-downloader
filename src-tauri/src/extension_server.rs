@@ -174,6 +174,10 @@ async fn ping_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, StatusCode> {
+    if !has_allowed_request_origin(&headers) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let signature = match headers
         .get("x-firelink-signature")
         .and_then(|v| v.to_str().ok())
@@ -224,6 +228,10 @@ async fn download_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
+    if !has_allowed_request_origin(&headers) || !has_valid_optional_nonce(&headers) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
     let signature = match headers
         .get("x-firelink-signature")
         .and_then(|v| v.to_str().ok())
@@ -308,6 +316,15 @@ fn normalize_download(payload: ExtensionRequest) -> Option<ExtensionDownload> {
         .filter(|url| seen.insert(url.clone()))
         .collect::<Vec<_>>();
     if urls.is_empty() {
+        return None;
+    }
+    if payload.media
+        && urls.iter().any(|url| {
+            Url::parse(url)
+                .ok()
+                .is_none_or(|url| !matches!(url.scheme(), "http" | "https"))
+        })
+    {
         return None;
     }
 
@@ -405,6 +422,20 @@ fn is_valid_client_nonce(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn has_allowed_request_origin(headers: &HeaderMap) -> bool {
+    match headers.get("origin") {
+        None => true,
+        Some(origin) => origin.to_str().ok().is_some_and(is_allowed_origin),
+    }
+}
+
+fn has_valid_optional_nonce(headers: &HeaderMap) -> bool {
+    match headers.get(CLIENT_NONCE_HEADER) {
+        None => true,
+        Some(nonce) => nonce.to_str().ok().is_some_and(is_valid_client_nonce),
+    }
+}
+
 fn sign_server_proof(
     timestamp_text: &str,
     nonce: &str,
@@ -491,13 +522,20 @@ fn is_allowed_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_server_identity, is_valid_client_nonce, normalize_download, sign_server_proof,
-        ExtensionRequest, PROTOCOL_VERSION_HEADER, SERVER_HEADER,
+        add_server_identity, claim_request, has_allowed_request_origin, has_valid_optional_nonce,
+        is_valid_client_nonce, normalize_download, sign_server_proof, ExtensionRequest,
+        PROTOCOL_VERSION_HEADER, SERVER_HEADER,
     };
-    use axum::{http::StatusCode, middleware, routing::get, Router};
+    use axum::{
+        http::{HeaderMap, HeaderValue, StatusCode},
+        middleware,
+        routing::get,
+        Router,
+    };
     use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
-    use std::sync::{Arc, RwLock};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
 
     #[tokio::test]
     async fn identifies_every_extension_server_response() {
@@ -532,6 +570,54 @@ mod tests {
         assert!(is_valid_client_nonce("ABCDEF0123456789abcdef0123456789"));
         assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcde"));
         assert!(!is_valid_client_nonce("0123456789abcdef0123456789abcdeg"));
+    }
+
+    #[test]
+    fn rejects_invalid_origins_and_malformed_optional_nonces() {
+        let mut headers = HeaderMap::new();
+        assert!(has_allowed_request_origin(&headers));
+        assert!(has_valid_optional_nonce(&headers));
+
+        headers.insert(
+            "origin",
+            HeaderValue::from_static("https://not-firelink.example"),
+        );
+        assert!(!has_allowed_request_origin(&headers));
+
+        headers.insert(
+            "origin",
+            HeaderValue::from_static("moz-extension://firelink"),
+        );
+        headers.insert(
+            "x-firelink-client-nonce",
+            HeaderValue::from_static("not-a-valid-nonce"),
+        );
+        assert!(has_allowed_request_origin(&headers));
+        assert!(!has_valid_optional_nonce(&headers));
+    }
+
+    #[test]
+    fn media_handoffs_reject_non_http_page_urls() {
+        let download = normalize_download(ExtensionRequest {
+            urls: vec!["ftp://example.com/audio.mp3".to_string()],
+            referer: None,
+            silent: false,
+            filename: None,
+            headers: None,
+            cookies: None,
+            media: true,
+        });
+
+        assert!(download.is_none());
+    }
+
+    #[test]
+    fn rejects_replayed_download_signature() {
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let signature = "a".repeat(64);
+
+        assert!(claim_request(&signature, 42, &cache));
+        assert!(!claim_request(&signature, 42, &cache));
     }
 
     #[test]

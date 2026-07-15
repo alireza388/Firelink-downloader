@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command;
 use ts_rs::TS;
 
@@ -83,6 +84,7 @@ fn proxy_from_environment() -> Option<String> {
     })
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn command_stdout(command: &mut Command) -> std::io::Result<String> {
     let output = command.output()?;
     if !output.status.success() {

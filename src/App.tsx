@@ -10,7 +10,7 @@ import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { extractValidDownloadUrls } from './utils/url';
 import { readClipboardDownloadUrls } from './utils/clipboard';
 import { listenEvent as listen, invokeCommand as invoke } from "./ipc";
-import { useDownloadStore, MAIN_QUEUE_ID } from './store/useDownloadStore';
+import { useDownloadStore, MAIN_QUEUE_ID, type ExtensionDownloadRequest } from './store/useDownloadStore';
 import { initDownloadListener } from './store/downloadStore';
 import { useSettingsStore } from "./store/useSettingsStore";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
@@ -127,6 +127,12 @@ function App() {
   const schedulerActiveDownloadIds = useSettingsStore(state => state.schedulerActiveDownloadIds);
   const pendingPostActionTimer = useRef<number | null>(null);
   const startupResumeStarted = useRef(false);
+  const startupInputReady = useRef(false);
+  const frontendReadyUpdate = useRef<Promise<void>>(Promise.resolve());
+  const pendingStartupInputs = useRef<Array<
+    | { type: 'extension'; payload: ExtensionDownloadRequest }
+    | { type: 'deep-link'; payload: string }
+  >>([]);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
   const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
   const activeTransferCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
@@ -149,6 +155,14 @@ function App() {
       window.clearTimeout(pendingPostActionTimer.current);
       pendingPostActionTimer.current = null;
     }
+  }, []);
+
+  const queueFrontendReadyUpdate = useCallback((ready: boolean) => {
+    const update = frontendReadyUpdate.current
+      .catch(() => undefined)
+      .then(() => invoke('set_extension_frontend_ready', { ready }));
+    frontendReadyUpdate.current = update;
+    return update;
   }, []);
 
   const schedulePostQueueAction = useCallback((action: Exclude<PostQueueAction, 'none'>) => {
@@ -257,7 +271,7 @@ function App() {
       let unlistenExtension: (() => void) | null = null;
       let unlistenDeepLink: (() => void) | null = null;
       const disposeListeners = () => {
-        invoke('set_extension_frontend_ready', { ready: false }).catch(() => {});
+        void queueFrontendReadyUpdate(false).catch(() => {});
         unlistenTerminalState?.();
         unlistenTerminalState = null;
         unlistenExtension?.();
@@ -303,11 +317,19 @@ function App() {
           }
         });
         unlistenExtension = await listen('extension-add-download', (event) => {
+          if (!startupInputReady.current || useSettingsStore.getState().showKeychainModal) {
+            pendingStartupInputs.current.push({ type: 'extension', payload: event.payload });
+            return;
+          }
           useDownloadStore.getState().handleExtensionDownload(event.payload).catch(error => {
             console.error('Failed to handle browser extension download:', error);
           });
         });
         unlistenDeepLink = await listen('deep-link-add-download', (event) => {
+          if (!startupInputReady.current || useSettingsStore.getState().showKeychainModal) {
+            pendingStartupInputs.current.push({ type: 'deep-link', payload: event.payload });
+            return;
+          }
           useDownloadStore.getState().openAddModalWithUrls(event.payload);
         });
 
@@ -424,17 +446,45 @@ function App() {
 
       if (!active) return;
       setCoreReady(true);
-      invoke('set_extension_frontend_ready', { ready: true }).catch(error => {
-        console.error('Failed to activate browser extension integration:', error);
-      });
     };
     void initialize();
     return () => {
       active = false;
+      startupInputReady.current = false;
+      pendingStartupInputs.current = [];
       cleanupListeners?.();
       cleanupListeners = null;
     };
-  }, [addToast]);
+  }, [addToast, queueFrontendReadyUpdate]);
+
+  useEffect(() => {
+    if (!coreReady) return;
+    // The backend must not emit extension/deep-link handoffs while the
+    // explanatory Keychain dialog is active. Deep links are buffered by the
+    // coordinator, and extension callers receive a retryable 503 instead.
+    void queueFrontendReadyUpdate(!showKeychainModal).catch(error => {
+      console.error('Failed to update browser extension readiness:', error);
+    });
+  }, [coreReady, queueFrontendReadyUpdate, showKeychainModal]);
+
+  useEffect(() => {
+    if (!coreReady || showKeychainModal) {
+      startupInputReady.current = false;
+      return;
+    }
+    if (startupInputReady.current) return;
+    startupInputReady.current = true;
+    const pendingInputs = pendingStartupInputs.current.splice(0);
+    for (const input of pendingInputs) {
+      if (input.type === 'extension') {
+        useDownloadStore.getState().handleExtensionDownload(input.payload).catch(error => {
+          console.error('Failed to handle queued browser extension download:', error);
+        });
+      } else {
+        useDownloadStore.getState().openAddModalWithUrls(input.payload);
+      }
+    }
+  }, [coreReady, showKeychainModal]);
 
   useEffect(() => {
     if (!coreReady || showKeychainModal || startupResumeStarted.current) return;
@@ -678,6 +728,7 @@ function App() {
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
+      if (!coreReady || useSettingsStore.getState().showKeychainModal) return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
@@ -696,7 +747,7 @@ function App() {
     };
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
-  }, []);
+  }, [coreReady, showKeychainModal]);
 
   useEffect(() => {
     if (!coreReady || showKeychainModal || !autoAddClipboardLinks) return;

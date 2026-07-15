@@ -12,15 +12,21 @@ export type KeychainStartupDecision = {
 };
 
 // The semantic app version can remain unchanged across release-candidate and
-// packaging rebuilds. Bump this contract version whenever a build can require
-// a fresh credential-store authorization, so an updated binary cannot skip
-// Firelink's explanation and invoke the OS prompt directly.
+// packaging rebuilds. Use the build identity so an updated binary cannot skip
+// Firelink's explanation and invoke the OS prompt directly. The policy epoch
+// remains only as a safe fallback for builds created outside the Git checkout.
 const KEYCHAIN_CONSENT_POLICY_VERSION = '2';
+const buildId = typeof import.meta.env.VITE_BUILD_ID === 'string'
+  ? import.meta.env.VITE_BUILD_ID.trim()
+  : '';
 
 export const getKeychainConsentVersion = (appVersion: string): string => {
   const normalizedVersion = appVersion.trim();
+  const consentIdentity = buildId && buildId !== 'unknown'
+    ? `build-${buildId}`
+    : `keychain-policy-${KEYCHAIN_CONSENT_POLICY_VERSION}`;
   return normalizedVersion
-    ? `${normalizedVersion}|keychain-policy-${KEYCHAIN_CONSENT_POLICY_VERSION}`
+    ? `${normalizedVersion}|${consentIdentity}`
     : '';
 };
 

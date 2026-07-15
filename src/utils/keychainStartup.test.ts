@@ -3,7 +3,9 @@ import { getKeychainConsentVersion, getKeychainStartupDecision } from './keychai
 
 describe('getKeychainStartupDecision', () => {
   it('changes the consent identity when the credential-access policy changes', () => {
-    expect(getKeychainConsentVersion('1.1.0')).toBe('1.1.0|keychain-policy-2');
+    expect(getKeychainConsentVersion('1.1.0')).toMatch(
+      /^1\.1\.0\|(build-.+|keychain-policy-2)$/
+    );
     expect(getKeychainConsentVersion('')).toBe('');
   });
 

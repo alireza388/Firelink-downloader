@@ -14,10 +14,23 @@ describe('download progress size display', () => {
       totalIsEstimate: true,
       fallbackSize: 'Unknown'
     })).toEqual({
-      downloaded: '1.20 GB',
-      total: '2.40 GB',
+      downloaded: '1.20',
+      total: '2.40',
+      unit: 'GB',
       totalIsEstimate: true,
       fallback: 'Unknown'
+    });
+  });
+
+  it('converts downloaded bytes into the total size unit', () => {
+    expect(resolveDownloadSizeDisplay({
+      downloadedBytes: 512 * 1024 ** 2,
+      totalBytes: 2 * 1024 ** 3,
+      fallbackSize: '2 GB'
+    })).toMatchObject({
+      downloaded: '0.50',
+      total: '2.00',
+      unit: 'GB'
     });
   });
 });

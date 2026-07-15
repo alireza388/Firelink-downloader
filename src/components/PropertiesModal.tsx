@@ -237,7 +237,7 @@ export const PropertiesModal = () => {
                 <span
                   className="truncate"
                   title={hasDownloadedAmount
-                    ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total}`
+                    ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
                     : sizeDisplay.fallback}
                 >
                   {hasDownloadedAmount ? (
@@ -245,7 +245,7 @@ export const PropertiesModal = () => {
                       <span className={downloadProgressColorClass(item.status)}>{sizeDisplay.downloaded}</span>
                       <span className="text-text-muted"> / </span>
                       <span className="text-text-secondary">
-                        {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total}
+                        {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total} {sizeDisplay.unit}
                       </span>
                     </>
                   ) : sizeDisplay.fallback}

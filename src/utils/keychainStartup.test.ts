@@ -80,6 +80,19 @@ describe('getKeychainStartupDecision', () => {
     });
   });
 
+  it('keeps persistent access deferred without prompting when the version API is unavailable', () => {
+    expect(getKeychainStartupDecision({
+      portable: false,
+      appVersion: '',
+      approvedVersion: '1.0.5',
+      accessGranted: true,
+      promptDismissed: false
+    })).toEqual({
+      deferKeychainHydration: true,
+      showKeychainPrompt: false
+    });
+  });
+
   it('never gates portable pairing on credential-store access', () => {
     expect(getKeychainStartupDecision({
       portable: true,

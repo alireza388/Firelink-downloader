@@ -698,7 +698,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!coreReady || !autoAddClipboardLinks) return;
+    if (!coreReady || showKeychainModal || !autoAddClipboardLinks) return;
 
     let active = true;
     let wasForeground = false;
@@ -725,6 +725,7 @@ function App() {
         // read was pending. Let that newer Add-modal request win unchanged.
         if (
           !currentSettings.autoAddClipboardLinks ||
+          currentSettings.showKeychainModal ||
           currentStore.pendingAddRequestVersion !== requestVersionBeforeRead
         ) {
           return;
@@ -772,7 +773,7 @@ function App() {
       window.removeEventListener('blur', handleForegroundChange);
       document.removeEventListener('visibilitychange', handleForegroundChange);
     };
-  }, [autoAddClipboardLinks, coreReady]);
+  }, [autoAddClipboardLinks, coreReady, showKeychainModal]);
 
   useEffect(() => {
     const root = window.document.documentElement;

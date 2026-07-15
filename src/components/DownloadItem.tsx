@@ -99,10 +99,10 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
         <span
           className="tabular-nums"
           title={hasDownloadedAmount
-            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? '~' : ''}${sizeDisplay.total}`
+            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? '~' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
             : sizeDisplay.fallback}
           aria-label={hasDownloadedAmount
-            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total}`
+            ? `${sizeDisplay.downloaded} downloaded of ${sizeDisplay.totalIsEstimate ? 'approximately ' : ''}${sizeDisplay.total} ${sizeDisplay.unit}`
             : sizeDisplay.fallback}
         >
           {hasDownloadedAmount ? (
@@ -110,7 +110,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
               <span className={downloadProgressColorClass(download.status)}>{sizeDisplay.downloaded}</span>
               <span className="text-text-muted"> / </span>
               <span>
-                {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total}
+                {sizeDisplay.totalIsEstimate ? '~' : ''}{sizeDisplay.total} {sizeDisplay.unit}
               </span>
             </>
           ) : sizeDisplay.fallback}

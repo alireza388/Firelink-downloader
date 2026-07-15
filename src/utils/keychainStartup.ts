@@ -25,9 +25,11 @@ export const getKeychainStartupDecision = ({
     };
   }
 
-  const versionChanged = Boolean(appVersion) && approvedVersion !== appVersion;
+  const versionKnown = Boolean(appVersion.trim());
+  const versionChanged = versionKnown && approvedVersion !== appVersion;
+  const mustDeferAccess = !accessGranted || !versionKnown || versionChanged;
   return {
-    deferKeychainHydration: !accessGranted || versionChanged,
+    deferKeychainHydration: mustDeferAccess,
     showKeychainPrompt: versionChanged || (!accessGranted && !promptDismissed)
   };
 };

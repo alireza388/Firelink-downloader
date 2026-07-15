@@ -1,26 +1,37 @@
 export interface DownloadSizeDisplay {
   downloaded: string | null;
   total: string | null;
+  unit: string | null;
   totalIsEstimate: boolean;
   fallback: string;
 }
 
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+
 const isUsableByteCount = (value: number | null | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
-export const formatDownloadBytes = (bytes: number): string => {
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-
-  const units = ['KB', 'MB', 'GB', 'TB'];
+const byteUnitIndex = (bytes: number): number => {
   let value = bytes;
-  let unitIndex = -1;
-  while (value >= 1024 && unitIndex < units.length - 1) {
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
     value /= 1024;
     unitIndex += 1;
   }
+  return unitIndex;
+};
 
+const formatDownloadBytesInUnit = (bytes: number, unitIndex: number): string => {
+  const value = bytes / 1024 ** unitIndex;
   const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+  return value < 1024 && unitIndex === 0
+    ? `${Math.round(value)}`
+    : value.toFixed(precision);
+};
+
+export const formatDownloadBytes = (bytes: number): string => {
+  const unitIndex = byteUnitIndex(bytes);
+  return `${formatDownloadBytesInUnit(bytes, unitIndex)} ${BYTE_UNITS[unitIndex]}`;
 };
 
 export const resolveDownloadSizeDisplay = ({
@@ -34,8 +45,15 @@ export const resolveDownloadSizeDisplay = ({
   totalIsEstimate?: boolean;
   fallbackSize?: string | null;
 }): DownloadSizeDisplay => ({
-  downloaded: isUsableByteCount(downloadedBytes) ? formatDownloadBytes(downloadedBytes) : null,
-  total: isUsableByteCount(totalBytes) && totalBytes > 0 ? formatDownloadBytes(totalBytes) : null,
+  downloaded: isUsableByteCount(downloadedBytes) && isUsableByteCount(totalBytes) && totalBytes > 0
+    ? formatDownloadBytesInUnit(downloadedBytes, byteUnitIndex(totalBytes))
+    : null,
+  total: isUsableByteCount(totalBytes) && totalBytes > 0
+    ? formatDownloadBytesInUnit(totalBytes, byteUnitIndex(totalBytes))
+    : null,
+  unit: isUsableByteCount(totalBytes) && totalBytes > 0
+    ? BYTE_UNITS[byteUnitIndex(totalBytes)]
+    : null,
   totalIsEstimate: Boolean(totalIsEstimate && isUsableByteCount(totalBytes) && totalBytes > 0),
   fallback: fallbackSize && fallbackSize !== '-' ? fallbackSize : 'Unknown'
 });

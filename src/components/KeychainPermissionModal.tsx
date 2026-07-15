@@ -3,8 +3,13 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { invokeCommand as invoke } from '../ipc';
 import { KeyRound, ShieldAlert } from 'lucide-react';
 import { usePlatformInfo } from '../utils/platform';
+import { getVersion } from '@tauri-apps/api/app';
 
-export const KeychainPermissionModal: React.FC = () => {
+type KeychainPermissionModalProps = {
+  appVersion: string;
+};
+
+export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = ({ appVersion }) => {
   const showKeychainModal = useSettingsStore(state => state.showKeychainModal);
   const dismissKeychainPrompt = useSettingsStore(state => state.dismissKeychainPrompt);
   const platform = usePlatformInfo();
@@ -14,18 +19,18 @@ export const KeychainPermissionModal: React.FC = () => {
   useEffect(() => {
     if (!showKeychainModal || isGranting) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismissKeychainPrompt();
+      if (event.key === 'Escape') dismissKeychainPrompt(appVersion);
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [dismissKeychainPrompt, isGranting, showKeychainModal]);
+  }, [appVersion, dismissKeychainPrompt, isGranting, showKeychainModal]);
 
   if (!showKeychainModal) {
     return null;
   }
 
   const isMac = platform.os === 'macos';
-  const storeName =
+  const pairingStoreName =
     platform.portable
       ? 'the portable Firelink data folder'
       : platform.os === 'windows'
@@ -35,8 +40,11 @@ export const KeychainPermissionModal: React.FC = () => {
         : platform.os === 'macos'
           ? 'macOS Keychain'
           : "this system's credential store";
+  const siteCredentialStoreName = platform.portable
+    ? "the system's credential store"
+    : pairingStoreName;
   const grantLabel = platform.portable
-    ? 'Enable Portable Pairing'
+    ? 'Continue'
     : isMac
       ? 'Grant Access'
       : 'Enable Secure Storage';
@@ -48,17 +56,20 @@ export const KeychainPermissionModal: React.FC = () => {
     try {
       const result = await invoke('grant_keychain_access');
       if (result.persistent) {
+        const grantedVersion = appVersion || await getVersion().catch(() => '');
         // Keep state in sync with the grant result instead of rehydrating
         // before Zustand has persisted keychainAccessGranted.
         useSettingsStore.setState({
           keychainAccessGranted: true,
+          keychainAccessVersion: grantedVersion,
+          keychainAccessReady: true,
           extensionPairingToken: result.token,
           isPairingTokenPersistent: true,
           keychainPromptDismissed: false,
           showKeychainModal: false
         });
       } else {
-        setError(result.error || `${storeName} is unavailable.`);
+        setError(result.error || `${siteCredentialStoreName} is unavailable.`);
       }
     } catch (e: any) {
       setError(e.toString());
@@ -68,7 +79,7 @@ export const KeychainPermissionModal: React.FC = () => {
   };
 
   const handleLater = () => {
-    dismissKeychainPrompt();
+    dismissKeychainPrompt(appVersion);
   };
 
   return (
@@ -94,12 +105,12 @@ export const KeychainPermissionModal: React.FC = () => {
         <div className="px-5 py-6 flex-1 min-h-0 overflow-y-auto text-sm text-text-secondary leading-relaxed space-y-4">
           <p>
             Firelink uses the browser extension to capture downloads. To keep the extension paired after restarts,
-            Firelink stores its pairing token in {storeName}.
+            Firelink stores its pairing token in {pairingStoreName}. Optional site credentials are stored in {siteCredentialStoreName}.
           </p>
 
           <p>
             {platform.portable
-              ? 'The pairing token is portable with this folder. Treat the folder as sensitive and do not share it.'
+              ? 'The pairing token is portable with this folder. Site credentials remain in the system credential store; a system prompt may appear after you grant access.'
               : isMac
               ? 'macOS may show a Keychain prompt after you grant access.'
               : 'This usually completes silently. If the credential service is unavailable, Firelink will show the error here and the extension will stay paired for this session only.'}

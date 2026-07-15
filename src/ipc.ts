@@ -54,6 +54,7 @@ type CommandMap = {
   set_extension_pairing_token: { args: { token: string }; result: void };
   get_extension_server_port: { args: undefined; result: number | null };
   hydrate_extension_pairing_token: { args: undefined; result: PairingTokenHydration };
+  get_session_pairing_token: { args: undefined; result: PairingTokenHydration };
   regenerate_pairing_token: { args: undefined; result: PairingTokenHydration };
   grant_keychain_access: { args: undefined; result: PairingTokenHydration };
   acknowledge_pairing_token_change: { args: undefined; result: void };

@@ -36,6 +36,7 @@ const SETTINGS_TAB_VALUES = [
 
 type PersistedSettingsSnapshot = PersistedSettings & {
   keychainPromptDismissed: boolean;
+  keychainAccessVersion: string;
 };
 
 const clampSettingInteger = (
@@ -157,6 +158,8 @@ export interface SettingsState {
   extensionPairingToken: string;
   isPairingTokenPersistent: boolean;
   keychainAccessGranted: boolean;
+  keychainAccessVersion: string;
+  keychainAccessReady: boolean;
   keychainPromptDismissed: boolean;
   autoCheckUpdates: boolean;
   showKeychainModal: boolean;
@@ -204,7 +207,9 @@ export interface SettingsState {
   setAutoCheckUpdates: (autoCheckUpdates: boolean) => void;
   hydratePairingToken: () => Promise<boolean>;
   setShowKeychainModal: (show: boolean) => void;
-  dismissKeychainPrompt: () => void;
+  setKeychainAccessReady: (ready: boolean) => void;
+  dismissKeychainPrompt: (version?: string) => void;
+  hydrateSessionPairingToken: () => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -260,6 +265,8 @@ export const useSettingsStore = create<SettingsState>()(
       extensionPairingToken: '',
       isPairingTokenPersistent: false,
       keychainAccessGranted: false,
+      keychainAccessVersion: '',
+      keychainAccessReady: false,
       keychainPromptDismissed: false,
       autoCheckUpdates: true,
       showKeychainModal: false,
@@ -388,12 +395,25 @@ export const useSettingsStore = create<SettingsState>()(
         });
         return result.tokenChanged;
       },
+      hydrateSessionPairingToken: async () => {
+        const result = await invoke('get_session_pairing_token');
+        set({
+          extensionPairingToken: result.token,
+          isPairingTokenPersistent: false,
+          keychainAccessReady: false
+        });
+      },
       setAutoCheckUpdates: (autoCheckUpdates: boolean) => set({ autoCheckUpdates }),
       setShowKeychainModal: (show: boolean) => set({ showKeychainModal: show }),
-      dismissKeychainPrompt: () => set({
+      setKeychainAccessReady: (ready: boolean) => set({ keychainAccessReady: ready }),
+      dismissKeychainPrompt: (version?: string) => set(state => ({
+        keychainAccessGranted: false,
+        isPairingTokenPersistent: false,
+        keychainAccessReady: false,
+        keychainAccessVersion: version || state.keychainAccessVersion,
         keychainPromptDismissed: true,
         showKeychainModal: false
-      }),
+      })),
     }),
     {
       name: 'firelink-settings',
@@ -470,6 +490,7 @@ export const useSettingsStore = create<SettingsState>()(
         mediaCookieSource: state.mediaCookieSource,
         siteLogins: state.siteLogins,
         keychainAccessGranted: state.keychainAccessGranted,
+        keychainAccessVersion: state.keychainAccessVersion,
         keychainPromptDismissed: state.keychainPromptDismissed,
         autoCheckUpdates: state.autoCheckUpdates
       }),
@@ -483,6 +504,7 @@ export const useSettingsStore = create<SettingsState>()(
           ...persisted,
           ...locations,
           extensionPairingToken: currentState.extensionPairingToken,
+          keychainAccessReady: currentState.keychainAccessReady,
           theme: isAllowedSetting(THEME_VALUES, persisted.theme)
             ? persisted.theme
             : currentState.theme,
@@ -517,6 +539,9 @@ export const useSettingsStore = create<SettingsState>()(
             persisted.keychainAccessGranted,
             currentState.keychainAccessGranted
           ),
+          keychainAccessVersion: typeof persisted.keychainAccessVersion === 'string'
+            ? persisted.keychainAccessVersion
+            : currentState.keychainAccessVersion,
           keychainPromptDismissed: persistedBoolean(
             persisted.keychainPromptDismissed,
             currentState.keychainPromptDismissed

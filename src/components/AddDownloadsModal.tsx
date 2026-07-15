@@ -86,7 +86,12 @@ export const AddDownloadsModal = () => {
     addDownload,
     queues
   } = useDownloadStore();
-  const { baseDownloadFolder, perServerConnections } = useSettingsStore();
+  const {
+    baseDownloadFolder,
+    perServerConnections,
+    keychainAccessReady,
+    keychainPromptDismissed
+  } = useSettingsStore();
 
   const [urls, setUrls] = useState('');
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
@@ -323,12 +328,16 @@ export const AddDownloadsModal = () => {
         try {
           const settingsStore = useSettingsStore.getState();
           const proxy = await getProxyArgs(settingsStore);
+          const login = getSiteLogin(row.sourceUrl, settingsStore);
+          if (login && !useAuth && !keychainAccessReady && !keychainPromptDismissed) {
+            settingsStore.setShowKeychainModal(true);
+            return;
+          }
           if (row.isMedia) {
             const { mediaCookieSource } = settingsStore;
             const browserArg = mediaCookieSource !== 'none' ? mediaCookieSource : null;
-            const login = getSiteLogin(row.sourceUrl, settingsStore);
             let keychainPassword = null;
-            if (login) {
+            if (login && !useAuth && keychainAccessReady) {
               try {
                 keychainPassword = await invoke('get_keychain_password', { id: login.id });
               } catch (e) {
@@ -388,9 +397,8 @@ export const AddDownloadsModal = () => {
               throw new Error("Invalid media metadata or no formats found");
             }
           } else {
-            const login = getSiteLogin(row.sourceUrl, settingsStore);
             let keychainPassword = null;
-            if (login) {
+            if (login && !useAuth && keychainAccessReady) {
               try {
                 keychainPassword = await invoke('get_keychain_password', { id: login.id });
               } catch (e) {
@@ -450,7 +458,7 @@ export const AddDownloadsModal = () => {
         }
       })();
     }
-  }, [parsedItems, pendingAddFilename, pendingAddMediaUrls]);
+  }, [keychainAccessReady, keychainPromptDismissed, parsedItems, pendingAddFilename, pendingAddMediaUrls, useAuth]);
 
   useEffect(() => {
     if (parsedItems.length === 0) {

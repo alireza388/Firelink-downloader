@@ -21,7 +21,9 @@ import { WindowControls } from "./components/WindowControls";
 import { useToast } from "./contexts/ToastContext";
 import { setLogStreamActive } from './utils/logger';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { usePlatformInfo } from './utils/platform';
+import { getPlatformInfo, usePlatformInfo } from './utils/platform';
+import { getKeychainStartupDecision } from './utils/keychainStartup';
+import { getVersion } from '@tauri-apps/api/app';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import { PanelLeft } from 'lucide-react';
 
@@ -94,6 +96,7 @@ function App() {
   const platform = usePlatformInfo();
   const [filter, setFilter] = useState<SidebarFilter>('all');
   const [coreReady, setCoreReady] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
@@ -111,6 +114,7 @@ function App() {
   const showDockBadge = useSettingsStore(state => state.showDockBadge);
   const showMenuBarIcon = useSettingsStore(state => state.showMenuBarIcon);
   const extensionPairingToken = useSettingsStore(state => state.extensionPairingToken);
+  const showKeychainModal = useSettingsStore(state => state.showKeychainModal);
   const downloads = useDownloadStore(state => state.downloads);
   const activeDownloadCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
   const queuedCount = downloads.filter(download =>
@@ -120,6 +124,7 @@ function App() {
   const schedulerRunning = useSettingsStore(state => state.schedulerRunning);
   const schedulerActiveDownloadIds = useSettingsStore(state => state.schedulerActiveDownloadIds);
   const pendingPostActionTimer = useRef<number | null>(null);
+  const startupResumeStarted = useRef(false);
   const maxConcurrentDownloads = useSettingsStore(state => state.maxConcurrentDownloads);
   const preventsSleepWhileDownloading = useSettingsStore(state => state.preventsSleepWhileDownloading);
   const activeTransferCount = downloads.filter(download => isTransferActiveStatus(download.status)).length;
@@ -326,8 +331,39 @@ function App() {
         return;
       }
 
+      const [currentAppVersion, currentPlatform] = await Promise.all([
+        getVersion().catch(() => ''),
+        getPlatformInfo().catch(() => null)
+      ]);
+      if (!active) return;
+      setAppVersion(currentAppVersion);
+
       try {
-        const changed = await useSettingsStore.getState().hydratePairingToken();
+        const settings = useSettingsStore.getState();
+        const { deferKeychainHydration, showKeychainPrompt } = getKeychainStartupDecision({
+          portable: currentPlatform?.portable === true,
+          appVersion: currentAppVersion,
+          approvedVersion: settings.keychainAccessVersion,
+          accessGranted: settings.keychainAccessGranted,
+          promptDismissed: settings.keychainPromptDismissed
+        });
+
+        let changed = false;
+        if (deferKeychainHydration) {
+          settings.setKeychainAccessReady(false);
+          // This token is already owned by the backend and does not access
+          // the OS credential store. Render our explanation before any native
+          // Keychain/Credential Manager prompt can be user-triggered.
+          await settings.hydrateSessionPairingToken();
+          if (showKeychainPrompt) {
+            settings.setShowKeychainModal(true);
+          }
+        } else {
+          changed = await settings.hydratePairingToken();
+          settings.setKeychainAccessReady(
+            currentPlatform?.portable !== true && useSettingsStore.getState().isPairingTokenPersistent
+          );
+        }
         if (changed) {
           addToast({
             variant: 'warning',
@@ -396,6 +432,19 @@ function App() {
       cleanupListeners = null;
     };
   }, [addToast]);
+
+  useEffect(() => {
+    if (!coreReady || showKeychainModal || startupResumeStarted.current) return;
+    startupResumeStarted.current = true;
+    useDownloadStore.getState().resumePendingDownloads().catch(error => {
+      console.error('Failed to resume saved downloads after startup:', error);
+      addToast({
+        message: `Could not resume saved downloads: ${String(error)}`,
+        variant: 'error',
+        isActionable: true
+      });
+    });
+  }, [addToast, coreReady, showKeychainModal]);
 
   useEffect(() => {
     window.document.documentElement.setAttribute('data-font-size', appFontSize);
@@ -747,7 +796,7 @@ function App() {
       <AddDownloadsModal />
       <PropertiesModal />
       <DeleteConfirmationModal />
-      <KeychainPermissionModal />
+      <KeychainPermissionModal appVersion={appVersion} />
 
     </div>
   );

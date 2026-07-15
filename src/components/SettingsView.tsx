@@ -540,6 +540,12 @@ runEngineChecks(false);
     }
     setLoginFieldErrors({});
     const id = crypto.randomUUID();
+
+    if (!settings.keychainAccessReady) {
+      settings.setShowKeychainModal(true);
+      setLoginError('Grant credential-store access before saving a site login.');
+      return;
+    }
     
     if (loginPass) {
       try {
@@ -1049,6 +1055,10 @@ runEngineChecks(false);
                       </div>
                       <button
                         onClick={async () => {
+                          if (!settings.keychainAccessReady) {
+                            settings.setShowKeychainModal(true);
+                            return;
+                          }
                           try {
                             await invoke('delete_keychain_password', { id: login.id });
                             settings.removeSiteLogin(login.id);

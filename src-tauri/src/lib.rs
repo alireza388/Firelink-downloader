@@ -4964,6 +4964,29 @@ fn hydrate_extension_pairing_token(
     })
 }
 
+/// Return the per-launch pairing token without touching the OS credential
+/// store. Startup uses this while the frontend explains credential access and
+/// waits for an explicit user decision.
+#[tauri::command]
+fn get_session_pairing_token(
+    app_state: tauri::State<'_, AppState>,
+) -> Result<PairingTokenHydration, String> {
+    let token = app_state
+        .extension_pairing_token
+        .read()
+        .map_err(|_| "Extension pairing token lock is unavailable".to_string())?
+        .clone();
+    if token.trim().is_empty() {
+        return Err("Session pairing token is not initialized".to_string());
+    }
+    Ok(PairingTokenHydration {
+        token,
+        token_changed: false,
+        persistent: false,
+        error: None,
+    })
+}
+
 #[tauri::command]
 fn regenerate_pairing_token(
     database: tauri::State<'_, crate::db::DbState>,
@@ -7132,7 +7155,7 @@ pub fn run() {
             ack_schedule_trigger,
             check_automation_permission, request_automation_permission, open_automation_settings,
             set_keychain_password, get_keychain_password, delete_keychain_password,
-            hydrate_extension_pairing_token, regenerate_pairing_token, grant_keychain_access,
+            hydrate_extension_pairing_token, get_session_pairing_token, regenerate_pairing_token, grant_keychain_access,
             acknowledge_pairing_token_change,
             check_file_exists, toggle_tray_icon, set_extension_pairing_token,
             get_extension_server_port, set_extension_frontend_ready, set_concurrent_limit, set_global_speed_limit, remove_download,

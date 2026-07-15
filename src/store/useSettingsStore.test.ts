@@ -25,3 +25,44 @@ describe('useSettingsStore global speed limit persistence', () => {
     expect(ipc.invokeCommand).toHaveBeenCalledWith('set_global_speed_limit', { limit: '3M' });
   });
 });
+
+describe('useSettingsStore credential-store startup flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useSettingsStore.setState({
+      extensionPairingToken: '',
+      isPairingTokenPersistent: false,
+      keychainAccessGranted: false,
+      keychainAccessVersion: '',
+      keychainAccessReady: false,
+      keychainPromptDismissed: false,
+      showKeychainModal: false
+    });
+  });
+
+  it('loads the session pairing token without invoking the credential store', async () => {
+    vi.mocked(ipc.invokeCommand).mockResolvedValueOnce({
+      token: 'session-token',
+      tokenChanged: false,
+      persistent: false,
+      error: null
+    });
+
+    await useSettingsStore.getState().hydrateSessionPairingToken();
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith('get_session_pairing_token');
+    expect(useSettingsStore.getState().extensionPairingToken).toBe('session-token');
+    expect(useSettingsStore.getState().isPairingTokenPersistent).toBe(false);
+  });
+
+  it('clears the approved startup state when the user defers credential access', () => {
+    useSettingsStore.setState({ keychainAccessGranted: true });
+
+    useSettingsStore.getState().dismissKeychainPrompt('1.0.5');
+
+    expect(useSettingsStore.getState().keychainAccessGranted).toBe(false);
+    expect(useSettingsStore.getState().keychainAccessReady).toBe(false);
+    expect(useSettingsStore.getState().keychainAccessVersion).toBe('1.0.5');
+    expect(useSettingsStore.getState().keychainPromptDismissed).toBe(true);
+  });
+});

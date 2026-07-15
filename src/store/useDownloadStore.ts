@@ -21,6 +21,12 @@ const downloadLifecycleGenerations = new Map<string, bigint>();
 const queueReorderPromises = new Map<string, Promise<void>>();
 const queueStartPromises = new Map<string, Promise<string[]>>();
 const queueControlGenerations = new Map<string, number>();
+let pendingStartupResume: Promise<void> | null = null;
+
+const waitForPendingStartupResume = async (): Promise<void> => {
+  const pending = pendingStartupResume;
+  if (pending) await pending.catch(() => undefined);
+};
 
 const currentQueueControlGeneration = (queueId: string): number =>
   queueControlGenerations.get(queueId) ?? 0;
@@ -137,6 +143,7 @@ const speedLimitForDispatch = (itemSpeedLimit: string | undefined, globalSpeedLi
 };
 
 export async function dispatchItem(id: string): Promise<boolean> {
+  await waitForPendingStartupResume();
   if (backendDispatchPromises.has(id)) return backendDispatchPromises.get(id)!;
 
   const promise = (async () => {
@@ -155,8 +162,12 @@ export async function dispatchItem(id: string): Promise<boolean> {
       if (!isCurrentDownloadLifecycle(id, lifecycleGeneration)) return false;
 
       const login = getSiteLogin(item.url, settings);
+      if (login && !item.password && !settings.keychainAccessReady && !settings.keychainPromptDismissed) {
+        settings.setShowKeychainModal(true);
+        return false;
+      }
       let keychainPassword = null;
-      if (login) {
+      if (login && !item.password && settings.keychainAccessReady) {
         try {
           keychainPassword = await invoke('get_keychain_password', { id: login.id });
         } catch (e) {
@@ -437,6 +448,7 @@ interface DownloadState {
   addQueue: (name: string) => void;
   renameQueue: (id: string, name: string) => void;
   removeQueue: (id: string) => Promise<void>;
+  resumePendingDownloads: () => Promise<void>;
   initDB: () => Promise<void>;
   
 }
@@ -689,6 +701,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return false;
   },
   applyProperties: async (id, updates) => {
+    await waitForPendingStartupResume();
     const wasDispatching = await invalidateAndWaitForDispatch(id);
     const state = get();
     const item = state.downloads.find(d => d.id === id);
@@ -758,6 +771,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
   },
   removeDownload: async (id, deleteFile = false, preserveResumable = false) => {
+    await waitForPendingStartupResume();
     const { pendingDispatch } = await invalidateDispatch(id);
     if (pendingDispatch) {
       await pendingDispatch;
@@ -784,6 +798,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     syncSystemIntegrations();
   },
   pauseDownload: async (id) => {
+    await waitForPendingStartupResume();
     const { generation, pendingDispatch } = await invalidateDispatch(id);
     if (pendingDispatch) {
       await pendingDispatch;
@@ -798,6 +813,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
   },
   redownload: async (id) => {
+    await waitForPendingStartupResume();
     const targetItem = get().downloads.find(d => d.id === id);
     if (!targetItem) {
       throw new Error('Cannot redownload: download was not found.');
@@ -839,6 +855,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     }
   },
   resumeDownload: async (id) => {
+    await waitForPendingStartupResume();
     const targetItem = get().downloads.find(d => d.id === id);
     if (!targetItem) return false;
 
@@ -895,6 +912,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const requestedGeneration = currentQueueControlGeneration(queueId);
     const previousOperation = queueStartPromises.get(queueId) ?? Promise.resolve([]);
     const operation = previousOperation.catch(() => []).then(async () => {
+      await waitForPendingStartupResume();
       const runnable = get().downloads
         .filter(item => item.queueId === queueId && (item.status === 'queued' || canStartDownload(item.status)))
         .sort(queuePositionComparator);
@@ -965,6 +983,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return trackedOperation;
   },
   pauseQueue: async (queueId) => {
+    await waitForPendingStartupResume();
     // Invalidate queued starts before taking the snapshot. This prevents a
     // start loop that is waiting on metadata/IPC from dispatching later rows
     // after the user has already requested Pause Queue.
@@ -1003,6 +1022,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return results.reduce((total, ids) => total + ids.length, 0);
   },
   pauseAll: async () => {
+    await waitForPendingStartupResume();
     const queueIds = new Set(
       get().downloads.map(item => item.queueId || MAIN_QUEUE_ID)
     );
@@ -1020,6 +1040,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     return pausedCount;
   },
   assignToQueue: async (ids, queueId) => {
+    await waitForPendingStartupResume();
     const selectedIds = new Set(ids);
     const selected = get().downloads.filter(item => selectedIds.has(item.id));
     const locked = selected.find(item => isActiveDownloadStatus(item.status) && item.status !== 'queued');
@@ -1081,6 +1102,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
   removeQueue: async (id) => {
     if (id === MAIN_QUEUE_ID) return;
+    await waitForPendingStartupResume();
     const unfinishedIds = get().downloads
       .filter(download => download.queueId === id && download.status !== 'completed')
       .map(download => download.id);
@@ -1102,6 +1124,149 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         selectedQueueIds
       });
     }
+  },
+  resumePendingDownloads: () => {
+    if (pendingStartupResume) return pendingStartupResume;
+
+    const operation = (async () => {
+      const active = get().downloads
+        .filter(d => d.status === 'queued')
+        .sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
+      if (active.length === 0) return;
+
+      try {
+        const settings = useSettingsStore.getState();
+        const itemsToEnqueue = [];
+        for (const pendingItem of active) {
+          const item = get().downloads.find(download => download.id === pendingItem.id);
+          if (!item || item.status !== 'queued' || get().backendRegisteredIds.has(item.id)) continue;
+
+          const login = getSiteLogin(item.url, settings);
+          let keychainPassword = null;
+          if (login && !item.password && settings.keychainAccessReady) {
+            try {
+              keychainPassword = await invoke('get_keychain_password', { id: login.id });
+            } catch (e) {
+              console.warn("Could not fetch keychain password for login:", e);
+            }
+          }
+          const destPath = item.destination ||
+            await resolveCategoryDestination(settings, item.category);
+          itemsToEnqueue.push({
+            id: item.id,
+            queue_id: item.queueId || MAIN_QUEUE_ID,
+            url: item.url,
+            destination: destPath,
+            filename: item.fileName,
+            connections: item.connections || settings.perServerConnections || null,
+            speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
+            username: item.username || (login ? login.username : null),
+            password: item.password || keychainPassword,
+            headers: item.headers || null,
+            checksum: item.checksum || null,
+            cookies: item.cookies || null,
+            mirrors: item.mirrors || null,
+            user_agent: settings.customUserAgent.trim() || null,
+            max_tries: settings.maxAutomaticRetries,
+            proxy: await getProxyArgs(settings),
+            format_selector: item.mediaFormatSelector || null,
+            cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
+            is_media: item.isMedia || false,
+            lifecycle_generation: currentDownloadLifecycle(item.id).toString(),
+          });
+        }
+
+        const currentItems = new Map(get().downloads.map(item => [item.id, item]));
+        const dispatchableItems = itemsToEnqueue.filter(item => {
+          const current = currentItems.get(item.id);
+          return current &&
+            current.status === 'queued' &&
+            !get().backendRegisteredIds.has(item.id) &&
+            !backendDispatchPromises.has(item.id) &&
+            currentDownloadLifecycle(item.id).toString() === item.lifecycle_generation;
+        });
+        if (dispatchableItems.length === 0) return;
+
+        const results = await invoke('enqueue_many', { items: dispatchableItems });
+        const registeredIds = results.filter(result => result.success).map(result => result.id);
+        const failedErrors = new Map(
+          results
+            .filter(result => !result.success)
+            .map(result => [result.id, result.error || 'Backend rejected the queued download.'])
+        );
+        const acceptedIdSet = new Set(registeredIds);
+        const generationById = new Map(dispatchableItems.map(item => [item.id, item.lifecycle_generation]));
+
+        // Commit backend ownership as soon as enqueue_many accepts an item.
+        // The order query is a separate best-effort view read; if it fails,
+        // forgetting these registrations would let a later queue start
+        // enqueue the same backend lifecycle a second time.
+        set(state => {
+          // A very fast backend transfer can emit a terminal event before
+          // this batch result is merged. Preserve that event's ownership
+          // cleanup instead of re-registering an already-terminal ID.
+          const liveAcceptedIds = new Set(
+            state.downloads
+              .filter(download =>
+                acceptedIdSet.has(download.id) &&
+                download.status !== 'completed' &&
+                download.status !== 'failed' &&
+                currentDownloadLifecycle(download.id).toString() === generationById.get(download.id)
+              )
+              .map(download => download.id)
+          );
+          return {
+            backendRegisteredIds: new Set([
+              ...state.backendRegisteredIds,
+              ...liveAcceptedIds
+            ]),
+            downloads: state.downloads.map(download =>
+              failedErrors.has(download.id)
+                ? {
+                    ...download,
+                    status: 'failed' as const,
+                    lastError: failedErrors.get(download.id)
+                  }
+                : liveAcceptedIds.has(download.id)
+                  ? { ...download, hasBeenDispatched: true, lastError: undefined }
+                  : download
+            )
+          };
+        });
+
+        // A cancellation can race with the batch RPC. Use the lifecycle-aware
+        // cancellation command for any accepted generation that is no longer
+        // current; never remove by ID because a newer lifecycle could already
+        // own that same download row.
+        await Promise.all(registeredIds
+          .filter(id => !get().backendRegisteredIds.has(id))
+          .map(id => {
+            const generation = generationById.get(id);
+            if (generation === undefined) return Promise.resolve();
+            return invoke('cancel_enqueue_generation', {
+              id,
+              generation
+            }).catch(error => {
+              console.warn(`Failed to cancel stale startup enqueue for ${id}:`, error);
+            });
+          }));
+
+        try {
+          const order = await invoke('get_pending_order', { queueId: null });
+          set({ pendingOrder: order });
+        } catch (e) {
+          console.error("Failed to refresh pending order after auto-resume:", e);
+        }
+      } catch (e) {
+        console.error("Failed to auto-resume active downloads:", e);
+        throw e;
+      }
+    })();
+    const trackedOperation = operation.finally(() => {
+      if (pendingStartupResume === trackedOperation) pendingStartupResume = null;
+    });
+    pendingStartupResume = trackedOperation;
+    return trackedOperation;
   },
   initDB: async () => {
     try {
@@ -1126,104 +1291,6 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
         )
       }));
 
-      // Auto resume downloads that were active or queued
-      const active = get().downloads
-        .filter(d => d.status === 'queued')
-        .sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
-      if (active.length > 0) {
-        try {
-          const settings = useSettingsStore.getState();
-          const itemsToEnqueue = [];
-          for (const item of active) {
-            const login = getSiteLogin(item.url, settings);
-            let keychainPassword = null;
-            if (login) {
-              try {
-                keychainPassword = await invoke('get_keychain_password', { id: login.id });
-              } catch (e) {
-                console.warn("Could not fetch keychain password for login:", e);
-              }
-            }
-            const destPath = item.destination ||
-              await resolveCategoryDestination(settings, item.category);
-            itemsToEnqueue.push({
-              id: item.id,
-              queue_id: item.queueId || MAIN_QUEUE_ID,
-              url: item.url,
-              destination: destPath,
-              filename: item.fileName,
-              connections: item.connections || settings.perServerConnections || null,
-              speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit),
-              username: item.username || (login ? login.username : null),
-              password: item.password || keychainPassword,
-              headers: item.headers || null,
-              checksum: item.checksum || null,
-              cookies: item.cookies || null,
-              mirrors: item.mirrors || null,
-              user_agent: settings.customUserAgent.trim() || null,
-              max_tries: settings.maxAutomaticRetries,
-              proxy: await getProxyArgs(settings),
-              format_selector: item.mediaFormatSelector || null,
-              cookie_source: settings.mediaCookieSource !== 'none' ? settings.mediaCookieSource : null,
-              is_media: item.isMedia || false,
-              lifecycle_generation: currentDownloadLifecycle(item.id).toString(),
-            });
-          }
-          const results = await invoke('enqueue_many', { items: itemsToEnqueue });
-          const registeredIds = results.filter(result => result.success).map(result => result.id);
-          const failedErrors = new Map(
-            results
-              .filter(result => !result.success)
-              .map(result => [result.id, result.error || 'Backend rejected the queued download.'])
-          );
-          const acceptedIdSet = new Set(registeredIds);
-
-          // Commit backend ownership as soon as enqueue_many accepts an item.
-          // The order query is a separate best-effort view read; if it fails,
-          // forgetting these registrations would let a later queue start
-          // enqueue the same backend lifecycle a second time.
-          set(state => {
-            // A very fast backend transfer can emit a terminal event before
-            // this batch result is merged. Preserve that event's ownership
-            // cleanup instead of re-registering an already-terminal ID.
-            const liveAcceptedIds = new Set(
-              state.downloads
-                .filter(download =>
-                  acceptedIdSet.has(download.id) &&
-                  download.status !== 'completed' &&
-                  download.status !== 'failed'
-                )
-                .map(download => download.id)
-            );
-            return {
-              backendRegisteredIds: new Set([
-                ...state.backendRegisteredIds,
-                ...liveAcceptedIds
-              ]),
-              downloads: state.downloads.map(download =>
-                failedErrors.has(download.id)
-                  ? {
-                      ...download,
-                      status: 'failed' as const,
-                      lastError: failedErrors.get(download.id)
-                    }
-                  : liveAcceptedIds.has(download.id)
-                    ? { ...download, hasBeenDispatched: true, lastError: undefined }
-                    : download
-              )
-            };
-          });
-
-          try {
-            const order = await invoke('get_pending_order', { queueId: null });
-            set({ pendingOrder: order });
-          } catch (e) {
-            console.error("Failed to refresh pending order after auto-resume:", e);
-          }
-        } catch (e) {
-          console.error("Failed to auto-resume active downloads:", e);
-        }
-      }
     } catch (e) {
       console.error("Failed to init DB", e);
       throw e;

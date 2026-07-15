@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getProxyArgs, getSiteLogin, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
+import { dispatchItem, getProxyArgs, getSiteLogin, normalizeCustomProxy, useDownloadStore } from './useDownloadStore';
 import { useDownloadProgressStore } from './downloadProgressStore';
 import { useSettingsStore } from './useSettingsStore';
 import * as ipc from '../ipc';
@@ -48,6 +48,9 @@ vi.mock('./useSettingsStore', () => ({
         Other: 'Other',
       },
       categoryDirectoryOverrides: {},
+      keychainAccessReady: false,
+      keychainPromptDismissed: false,
+      setShowKeychainModal: vi.fn(),
     })),
   }
 }));
@@ -77,6 +80,9 @@ describe('useDownloadStore', () => {
         Other: 'Other',
       },
       categoryDirectoryOverrides: {},
+      keychainAccessReady: false,
+      keychainPromptDismissed: false,
+      setShowKeychainModal: vi.fn(),
     } as unknown as ReturnType<typeof useSettingsStore.getState>);
     useDownloadStore.setState({
       downloads: [],
@@ -555,6 +561,35 @@ describe('useDownloadStore', () => {
     expect(useDownloadStore.getState().downloads[0].lastError).toBe('backend unavailable');
   });
 
+  it('blocks credential-backed dispatch until the custom access decision is made', async () => {
+    const setShowKeychainModal = vi.fn();
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...useSettingsStore.getState(),
+      siteLogins: [{ id: 'dispatch-login', urlPattern: 'secure.example.com', username: 'user' }],
+      keychainAccessReady: false,
+      keychainPromptDismissed: false,
+      setShowKeychainModal
+    } as unknown as ReturnType<typeof useSettingsStore.getState>);
+    useDownloadStore.setState({
+      downloads: [{
+        id: 'credential-gated-dispatch',
+        url: 'https://secure.example.com/file.bin',
+        fileName: 'file.bin',
+        destination: '/tmp',
+        status: 'ready',
+        category: 'Other',
+        dateAdded: ''
+      }] as any[],
+      backendRegisteredIds: new Set()
+    });
+
+    await expect(dispatchItem('credential-gated-dispatch')).resolves.toBe(false);
+
+    expect(setShowKeychainModal).toHaveBeenCalledWith(true);
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('get_keychain_password', expect.anything());
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_download', expect.anything());
+  });
+
   it('preserves backend rejection reasons while auto-resuming saved queued items', async () => {
     vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
       if (cmd === 'db_get_all_queues') return [];
@@ -582,6 +617,7 @@ describe('useDownloadStore', () => {
     });
 
     await useDownloadStore.getState().initDB();
+    await useDownloadStore.getState().resumePendingDownloads();
 
     expect(useDownloadStore.getState().downloads[0]).toMatchObject({
       status: 'failed',
@@ -613,6 +649,7 @@ describe('useDownloadStore', () => {
     });
 
     await useDownloadStore.getState().initDB();
+    await useDownloadStore.getState().resumePendingDownloads();
 
     expect(useDownloadStore.getState().backendRegisteredIds.has('startup-accepted')).toBe(true);
     expect(useDownloadStore.getState().downloads[0]).toMatchObject({
@@ -656,9 +693,99 @@ describe('useDownloadStore', () => {
     });
 
     await useDownloadStore.getState().initDB();
+    await useDownloadStore.getState().resumePendingDownloads();
 
     expect(useDownloadStore.getState().downloads[0].status).toBe('completed');
     expect(useDownloadStore.getState().backendRegisteredIds.has('startup-completed')).toBe(false);
+  });
+
+  it('does not read saved credentials during database initialization', async () => {
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...useSettingsStore.getState(),
+      siteLogins: [{ id: 'secure-login', urlPattern: 'secure.example.com', username: 'user' }],
+      keychainAccessReady: false
+    } as unknown as ReturnType<typeof useSettingsStore.getState>);
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'startup-credential-gated',
+          url: 'https://secure.example.com/file.bin',
+          fileName: 'file.bin',
+          status: 'queued',
+          category: 'Other',
+          dateAdded: '',
+          queueId: '00000000-0000-0000-0000-000000000001',
+          hasBeenDispatched: true
+        })];
+      }
+      if (cmd === 'get_keychain_password') return 'secret';
+      if (cmd === 'enqueue_many') return [{ id: 'startup-credential-gated', success: true }];
+      if (cmd === 'get_pending_order') return [];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith(
+      'get_keychain_password',
+      { id: 'secure-login' }
+    );
+    expect(ipc.invokeCommand).not.toHaveBeenCalledWith('enqueue_many', expect.anything());
+
+    vi.mocked(useSettingsStore.getState).mockReturnValue({
+      ...useSettingsStore.getState(),
+      siteLogins: [{ id: 'secure-login', urlPattern: 'secure.example.com', username: 'user' }],
+      keychainAccessReady: true
+    } as unknown as ReturnType<typeof useSettingsStore.getState>);
+    await useDownloadStore.getState().resumePendingDownloads();
+
+    expect(ipc.invokeCommand).toHaveBeenCalledWith('get_keychain_password', { id: 'secure-login' });
+    expect(ipc.invokeCommand).toHaveBeenCalledWith(
+      'enqueue_many',
+      expect.objectContaining({
+        items: [expect.objectContaining({ password: 'secret' })]
+      })
+    );
+  });
+
+  it('shares one startup-resume operation when callers race', async () => {
+    let releaseEnqueue!: () => void;
+    const enqueueReleased = new Promise<void>(resolve => {
+      releaseEnqueue = resolve;
+    });
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'startup-single-flight',
+          url: 'https://example.com/file.bin',
+          fileName: 'file.bin',
+          status: 'queued',
+          category: 'Other',
+          dateAdded: '',
+          queueId: '00000000-0000-0000-0000-000000000001',
+          hasBeenDispatched: true
+        })];
+      }
+      if (cmd === 'enqueue_many') {
+        await enqueueReleased;
+        return [{ id: 'startup-single-flight', success: true }];
+      }
+      if (cmd === 'get_pending_order') return [];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+    const first = useDownloadStore.getState().resumePendingDownloads();
+    const second = useDownloadStore.getState().resumePendingDownloads();
+    expect(second).toBe(first);
+    await vi.waitFor(() => {
+      expect(vi.mocked(ipc.invokeCommand).mock.calls.filter(call => call[0] === 'enqueue_many')).toHaveLength(1);
+    });
+
+    releaseEnqueue();
+    await Promise.all([first, second]);
   });
 
   it('redownloads fallback media without requiring a format selector', async () => {

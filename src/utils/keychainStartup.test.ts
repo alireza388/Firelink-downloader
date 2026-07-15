@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { getKeychainStartupDecision } from './keychainStartup';
+import { getKeychainConsentVersion, getKeychainStartupDecision } from './keychainStartup';
 
 describe('getKeychainStartupDecision', () => {
+  it('changes the consent identity when the credential-access policy changes', () => {
+    expect(getKeychainConsentVersion('1.1.0')).toBe('1.1.0|keychain-policy-2');
+    expect(getKeychainConsentVersion('')).toBe('');
+  });
+
+  it('re-prompts when the app build keeps the same semantic version', () => {
+    expect(getKeychainStartupDecision({
+      portable: false,
+      appVersion: getKeychainConsentVersion('1.1.0'),
+      approvedVersion: '1.1.0',
+      accessGranted: true,
+      promptDismissed: true
+    })).toEqual({
+      deferKeychainHydration: true,
+      showKeychainPrompt: true
+    });
+  });
+
   it('defers persistent hydration and shows the explanation after an update', () => {
     expect(getKeychainStartupDecision({
       portable: false,

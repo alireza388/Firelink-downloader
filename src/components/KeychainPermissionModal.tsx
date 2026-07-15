@@ -3,13 +3,14 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { invokeCommand as invoke } from '../ipc';
 import { KeyRound, ShieldAlert } from 'lucide-react';
 import { usePlatformInfo } from '../utils/platform';
+import { getKeychainConsentVersion } from '../utils/keychainStartup';
 import { getVersion } from '@tauri-apps/api/app';
 
 type KeychainPermissionModalProps = {
-  appVersion: string;
+  consentVersion: string;
 };
 
-export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = ({ appVersion }) => {
+export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = ({ consentVersion }) => {
   const showKeychainModal = useSettingsStore(state => state.showKeychainModal);
   const dismissKeychainPrompt = useSettingsStore(state => state.dismissKeychainPrompt);
   const platform = usePlatformInfo();
@@ -19,11 +20,11 @@ export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = (
   useEffect(() => {
     if (!showKeychainModal || isGranting) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismissKeychainPrompt(appVersion);
+        if (event.key === 'Escape') dismissKeychainPrompt(consentVersion);
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [appVersion, dismissKeychainPrompt, isGranting, showKeychainModal]);
+  }, [consentVersion, dismissKeychainPrompt, isGranting, showKeychainModal]);
 
   if (!showKeychainModal) {
     return null;
@@ -56,7 +57,7 @@ export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = (
     try {
       const result = await invoke('grant_keychain_access');
       if (result.persistent) {
-        const grantedVersion = appVersion || await getVersion().catch(() => '');
+        const grantedVersion = consentVersion || getKeychainConsentVersion(await getVersion().catch(() => ''));
         // Keep state in sync with the grant result instead of rehydrating
         // before Zustand has persisted keychainAccessGranted.
         useSettingsStore.setState({
@@ -79,7 +80,7 @@ export const KeychainPermissionModal: React.FC<KeychainPermissionModalProps> = (
   };
 
   const handleLater = () => {
-    dismissKeychainPrompt(appVersion);
+    dismissKeychainPrompt(consentVersion);
   };
 
   return (

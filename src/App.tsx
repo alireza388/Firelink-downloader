@@ -23,7 +23,7 @@ import { useToast } from "./contexts/ToastContext";
 import { setLogStreamActive } from './utils/logger';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getPlatformInfo, usePlatformInfo } from './utils/platform';
-import { getKeychainStartupDecision } from './utils/keychainStartup';
+import { getKeychainConsentVersion, getKeychainStartupDecision } from './utils/keychainStartup';
 import { getVersion } from '@tauri-apps/api/app';
 import type { PostQueueAction } from './bindings/PostQueueAction';
 import { PanelLeft } from 'lucide-react';
@@ -97,7 +97,7 @@ function App() {
   const platform = usePlatformInfo();
   const [filter, setFilter] = useState<SidebarFilter>('all');
   const [coreReady, setCoreReady] = useState(false);
-  const [appVersion, setAppVersion] = useState('');
+  const [keychainConsentVersion, setKeychainConsentVersion] = useState('');
 
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(window.localStorage.getItem('firelink-sidebar-width'));
@@ -338,13 +338,14 @@ function App() {
         getPlatformInfo().catch(() => null)
       ]);
       if (!active) return;
-      setAppVersion(currentAppVersion);
+      const currentKeychainConsentVersion = getKeychainConsentVersion(currentAppVersion);
+      setKeychainConsentVersion(currentKeychainConsentVersion);
 
       try {
         const settings = useSettingsStore.getState();
         const { deferKeychainHydration, showKeychainPrompt } = getKeychainStartupDecision({
           portable: currentPlatform?.portable === true,
-          appVersion: currentAppVersion,
+          appVersion: currentKeychainConsentVersion,
           approvedVersion: settings.keychainAccessVersion,
           accessGranted: settings.keychainAccessGranted,
           promptDismissed: settings.keychainPromptDismissed
@@ -876,7 +877,7 @@ function App() {
       <AddDownloadsModal />
       <PropertiesModal />
       <DeleteConfirmationModal />
-      <KeychainPermissionModal appVersion={appVersion} />
+      <KeychainPermissionModal consentVersion={keychainConsentVersion} />
 
     </div>
   );

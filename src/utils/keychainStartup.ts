@@ -11,6 +11,19 @@ export type KeychainStartupDecision = {
   showKeychainPrompt: boolean;
 };
 
+// The semantic app version can remain unchanged across release-candidate and
+// packaging rebuilds. Bump this contract version whenever a build can require
+// a fresh credential-store authorization, so an updated binary cannot skip
+// Firelink's explanation and invoke the OS prompt directly.
+const KEYCHAIN_CONSENT_POLICY_VERSION = '2';
+
+export const getKeychainConsentVersion = (appVersion: string): string => {
+  const normalizedVersion = appVersion.trim();
+  return normalizedVersion
+    ? `${normalizedVersion}|keychain-policy-${KEYCHAIN_CONSENT_POLICY_VERSION}`
+    : '';
+};
+
 export const getKeychainStartupDecision = ({
   portable,
   appVersion,

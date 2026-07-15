@@ -1176,28 +1176,43 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
               .filter(result => !result.success)
               .map(result => [result.id, result.error || 'Backend rejected the queued download.'])
           );
+          const acceptedIdSet = new Set(registeredIds);
 
           // Commit backend ownership as soon as enqueue_many accepts an item.
           // The order query is a separate best-effort view read; if it fails,
           // forgetting these registrations would let a later queue start
           // enqueue the same backend lifecycle a second time.
-          set(state => ({
-            backendRegisteredIds: new Set([
-              ...state.backendRegisteredIds,
-              ...registeredIds
-            ]),
-            downloads: state.downloads.map(download =>
-              failedErrors.has(download.id)
-                ? {
-                    ...download,
-                    status: 'failed' as const,
-                    lastError: failedErrors.get(download.id)
-                  }
-                  : registeredIds.includes(download.id)
-                  ? { ...download, hasBeenDispatched: true, lastError: undefined }
-                  : download
-            )
-          }));
+          set(state => {
+            // A very fast backend transfer can emit a terminal event before
+            // this batch result is merged. Preserve that event's ownership
+            // cleanup instead of re-registering an already-terminal ID.
+            const liveAcceptedIds = new Set(
+              state.downloads
+                .filter(download =>
+                  acceptedIdSet.has(download.id) &&
+                  download.status !== 'completed' &&
+                  download.status !== 'failed'
+                )
+                .map(download => download.id)
+            );
+            return {
+              backendRegisteredIds: new Set([
+                ...state.backendRegisteredIds,
+                ...liveAcceptedIds
+              ]),
+              downloads: state.downloads.map(download =>
+                failedErrors.has(download.id)
+                  ? {
+                      ...download,
+                      status: 'failed' as const,
+                      lastError: failedErrors.get(download.id)
+                    }
+                  : liveAcceptedIds.has(download.id)
+                    ? { ...download, hasBeenDispatched: true, lastError: undefined }
+                    : download
+              )
+            };
+          });
 
           try {
             const order = await invoke('get_pending_order', { queueId: null });

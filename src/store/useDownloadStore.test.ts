@@ -627,6 +627,40 @@ describe('useDownloadStore', () => {
     ).toHaveLength(0);
   });
 
+  it('does not restore a registration after a fast startup terminal event', async () => {
+    vi.mocked(ipc.invokeCommand).mockImplementation(async (cmd: string) => {
+      if (cmd === 'db_get_all_queues') return [];
+      if (cmd === 'db_get_all_downloads') {
+        return [JSON.stringify({
+          id: 'startup-completed',
+          url: 'https://example.com/file.bin',
+          fileName: 'file.bin',
+          status: 'queued',
+          category: 'Other',
+          dateAdded: '',
+          queueId: '00000000-0000-0000-0000-000000000001',
+          hasBeenDispatched: true
+        })];
+      }
+      if (cmd === 'enqueue_many') {
+        useDownloadStore.setState(state => ({
+          backendRegisteredIds: new Set(),
+          downloads: state.downloads.map(download => download.id === 'startup-completed'
+            ? { ...download, status: 'completed' as const }
+            : download)
+        }));
+        return [{ id: 'startup-completed', success: true, filename: 'file.bin' }];
+      }
+      if (cmd === 'get_pending_order') return [];
+      return undefined;
+    });
+
+    await useDownloadStore.getState().initDB();
+
+    expect(useDownloadStore.getState().downloads[0].status).toBe('completed');
+    expect(useDownloadStore.getState().backendRegisteredIds.has('startup-completed')).toBe(false);
+  });
+
   it('redownloads fallback media without requiring a format selector', async () => {
     useDownloadStore.setState({
       downloads: [{

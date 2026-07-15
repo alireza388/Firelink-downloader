@@ -5,6 +5,26 @@ All notable changes to Firelink will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-15
+
+This is a stability-focused release with safer downloads, browser handoffs, settings, and cross-platform packages.
+
+### New
+- Add a secure Windows portable ZIP, addressing the portable-version request in [#15](https://github.com/nimbold/Firelink/issues/15). Settings, queues, logs, and WebView data stay with the portable folder, while saved site passwords remain protected in Windows Credential Manager.
+
+### Improved
+- Make pause, resume, retry, remove, redownload, and queue actions reliable when several operations happen close together. Downloads now recover their state more consistently instead of restarting unexpectedly or appearing stuck after completion.
+- Make browser captures and the Add window safer and more dependable. Captured cookies are no longer sent to metadata checks unless authentication is actually needed, while ordinary downloads still keep the browser session they need. This resolves the fallback error reported in [#16](https://github.com/nimbold/Firelink/issues/16).
+- Improve settings and startup behavior: speed-limit units stay consistent, saved settings are handled more safely, and credential-store access waits until it is needed.
+- Improve browser handoff safety with stronger local request, replay, path, and credential checks.
+- Strengthen macOS, Windows, and Linux release verification, refresh the bundled FFmpeg payload, and make package and diagnostic checks more reliable.
+
+### Fixed
+- Prevent late or duplicate background events from bringing back downloads after a newer pause, remove, or edit action has already won.
+- Reconcile completed downloads even when a background completion event is missed, so finished files do not remain visually stuck at the end of the transfer.
+- Decode URL-derived filenames so links containing encoded characters such as `%20` produce readable names, addressing [#18](https://github.com/nimbold/Firelink/issues/18).
+- Keep local paths, usernames, credentials, and other sensitive values out of errors and diagnostic output where they are not needed.
+
 ## [1.0.4] - 2026-07-12
 
 ### New

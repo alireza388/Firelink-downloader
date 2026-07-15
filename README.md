@@ -5,7 +5,7 @@
 
   **A fast, focused desktop download manager for macOS, Windows, and Linux.**
 
-  [![Version](https://img.shields.io/badge/version-1.0.4-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
+  [![Version](https://img.shields.io/badge/version-1.1.0-6f42c1?style=flat-square)](https://github.com/nimbold/Firelink/releases)
   [![macOS](https://img.shields.io/badge/macOS-111111?style=flat-square&logo=apple&logoColor=white)](#platforms)
   [![Windows](.github/badges/windows.svg)](#platforms)
   [![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](#platforms)
@@ -37,7 +37,9 @@ Firelink is a desktop download manager for fast transfers, browser capture, medi
 
 It is now a cross-platform Rust/Tauri app with a React and TypeScript interface. A native backend coordinates downloads with aria2, yt-dlp, FFmpeg, Deno, and SQLite.
 
-The current desktop release is **1.0.4**, paired with Firelink Companion **2.0.3**.
+The current desktop release is **1.1.0**, paired with Firelink Companion **2.0.4**.
+
+This stability-focused release adds a secure Windows portable build and strengthens queues, browser handoffs, media metadata, persistence, and packaged release checks.
 
 ## Features
 
@@ -64,9 +66,20 @@ Download desktop builds from [GitHub Releases](https://github.com/nimbold/Fireli
 
 Bundles include the required engines. Users do not need aria2, yt-dlp, FFmpeg, Deno, Python, Homebrew, or another package manager.
 
-The native packages use the distribution's normal desktop runtime dependencies. The Windows portable ZIP keeps its application data beside the executable; AppImage is self-contained but uses the normal per-user application-data locations.
+The native packages use the distribution's normal desktop runtime dependencies. AppImage is self-contained but uses the normal per-user application-data locations.
 
-The Windows portable archive is an opt-in secondary distribution. Keep the extracted folder writable; `Program Files`, read-only media, and some network or synchronized folders can prevent SQLite and WebView data from being saved. Close Firelink before copying or moving the folder. Only one Firelink instance can run at a time, so close the installed app before launching the portable copy. Portable mode keeps application settings, queues, logs, and WebView data beside the executable. Credentials, browser cookies, and URL query/fragment data are not persisted in portable queue records; active downloads that depend on those URL components are marked failed and must be added again after restart. Saved site passwords remain in the Windows credential store and are intentionally not copied into the archive. The portable folder contains the extension pairing credential needed to preserve extension integration, so treat the folder as sensitive and do not share it. Saved absolute download locations may need to be selected again if the folder is moved to a different drive. The installer remains the supported path for `firelink://` browser launch registration.
+### Windows portable
+
+The portable ZIP is an opt-in secondary distribution:
+
+- Keep the extracted folder writable; avoid `Program Files`, read-only media, and folders that block SQLite or WebView writes.
+- Settings, queues, logs, and WebView data stay beside `firelink.exe` under `data/`.
+- Close Firelink before moving or copying the folder, and close the installed app before launching the portable copy.
+- Credentials, browser cookies, and URL query/fragment data are not saved in portable queue records. Active downloads that depend on them must be added again after restart.
+- Saved site passwords remain in the Windows credential store and are not copied into the archive.
+- The folder contains the extension pairing credential, so treat it as sensitive and do not share it.
+- Saved absolute download locations may need to be selected again after moving the folder to another drive.
+- The installer remains the supported path for `firelink://` browser launch registration.
 
 ## Browser Extension
 
@@ -88,7 +101,7 @@ What it adds:
 - Fallback to the browser download when Firelink is closed or rejects a handoff.
 - Captured links always open Firelink's Add window before anything is added to the download list.
 
-Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.3 is the matching extension release for Firelink 1.0.4.
+Install the extension, open Firelink, then pair it from **Settings -> Integrations**. Firefox users can install from Mozilla Add-ons. Chromium users can use the [manual load-unpacked flow](https://github.com/nimbold/Firelink-Extension#manual-chromium-installation) with `firelink-chromium.zip` from the [extension releases](https://github.com/nimbold/Firelink-Extension/releases). Firelink Companion 2.0.4 is the matching extension release for Firelink 1.1.0.
 
 The extension lives in [Firelink-Extension](https://github.com/nimbold/Firelink-Extension). This repo also vendors it as the `Extensions/Browser` submodule.
 

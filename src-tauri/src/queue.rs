@@ -57,6 +57,16 @@ pub enum PendingOutcome {
     Error(String),
 }
 
+/// Result of recycling an aria2 transfer's connections. A refresh can race
+/// with daemon completion or leave the transfer paused after an ambiguous
+/// unpause failure, so callers must handle the verified daemon outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aria2RefreshOutcome {
+    Resumed,
+    Paused,
+    Complete,
+}
+
 /// What kind of sidecar a queued task spawns. Drives which runner the
 /// dispatcher invokes.
 #[derive(Debug, Clone)]
@@ -117,7 +127,7 @@ pub trait SidecarSpawner: Send + Sync + 'static {
     /// Recycle the connections for an active aria2 transfer without changing
     /// its gid or releasing its queue permit. Production uses forcePause /
     /// unpause; test spawners can leave this unsupported.
-    async fn refresh_uri(&self, _gid: &str) -> Result<(), String> {
+    async fn refresh_uri(&self, _gid: &str) -> Result<Aria2RefreshOutcome, String> {
         Err("aria2 connection refresh is unavailable".to_string())
     }
 
@@ -1112,22 +1122,27 @@ impl<R: tauri::Runtime> QueueManager<R> {
 
     /// Recycle an active transfer's connections after the poller observes a
     /// persistent connection-pool collapse or a true zero-progress stall.
-    /// The transfer keeps its gid, partial file, and queue permit.
-    pub async fn refresh_aria2_connections(&self, id: &str, gid: &str) -> Result<(), String> {
+    /// The observed epoch must still own the GID before the refresh can act.
+    pub async fn refresh_aria2_connections(
+        &self,
+        id: &str,
+        gid: &str,
+        observed_epoch: u64,
+    ) -> Result<(), String> {
         let _control_guard = self.acquire_aria2_control(id).await;
         if self.aria2_gid_for_download(id).as_deref() != Some(gid)
             || !self.is_registered(id).await
             || self.is_aria2_retry_cancelled(id).await
+            || !self.is_aria2_control_epoch_current(id, observed_epoch).await
         {
             return Ok(());
         }
 
-        let epoch = self.current_aria2_control_epoch(id).await;
-        self.spawner.refresh_uri(gid).await?;
+        let outcome = self.spawner.refresh_uri(gid).await?;
 
         let still_current = self.is_registered(id).await
             && !self.is_aria2_retry_cancelled(id).await
-            && self.is_aria2_control_epoch_current(id, epoch).await
+            && self.is_aria2_control_epoch_current(id, observed_epoch).await
             && self.aria2_gid_for_download(id).as_deref() == Some(gid);
         if !still_current {
             log::info!(
@@ -1135,6 +1150,31 @@ impl<R: tauri::Runtime> QueueManager<R> {
                 id,
                 gid
             );
+            return Ok(());
+        }
+
+        match outcome {
+            Aria2RefreshOutcome::Resumed => {}
+            Aria2RefreshOutcome::Paused => {
+                self.next_aria2_control_epoch(id).await;
+                self.cancel_aria2_retries(id).await;
+                self.release_permit(id).await;
+                self.emit_state(id, DownloadStatus::Paused);
+                log::warn!(
+                    "aria2 connection refresh [{}]: gid {} remained paused; released its queue permit",
+                    id,
+                    gid
+                );
+            }
+            Aria2RefreshOutcome::Complete => {
+                self.apply_completion_locked(id, PendingOutcome::Complete)
+                    .await;
+                log::info!(
+                    "aria2 connection refresh [{}]: gid {} completed during recovery",
+                    id,
+                    gid
+                );
+            }
         }
         Ok(())
     }
@@ -1961,19 +2001,72 @@ impl SidecarSpawner for ProductionSpawner {
         }
     }
 
-    async fn refresh_uri(&self, gid: &str) -> Result<(), String> {
+    async fn refresh_uri(&self, gid: &str) -> Result<Aria2RefreshOutcome, String> {
         let state = self.app_handle.state::<crate::AppState>();
         let port = state.aria2_port.load(std::sync::atomic::Ordering::Relaxed);
         let secret = &state.aria2_secret;
-        let paused = crate::rpc_call(port, secret, "aria2.forcePause", serde_json::json!([gid]))
-            .await
-            .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
-        crate::ensure_aria2_gid_result("forcePause", gid, &paused)?;
+        let pause_error = match crate::rpc_call(
+            port,
+            secret,
+            "aria2.forcePause",
+            serde_json::json!([gid]),
+        )
+        .await
+        {
+            Ok(result) => crate::ensure_aria2_gid_result("forcePause", gid, &result)
+                .err()
+                .map(|error| error.to_string()),
+            Err(error) => Some(format!("failed to refresh aria2 gid {gid}: {error}")),
+        };
 
-        let resumed = crate::rpc_call(port, secret, "aria2.unpause", serde_json::json!([gid]))
-            .await
-            .map_err(|error| format!("failed to refresh aria2 gid {gid}: {error}"))?;
-        crate::ensure_aria2_gid_result("unpause", gid, &resumed)
+        if let Some(error) = pause_error {
+            match crate::aria2_download_status(port, secret, gid).await {
+                Ok(status) if status == "paused" => {
+                    log::warn!(
+                        "aria2 connection refresh: forcePause for gid {} failed after the daemon paused it; continuing with unpause",
+                        gid
+                    );
+                }
+                Ok(status) if status == "complete" => {
+                    return Ok(Aria2RefreshOutcome::Complete);
+                }
+                Ok(status) => {
+                    return Err(format!("{error}; aria2 gid {gid} is still {status}"));
+                }
+                Err(status_error) => {
+                    return Err(format!(
+                        "{error}; failed to verify aria2 gid {gid}: {status_error}"
+                    ));
+                }
+            }
+        }
+
+        let unpause_error = match crate::rpc_call(
+            port,
+            secret,
+            "aria2.unpause",
+            serde_json::json!([gid]),
+        )
+        .await
+        {
+            Ok(result) => crate::ensure_aria2_gid_result("unpause", gid, &result)
+                .err()
+                .map(|error| error.to_string()),
+            Err(error) => Some(format!("failed to refresh aria2 gid {gid}: {error}")),
+        };
+
+        let Some(error) = unpause_error else {
+            return Ok(Aria2RefreshOutcome::Resumed);
+        };
+        let status = crate::aria2_download_status(port, secret, gid).await?;
+        match status.as_str() {
+            "active" | "waiting" => Ok(Aria2RefreshOutcome::Resumed),
+            "paused" => Ok(Aria2RefreshOutcome::Paused),
+            "complete" => Ok(Aria2RefreshOutcome::Complete),
+            _ => Err(format!(
+                "{error}; aria2 gid {gid} reports terminal or unknown state {status}"
+            )),
+        }
     }
 
     async fn run_media(

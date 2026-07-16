@@ -1,5 +1,6 @@
 use firelink_lib::queue::{
-    QueueManager, QueuedTask, SidecarSpawner, SpawnPayload, TaskKind, MEDIA_RUN_CANCELLED,
+    Aria2RefreshOutcome, QueueManager, QueuedTask, SidecarSpawner, SpawnPayload, TaskKind,
+    MEDIA_RUN_CANCELLED,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -23,6 +24,11 @@ struct DelayedAria2Spawner {
 struct FailFirstAria2Spawner {
     add_uri_calls: AtomicUsize,
     fail_first: std::sync::atomic::AtomicBool,
+}
+
+struct RefreshOutcomeSpawner {
+    outcome: Aria2RefreshOutcome,
+    refresh_calls: AtomicUsize,
 }
 
 impl FailFirstAria2Spawner {
@@ -97,6 +103,31 @@ impl CountingSpawner {
             add_uri_calls: AtomicUsize::new(0),
             media_calls: AtomicUsize::new(0),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl SidecarSpawner for RefreshOutcomeSpawner {
+    async fn add_uri(&self, _id: &str, _payload: &SpawnPayload) -> Result<String, String> {
+        unreachable!("refresh outcome tests do not spawn aria2")
+    }
+
+    async fn remove_uri(&self, _gid: &str) -> Result<(), String> {
+        unreachable!("refresh outcome tests do not remove aria2")
+    }
+
+    async fn refresh_uri(&self, _gid: &str) -> Result<Aria2RefreshOutcome, String> {
+        self.refresh_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.outcome)
+    }
+
+    async fn run_media(
+        &self,
+        _id: &str,
+        _payload: &SpawnPayload,
+        _generation: u64,
+    ) -> Result<(), String> {
+        unreachable!("refresh outcome tests do not run media")
     }
 }
 
@@ -646,6 +677,73 @@ async fn aria2_permit_survives_rpc_return() {
     );
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn failed_refresh_that_leaves_gid_paused_releases_permit_but_keeps_resume_mapping() {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let spawner = Arc::new(RefreshOutcomeSpawner {
+        outcome: Aria2RefreshOutcome::Paused,
+        refresh_calls: AtomicUsize::new(0),
+    });
+    let manager = QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        Arc::clone(&spawner) as Arc<dyn SidecarSpawner>,
+    );
+    manager.push(aria2_task("refresh-paused")).await.unwrap();
+    assert!(manager.ensure_aria2_permit("refresh-paused").await);
+    manager
+        .remember_gid("refresh-paused".to_string(), "gid-refresh-paused".to_string())
+        .await;
+
+    let epoch = manager.current_aria2_control_epoch("refresh-paused").await;
+    manager
+        .refresh_aria2_connections("refresh-paused", "gid-refresh-paused", epoch)
+        .await
+        .unwrap();
+
+    assert_eq!(spawner.refresh_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(manager.available_permits(), 1);
+    assert!(!manager.has_active_permit("refresh-paused").await);
+    assert_eq!(
+        manager.aria2_gid_for_download("refresh-paused").as_deref(),
+        Some("gid-refresh-paused")
+    );
+    assert!(manager.is_registered("refresh-paused").await);
+}
+
+#[tokio::test]
+async fn stale_refresh_observation_cannot_touch_a_newer_control_epoch() {
+    let app = mock_builder()
+        .build(mock_context(noop_assets()))
+        .expect("mock app");
+    let spawner = Arc::new(RefreshOutcomeSpawner {
+        outcome: Aria2RefreshOutcome::Resumed,
+        refresh_calls: AtomicUsize::new(0),
+    });
+    let manager = QueueManager::test_new(
+        app.handle().clone(),
+        1,
+        Arc::clone(&spawner) as Arc<dyn SidecarSpawner>,
+    );
+    manager.push(aria2_task("refresh-stale")).await.unwrap();
+    assert!(manager.ensure_aria2_permit("refresh-stale").await);
+    manager
+        .remember_gid("refresh-stale".to_string(), "gid-refresh-stale".to_string())
+        .await;
+    let stale_epoch = manager.current_aria2_control_epoch("refresh-stale").await;
+    manager.next_aria2_control_epoch("refresh-stale").await;
+
+    manager
+        .refresh_aria2_connections("refresh-stale", "gid-refresh-stale", stale_epoch)
+        .await
+        .unwrap();
+
+    assert_eq!(spawner.refresh_calls.load(Ordering::SeqCst), 0);
+    assert!(manager.has_active_permit("refresh-stale").await);
 }
 
 #[tokio::test]

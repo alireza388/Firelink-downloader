@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
+import { useDownloadStore, DownloadItem, MAIN_QUEUE_ID } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { SidebarFilter } from './Sidebar';
@@ -240,7 +240,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   // on every download update. Compute the same queue membership once and pass
   // the resulting position to rows instead.
   const queuePositionsByDownloadId = useMemo(() => {
-    const grouped = new Map<string | undefined, DownloadItem[]>();
+    const grouped = new Map<string, DownloadItem[]>();
     for (const download of downloads) {
       if (
         download.status === 'completed'
@@ -248,15 +248,18 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       ) {
         continue;
       }
-      const queueItems = grouped.get(download.queueId) || [];
+      const queueId = download.queueId || MAIN_QUEUE_ID;
+      const queueItems = grouped.get(queueId) || [];
       queueItems.push(download);
-      grouped.set(download.queueId, queueItems);
+      grouped.set(queueId, queueItems);
     }
 
     const positions = new Map<string, { index: number; length: number }>();
     for (const queueItems of grouped.values()) {
       queueItems.sort((left, right) =>
-        (left.queuePosition ?? 0) - (right.queuePosition ?? 0)
+        (left.queuePosition ?? Number.MAX_SAFE_INTEGER) -
+        (right.queuePosition ?? Number.MAX_SAFE_INTEGER) ||
+        left.id.localeCompare(right.id)
       );
       queueItems.forEach((download, index) => {
         positions.set(download.id, { index, length: queueItems.length });

@@ -1814,6 +1814,7 @@ const MEDIA_METADATA_CACHE_TTL: Duration = Duration::from_secs(60);
 const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
 const MEDIA_METADATA_CACHE_MAX_ENTRIES: usize = 128;
 const FILE_METADATA_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_SHELL_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 
 struct ShellCommandOutput {
     status_code: Option<i32>,
@@ -1836,16 +1837,37 @@ async fn shell_command_output_with_timeout(
             stdout: Vec::new(),
             stderr: Vec::new(),
         };
+        let mut output_bytes = 0usize;
 
         while let Some(event) = events.recv().await {
             match event {
                 tauri_plugin_shell::process::CommandEvent::Stdout(bytes) => {
+                    let next_size = output_bytes
+                        .saturating_add(bytes.len())
+                        .saturating_add(1);
+                    if next_size > MAX_SHELL_OUTPUT_BYTES {
+                        return Err(format!(
+                            "{operation} produced more than {} MiB of output",
+                            MAX_SHELL_OUTPUT_BYTES / (1024 * 1024)
+                        ));
+                    }
                     output.stdout.extend(bytes);
                     output.stdout.push(b'\n');
+                    output_bytes = next_size;
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(bytes) => {
+                    let next_size = output_bytes
+                        .saturating_add(bytes.len())
+                        .saturating_add(1);
+                    if next_size > MAX_SHELL_OUTPUT_BYTES {
+                        return Err(format!(
+                            "{operation} produced more than {} MiB of output",
+                            MAX_SHELL_OUTPUT_BYTES / (1024 * 1024)
+                        ));
+                    }
                     output.stderr.extend(bytes);
                     output.stderr.push(b'\n');
+                    output_bytes = next_size;
                 }
                 tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
                     output.status_code = payload.code;
@@ -1855,26 +1877,35 @@ async fn shell_command_output_with_timeout(
             }
         }
 
-        output
+        Ok(output)
     };
 
     match tokio::time::timeout(timeout, collect_output).await {
-        Ok(output) if output.status_code.is_some() => Ok(output),
-        Ok(_) => match child.kill() {
+        Ok(Ok(output)) if output.status_code.is_some() => Ok(output),
+        Ok(Ok(_)) => match child.kill() {
             Ok(()) => Err(format!(
                 "{operation} ended without a process exit status"
             )),
             Err(error) => Err(format!(
-                "{operation} ended without a process exit status and failed to terminate yt-dlp: {error}"
+                "{operation} ended without a process exit status and failed to terminate the child process: {error}"
             )),
         },
+        Ok(Err(error)) => {
+            let kill_error = child.kill().err();
+            match kill_error {
+                Some(kill_error) => Err(format!(
+                    "{error}; failed to terminate the child process: {kill_error}"
+                )),
+                None => Err(error),
+            }
+        }
         Err(_) => match child.kill() {
             Ok(()) => Err(format!(
                 "{operation} timed out after {}s",
                 timeout.as_secs()
             )),
             Err(error) => Err(format!(
-                "{operation} timed out after {}s and failed to terminate yt-dlp: {error}",
+                "{operation} timed out after {}s and failed to terminate the child process: {error}",
                 timeout.as_secs()
             )),
         },
@@ -6028,7 +6059,8 @@ mod tests {
         should_send_metadata_credentials, collect_log_files, FirelinkDeepLink,
         percent_decode_metadata_value, MediaProgress,
         MediaProgressEmitterState, MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
-        observe_aria2_connections, Aria2ConnectionObservation, Aria2RecoveryReason,
+        observe_aria2_connections, observe_aria2_connections_with_epoch,
+        Aria2ConnectionObservation, Aria2RecoveryReason,
         parse_media_playlist_metadata,
     };
     use serde_json::json;
@@ -6177,6 +6209,66 @@ mod tests {
             Some(Aria2RecoveryReason::SlowThroughput),
             "a later degradation can recover again after the cooldown"
         );
+    }
+
+    #[test]
+    fn aria2_recovery_observation_resets_after_a_control_epoch_change() {
+        let start = Instant::now();
+        let mut observation = Aria2ConnectionObservation::default();
+
+        for (offset, completed, speed) in [
+            (0, 10 * 1024 * 1024, 10.0 * 1024.0 * 1024.0),
+            (1, 11 * 1024 * 1024, 10.0 * 1024.0 * 1024.0),
+            (2, 12 * 1024 * 1024, 10.0 * 1024.0 * 1024.0),
+        ] {
+            observe_aria2_connections_with_epoch(
+                &mut observation,
+                "gid-epoch",
+                1,
+                "active",
+                100 * 1024 * 1024,
+                completed,
+                speed,
+                16,
+                16,
+                false,
+                start + Duration::from_secs(offset),
+            );
+        }
+        observe_aria2_connections_with_epoch(
+            &mut observation,
+            "gid-epoch",
+            1,
+            "active",
+            100 * 1024 * 1024,
+            13 * 1024 * 1024,
+            1024.0 * 1024.0,
+            16,
+            16,
+            false,
+            start + Duration::from_secs(31),
+        );
+        assert!(observation.saw_multiple_connections);
+
+        assert_eq!(
+            observe_aria2_connections_with_epoch(
+                &mut observation,
+                "gid-epoch",
+                2,
+                "active",
+                100 * 1024 * 1024,
+                13 * 1024 * 1024,
+                1024.0 * 1024.0,
+                1,
+                16,
+                false,
+                start + Duration::from_secs(62),
+            ),
+            None
+        );
+        assert_eq!(observation.control_epoch, 2);
+        assert!(!observation.saw_multiple_connections);
+        assert_eq!(observation.healthy_speed_samples, 0);
     }
 
     #[test]
@@ -7345,6 +7437,7 @@ impl Aria2RecoveryReason {
 #[derive(Default)]
 struct Aria2ConnectionObservation {
     gid: String,
+    control_epoch: u64,
     saw_multiple_connections: bool,
     healthy_speed_samples: u8,
     degraded_since: Option<Instant>,
@@ -7361,6 +7454,7 @@ const ARIA2_MIN_PEAK_SPEED_FOR_DEGRADED_RECOVERY: f64 = 64.0 * 1024.0;
 const ARIA2_DEGRADED_SPEED_FRACTION: f64 = 0.20;
 const ARIA2_MIN_HEALTHY_SPEED_SAMPLES: u8 = 3;
 
+#[cfg(test)]
 fn observe_aria2_connections(
     observation: &mut Aria2ConnectionObservation,
     gid: &str,
@@ -7373,9 +7467,38 @@ fn observe_aria2_connections(
     speed_limited: bool,
     now: Instant,
 ) -> Option<Aria2RecoveryReason> {
-    if observation.gid != gid {
+    observe_aria2_connections_with_epoch(
+        observation,
+        gid,
+        0,
+        status,
+        total,
+        completed,
+        speed_bytes,
+        active_connections,
+        requested_connections,
+        speed_limited,
+        now,
+    )
+}
+
+fn observe_aria2_connections_with_epoch(
+    observation: &mut Aria2ConnectionObservation,
+    gid: &str,
+    control_epoch: u64,
+    status: &str,
+    total: u64,
+    completed: u64,
+    speed_bytes: f64,
+    active_connections: i32,
+    requested_connections: i32,
+    speed_limited: bool,
+    now: Instant,
+) -> Option<Aria2RecoveryReason> {
+    if observation.gid != gid || observation.control_epoch != control_epoch {
         *observation = Aria2ConnectionObservation {
             gid: gid.to_string(),
+            control_epoch,
             last_completed: completed,
             ..Default::default()
         };
@@ -7912,6 +8035,15 @@ pub fn run() {
                 let mut observations: HashMap<String, Aria2ConnectionObservation> = HashMap::new();
                 loop {
                     interval.tick().await;
+                    // Terminal cleanup removes a download's GID mapping. Do
+                    // not retain one observation per historical download for
+                    // the lifetime of the poller.
+                    let mapped_ids: HashSet<String> = poll_mgr
+                        .aria2_gid_mappings()
+                        .into_iter()
+                        .map(|(_, id)| id)
+                        .collect();
+                    observations.retain(|id, _| mapped_ids.contains(id));
                     let params = serde_json::json!([["gid", "status", "totalLength", "completedLength", "downloadSpeed", "connections", "errorMessage"]]);
                     if let Ok(active_list) = rpc_call(poll_port.load(std::sync::atomic::Ordering::Relaxed), &poll_secret, "aria2.tellActive", params).await {
                         if let Some(active_arr) = active_list.as_array() {
@@ -7939,11 +8071,14 @@ pub fn run() {
                                         .unwrap_or(1)
                                         .max(1);
                                     let speed_limited = poll_mgr.aria2_speed_limited(&id).await;
+                                    let control_epoch =
+                                        poll_mgr.current_aria2_control_epoch(&id).await;
                                     let now = Instant::now();
                                     let observation = observations.entry(id.clone()).or_default();
-                                    let recovery_reason = observe_aria2_connections(
+                                    let recovery_reason = observe_aria2_connections_with_epoch(
                                         observation,
                                         gid,
+                                        control_epoch,
                                         status,
                                         total,
                                         completed,
@@ -7990,7 +8125,10 @@ pub fn run() {
                                             active_connections,
                                             requested_connections
                                         );
-                                        if let Err(error) = poll_mgr.refresh_aria2_connections(&id, gid).await {
+                                        if let Err(error) = poll_mgr
+                                            .refresh_aria2_connections(&id, gid, control_epoch)
+                                            .await
+                                        {
                                             log::warn!(
                                                 "aria2 connection recovery [{}] for gid {} failed: {}",
                                                 id,

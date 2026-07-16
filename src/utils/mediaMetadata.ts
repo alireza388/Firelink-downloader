@@ -1,5 +1,6 @@
 import { invokeCommand as invoke } from '../ipc';
 import type { MediaMetadata } from '../bindings/MediaMetadata';
+import type { MediaPlaylistMetadata } from '../bindings/MediaPlaylistMetadata';
 
 type FetchMediaMetadataArgs = {
   url: string;
@@ -13,6 +14,7 @@ type FetchMediaMetadataArgs = {
 };
 
 const inFlightMediaMetadata = new Map<string, Promise<MediaMetadata>>();
+const inFlightMediaPlaylists = new Map<string, Promise<MediaPlaylistMetadata>>();
 
 const metadataKey = (args: FetchMediaMetadataArgs) =>
   JSON.stringify([
@@ -36,5 +38,20 @@ export const fetchMediaMetadataDeduped = (args: FetchMediaMetadataArgs): Promise
       inFlightMediaMetadata.delete(key);
     });
   inFlightMediaMetadata.set(key, request);
+  return request;
+};
+
+export const fetchMediaPlaylistMetadataDeduped = (
+  args: FetchMediaMetadataArgs
+): Promise<MediaPlaylistMetadata> => {
+  const key = metadataKey(args);
+  const existing = inFlightMediaPlaylists.get(key);
+  if (existing) return existing;
+
+  const request = invoke('fetch_media_playlist_metadata', args)
+    .finally(() => {
+      inFlightMediaPlaylists.delete(key);
+    });
+  inFlightMediaPlaylists.set(key, request);
   return request;
 };

@@ -278,6 +278,134 @@ pub struct MediaMetadata {
     pub formats: Vec<MediaFormat>,
 }
 
+#[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct MediaPlaylistEntry {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    #[ts(type = "number | null")]
+    pub playlist_index: Option<u64>,
+}
+
+#[derive(Debug, Serialize, serde::Deserialize, Clone, TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub struct MediaPlaylistMetadata {
+    pub title: String,
+    pub playlist_id: Option<String>,
+    #[ts(type = "number | null")]
+    pub entry_count: Option<u64>,
+    #[ts(type = "number")]
+    pub skipped_entries: u64,
+    pub truncated: bool,
+    pub entries: Vec<MediaPlaylistEntry>,
+}
+
+const MEDIA_PLAYLIST_MAX_ENTRIES: usize = 1000;
+
+fn parse_media_playlist_metadata(
+    value: &serde_json::Value,
+    max_entries: usize,
+) -> Result<MediaPlaylistMetadata, String> {
+    let raw_entries = value
+        .get("entries")
+        .and_then(|entries| entries.as_array())
+        .ok_or_else(|| "yt-dlp did not return playlist entries".to_string())?;
+    let entry_count = value.get("playlist_count").and_then(|count| count.as_u64());
+    let playlist_title = value
+        .get("title")
+        .and_then(|title| title.as_str())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or("YouTube playlist")
+        .trim()
+        .to_string();
+    let playlist_id = value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned);
+
+    let mut seen_urls = HashSet::new();
+    let mut entries = Vec::new();
+    let mut skipped_entries = 0_u64;
+
+    for (position, entry) in raw_entries.iter().enumerate() {
+        let candidate_url = ["webpage_url", "url"].iter().find_map(|key| {
+            entry
+                .get(*key)
+                .and_then(|url| url.as_str())
+                .map(str::trim)
+                .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+        });
+        let Some(url) = candidate_url else {
+            skipped_entries += 1;
+            continue;
+        };
+        let url = url.to_string();
+        if !seen_urls.insert(url.clone()) {
+            skipped_entries += 1;
+            continue;
+        }
+        if entries.len() >= max_entries {
+            continue;
+        }
+
+        let id = entry
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .unwrap_or(&url)
+            .to_string();
+        let title = entry
+            .get("title")
+            .and_then(|title| title.as_str())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or("Untitled video")
+            .to_string();
+        let playlist_index = entry
+            .get("playlist_index")
+            .and_then(|index| index.as_u64())
+            .or(Some((position + 1) as u64));
+
+        entries.push(MediaPlaylistEntry {
+            id,
+            url,
+            title,
+            playlist_index,
+        });
+    }
+
+    let truncated = raw_entries.len() > max_entries
+        || entry_count.is_some_and(|count| count > max_entries as u64);
+    if let Some(count) = entry_count {
+        skipped_entries = skipped_entries.max(count.saturating_sub(entries.len() as u64));
+    } else {
+        skipped_entries = skipped_entries.max(
+            raw_entries
+                .len()
+                .saturating_sub(entries.len())
+                .try_into()
+                .unwrap_or(u64::MAX),
+        );
+    }
+
+    if entries.is_empty() {
+        return Err("yt-dlp returned no usable entries for this playlist".to_string());
+    }
+
+    Ok(MediaPlaylistMetadata {
+        title: playlist_title,
+        playlist_id,
+        entry_count,
+        skipped_entries,
+        truncated,
+        entries,
+    })
+}
+
 fn is_media_processing_line(line: &str) -> bool {
     let lower = line.to_lowercase();
     lower.contains("[merger]")
@@ -1687,6 +1815,72 @@ const MEDIA_METADATA_TIMEOUT: Duration = Duration::from_secs(55);
 const MEDIA_METADATA_CACHE_MAX_ENTRIES: usize = 128;
 const FILE_METADATA_TIMEOUT: Duration = Duration::from_secs(20);
 
+struct ShellCommandOutput {
+    status_code: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+async fn shell_command_output_with_timeout(
+    command: tauri_plugin_shell::process::Command,
+    timeout: Duration,
+    operation: &str,
+) -> Result<ShellCommandOutput, String> {
+    let (mut events, child) = command
+        .spawn()
+        .map_err(|error| format!("failed to spawn command: {error}"))?;
+
+    let collect_output = async move {
+        let mut output = ShellCommandOutput {
+            status_code: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+
+        while let Some(event) = events.recv().await {
+            match event {
+                tauri_plugin_shell::process::CommandEvent::Stdout(bytes) => {
+                    output.stdout.extend(bytes);
+                    output.stdout.push(b'\n');
+                }
+                tauri_plugin_shell::process::CommandEvent::Stderr(bytes) => {
+                    output.stderr.extend(bytes);
+                    output.stderr.push(b'\n');
+                }
+                tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
+                    output.status_code = payload.code;
+                }
+                tauri_plugin_shell::process::CommandEvent::Error(_) => {}
+                _ => {}
+            }
+        }
+
+        output
+    };
+
+    match tokio::time::timeout(timeout, collect_output).await {
+        Ok(output) if output.status_code.is_some() => Ok(output),
+        Ok(_) => match child.kill() {
+            Ok(()) => Err(format!(
+                "{operation} ended without a process exit status"
+            )),
+            Err(error) => Err(format!(
+                "{operation} ended without a process exit status and failed to terminate yt-dlp: {error}"
+            )),
+        },
+        Err(_) => match child.kill() {
+            Ok(()) => Err(format!(
+                "{operation} timed out after {}s",
+                timeout.as_secs()
+            )),
+            Err(error) => Err(format!(
+                "{operation} timed out after {}s and failed to terminate yt-dlp: {error}",
+                timeout.as_secs()
+            )),
+        },
+    }
+}
+
 static MEDIA_METADATA_CACHE: OnceLock<tokio::sync::Mutex<HashMap<u64, (Instant, MediaMetadata)>>> =
     OnceLock::new();
 static MEDIA_METADATA_LOCKS: OnceLock<
@@ -1737,6 +1931,28 @@ fn resolve_metadata_ytdlp_path(
     resolve_bundled_binary_path(app_handle, "yt-dlp")
         .map(|path| (path, "bundled"))
         .map_err(|e| format!("failed to find bundled yt-dlp: {e}"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_ytdlp_config_content(
+    username: Option<&str>,
+    password: Option<&str>,
+    headers: Option<&str>,
+    cookies: Option<&str>,
+) -> Result<String, String> {
+    let mut config_content = String::new();
+    if let Some(user) = username {
+        if !user.is_empty() {
+            append_ytdlp_config_option(&mut config_content, "--username", user);
+        }
+    }
+    if let Some(pass) = password {
+        if !pass.is_empty() {
+            append_ytdlp_config_option(&mut config_content, "--password", pass);
+        }
+    }
+    append_ytdlp_http_headers(&mut config_content, headers, cookies)?;
+    Ok(config_content)
 }
 
 #[tauri::command]
@@ -1846,6 +2062,121 @@ async fn fetch_media_metadata(
     result
 }
 
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn fetch_media_playlist_metadata(
+    app_handle: tauri::AppHandle,
+    url: String,
+    cookie_browser: Option<String>,
+    user_agent: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    headers: Option<String>,
+    cookies: Option<String>,
+    proxy: Option<String>,
+) -> Result<MediaPlaylistMetadata, String> {
+    validate_url_ssrf(&url).await?;
+
+    let deno_path = resolve_bundled_binary_path(&app_handle, "deno")
+        .map_err(|e| format!("failed to find bundled deno: {e}"))?;
+    let ffmpeg_path = resolve_bundled_binary_path(&app_handle, "ffmpeg")
+        .map_err(|e| format!("failed to find bundled ffmpeg: {e}"))?;
+    let deno_runtime = format!("deno:{}", deno_path.to_string_lossy());
+    let trusted_path = crate::platform::trusted_system_path()?;
+
+    use tauri_plugin_shell::ShellExt;
+    let (ytdlp_path, _) = resolve_metadata_ytdlp_path(&app_handle)?;
+    let mut cmd = app_handle
+        .shell()
+        .command(ytdlp_path.to_string_lossy().to_string());
+    cmd = cmd
+        .env("PATH", trusted_path)
+        .arg("--ffmpeg-location")
+        .arg(&ffmpeg_path)
+        .arg("--js-runtimes")
+        .arg(&deno_runtime)
+        .arg("--no-warnings")
+        .arg("--ignore-errors")
+        .arg("--flat-playlist")
+        .arg("--playlist-end")
+        .arg(MEDIA_PLAYLIST_MAX_ENTRIES.to_string())
+        .arg("--dump-single-json")
+        .arg("--socket-timeout")
+        .arg("20")
+        .arg("--retries")
+        .arg("3")
+        .arg("--extractor-retries")
+        .arg("3")
+        .arg("--compat-options")
+        .arg("no-youtube-unavailable-videos");
+
+    if let Some(browser) = cookie_browser.as_deref() {
+        if !browser.is_empty() {
+            cmd = cmd.arg("--cookies-from-browser").arg(browser);
+        }
+    }
+
+    if let Some(proxy) = proxy.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if proxy.eq_ignore_ascii_case("none") {
+            cmd = cmd.arg("--proxy").arg("");
+        } else {
+            cmd = cmd.arg("--proxy").arg(proxy);
+        }
+    }
+
+    if let Some(ua) = user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        cmd = cmd.arg("--user-agent").arg(ua);
+    }
+
+    let mut config_file = tempfile::Builder::new()
+        .prefix("ytdlp-playlist-")
+        .suffix(".conf")
+        .tempfile()
+        .map_err(|e| e.to_string())?;
+    let config_content = build_ytdlp_config_content(
+        username.as_deref(),
+        password.as_deref(),
+        headers.as_deref(),
+        cookies.as_deref(),
+    )?;
+    use std::io::Write;
+    config_file
+        .write_all(config_content.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let config_path = config_file.into_temp_path();
+    if !config_content.is_empty() {
+        cmd = cmd.arg("--config-location").arg(&config_path);
+    }
+
+    cmd = cmd.arg("--").arg(&url);
+    let output = shell_command_output_with_timeout(
+        cmd,
+        MEDIA_METADATA_TIMEOUT,
+        "yt-dlp playlist metadata fetch",
+    )
+    .await?;
+
+    if output.status_code != Some(0) {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            format!(
+                "yt-dlp failed while fetching playlist metadata (exit status: {:?})",
+                output.status_code
+            )
+        } else {
+            format!("yt-dlp failed while fetching playlist metadata: {}", err)
+        });
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse playlist JSON: {}", e))?;
+    parse_media_playlist_metadata(&value, MEDIA_PLAYLIST_MAX_ENTRIES)
+}
+
 #[allow(clippy::too_many_arguments)] // Mirrors the stable command contract for the fallback call.
 async fn fetch_media_metadata_uncached(
     app_handle: tauri::AppHandle,
@@ -1906,7 +2237,11 @@ async fn fetch_media_metadata_uncached(
         }
     }
 
-    if let Some(ua) = user_agent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(ua) = user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         cmd = cmd.arg("--user-agent").arg(ua);
     }
 
@@ -1915,18 +2250,12 @@ async fn fetch_media_metadata_uncached(
         .suffix(".conf")
         .tempfile()
         .map_err(|e| e.to_string())?;
-    let mut config_content = String::new();
-    if let Some(user) = username.as_deref() {
-        if !user.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--username", user);
-        }
-    }
-    if let Some(pass) = password.as_deref() {
-        if !pass.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--password", pass);
-        }
-    }
-    append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
+    let config_content = build_ytdlp_config_content(
+        username.as_deref(),
+        password.as_deref(),
+        headers.as_deref(),
+        cookies.as_deref(),
+    )?;
     use std::io::Write;
     config_file
         .write_all(config_content.as_bytes())
@@ -1938,16 +2267,13 @@ async fn fetch_media_metadata_uncached(
 
     cmd = cmd.arg("--").arg(&url);
 
-    let output = tokio::time::timeout(MEDIA_METADATA_TIMEOUT, cmd.output())
-        .await
-        .map_err(|_| {
-            format!(
-                "yt-dlp timed out after {}s while fetching media metadata",
-                MEDIA_METADATA_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
-    if output.status.success() {
+    let output = shell_command_output_with_timeout(
+        cmd,
+        MEDIA_METADATA_TIMEOUT,
+        "yt-dlp media metadata fetch",
+    )
+    .await?;
+    if output.status_code == Some(0) {
         let value: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
@@ -1979,7 +2305,7 @@ async fn fetch_media_metadata_uncached(
         if err.is_empty() {
             Err(format!(
                 "yt-dlp failed while fetching media metadata (exit status: {:?})",
-                output.status.code()
+                output.status_code
             ))
         } else {
             Err(format!(
@@ -3141,18 +3467,12 @@ pub(crate) async fn start_media_download_internal(
         .suffix(".conf")
         .tempfile()
         .map_err(|e| e.to_string())?;
-    let mut config_content = String::new();
-    if let Some(user) = username.as_deref() {
-        if !user.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--username", user);
-        }
-    }
-    if let Some(pass) = password.as_deref() {
-        if !pass.is_empty() {
-            append_ytdlp_config_option(&mut config_content, "--password", pass);
-        }
-    }
-    append_ytdlp_http_headers(&mut config_content, headers.as_deref(), cookies.as_deref())?;
+    let config_content = build_ytdlp_config_content(
+        username.as_deref(),
+        password.as_deref(),
+        headers.as_deref(),
+        cookies.as_deref(),
+    )?;
     use std::io::Write;
     config_file
         .write_all(config_content.as_bytes())
@@ -3216,6 +3536,10 @@ pub(crate) async fn start_media_download_internal(
             .arg("--concurrent-fragments")
             .arg("4")
             .arg("--no-warnings")
+            // Playlist expansion is owned by Firelink. Every persisted media
+            // row must remain a single-video lifecycle, even when yt-dlp's
+            // webpage URL still carries a playlist query parameter.
+            .arg("--no-playlist")
             .arg("--continue")
             .arg("--compat-options")
             .arg("no-youtube-unavailable-videos")
@@ -5705,6 +6029,7 @@ mod tests {
         percent_decode_metadata_value, MediaProgress,
         MediaProgressEmitterState, MediaSpeedSampler, MEDIA_PROGRESS_PREFIX,
         observe_aria2_connections, Aria2ConnectionObservation, Aria2RecoveryReason,
+        parse_media_playlist_metadata,
     };
     use serde_json::json;
     use std::time::{Duration, Instant};
@@ -5980,6 +6305,68 @@ mod tests {
         let destination = std::path::Path::new("/tmp/firelink");
         let template = media_output_template(destination, "clip.mp4", Some("best"));
         assert_eq!(template, destination.join("clip.mp4"));
+    }
+
+    #[test]
+    fn parses_playlist_entries_and_skips_duplicates_or_unusable_entries() {
+        let metadata = parse_media_playlist_metadata(
+            &json!({
+                "id": "playlist-1",
+                "title": "Example playlist",
+                "playlist_count": 5,
+                "entries": [
+                    {"id": "one", "title": "One", "url": "https://www.youtube.com/watch?v=one"},
+                    {"id": "one", "title": "Duplicate", "url": "https://www.youtube.com/watch?v=one"},
+                    {"id": "missing", "title": "Missing"},
+                    {"id": "two", "title": "Two", "url": "https://www.youtube.com/watch?v=wrong", "webpage_url": "https://www.youtube.com/watch?v=two"}
+                ]
+            }),
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.playlist_id.as_deref(), Some("playlist-1"));
+        assert_eq!(metadata.title, "Example playlist");
+        assert_eq!(metadata.entries.len(), 2);
+        assert_eq!(metadata.entries[0].url, "https://www.youtube.com/watch?v=one");
+        assert_eq!(metadata.entries[1].url, "https://www.youtube.com/watch?v=two");
+        assert_eq!(metadata.skipped_entries, 3);
+        assert!(!metadata.truncated);
+    }
+
+    #[test]
+    fn bounds_playlist_discovery_without_silently_claiming_all_entries_loaded() {
+        let metadata = parse_media_playlist_metadata(
+            &json!({
+                "id": "large-playlist",
+                "title": "Large playlist",
+                "playlist_count": 4,
+                "entries": [
+                    {"id": "one", "url": "https://www.youtube.com/watch?v=one"},
+                    {"id": "two", "url": "https://www.youtube.com/watch?v=two"},
+                    {"id": "three", "url": "https://www.youtube.com/watch?v=three"},
+                    {"id": "four", "url": "https://www.youtube.com/watch?v=four"}
+                ]
+            }),
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(metadata.entries.len(), 2);
+        assert_eq!(metadata.entry_count, Some(4));
+        assert_eq!(metadata.skipped_entries, 2);
+        assert!(metadata.truncated);
+    }
+
+    #[test]
+    fn rejects_playlists_without_usable_entries() {
+        let error = parse_media_playlist_metadata(
+            &json!({"title": "Empty", "entries": [{"id": "missing"}]}),
+            100,
+        )
+        .expect_err("a playlist without downloadable URLs must fail clearly");
+
+        assert!(error.contains("no usable entries"));
     }
 
     #[test]
@@ -7753,7 +8140,7 @@ pub fn run() {
 .invoke_handler(tauri::generate_handler![
  get_engine_status, get_aria2_engine_status, get_ytdlp_engine_status, get_ffmpeg_engine_status,
  get_deno_engine_status, test_ytdlp, test_aria2c, test_ffmpeg, test_deno,
- pause_download, resume_download, fetch_metadata, fetch_media_metadata,
+ pause_download, resume_download, fetch_metadata, fetch_media_metadata, fetch_media_playlist_metadata,
             update_dock_badge, get_platform_info, approve_download_root, set_prevent_sleep, get_free_space, perform_system_action,
             ack_schedule_trigger,
             check_automation_permission, request_automation_permission, open_automation_settings,

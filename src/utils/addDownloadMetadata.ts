@@ -3,6 +3,7 @@ import {
   fileNameFromUrl,
   isMediaUrl
 } from './downloads';
+import type { MediaPlaylistMetadata } from '../bindings/MediaPlaylistMetadata';
 
 export type MetadataStatus = 'loading' | 'ready' | 'metadata-error' | 'invalid';
 
@@ -31,6 +32,14 @@ export interface AddDownloadDraftRow {
   resumable?: boolean;
   formats?: AddMediaFormat[];
   selectedFormat?: number;
+  isPlaylist?: boolean;
+  playlistSourceUrl?: string;
+  playlistTitle?: string;
+  playlistIndex?: number;
+  playlistCount?: number;
+  playlistEntryTitle?: string;
+  playlistError?: string;
+  selected?: boolean;
 }
 
 const ALLOWED_SCHEMES = new Set(['http:', 'https:', 'ftp:', 'sftp:']);
@@ -39,9 +48,45 @@ type ParsedInput = {
   identity: string;
   sourceUrl: string;
   valid: boolean;
+  isPlaylist?: boolean;
+  playlistSourceUrl?: string;
+  playlistTitle?: string;
+  playlistIndex?: number;
+  playlistCount?: number;
+  playlistEntryTitle?: string;
+  requestContextVersion?: number;
+  selected?: boolean;
 };
 
-const parseInputLines = (rawText: string): ParsedInput[] => {
+export const isYouTubePlaylistUrl = (rawUrl: string): boolean => {
+  try {
+    const url = new URL(rawUrl);
+    const hostname = url.hostname.toLowerCase();
+    const isYouTube = hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+    const pathname = url.pathname.replace(/\/+$/, '') || '/';
+    return isYouTube && pathname === '/playlist' && Boolean(url.searchParams.get('list'));
+  } catch {
+    return false;
+  }
+};
+
+export const playlistFilePrefix = (
+  playlistIndex: number | undefined,
+  playlistCount: number | undefined
+): string => {
+  if (!playlistIndex || playlistIndex < 1) return '';
+  const width = Math.max(3, String(playlistCount || playlistIndex).length);
+  return `${String(playlistIndex).padStart(width, '0')} - `;
+};
+
+type PlaylistExpansions = Readonly<Record<string, MediaPlaylistMetadata>>;
+
+const parseInputLines = (
+  rawText: string,
+  playlistExpansions: PlaylistExpansions,
+  requestContextVersions: Readonly<Record<string, number>>,
+  selectedBySourceUrl: Readonly<Record<string, boolean>>
+): ParsedInput[] => {
   const seen = new Set<string>();
   const parsed: ParsedInput[] = [];
 
@@ -62,7 +107,50 @@ const parseInputLines = (rawText: string): ParsedInput[] => {
     const identity = valid ? sourceUrl : `invalid:${line}`;
     if (seen.has(identity)) continue;
     seen.add(identity);
-    parsed.push({ identity, sourceUrl, valid });
+
+    if (valid && isYouTubePlaylistUrl(sourceUrl)) {
+      const expansion = playlistExpansions[sourceUrl];
+      if (expansion) {
+        const playlistSelected = selectedBySourceUrl[sourceUrl] !== false;
+        for (const [position, entry] of expansion.entries.entries()) {
+          let entryUrl: string;
+          try {
+            const parsedEntryUrl = new URL(entry.url);
+            if (!ALLOWED_SCHEMES.has(parsedEntryUrl.protocol)) continue;
+            entryUrl = parsedEntryUrl.href;
+          } catch {
+            continue;
+          }
+          if (seen.has(entryUrl)) continue;
+          seen.add(entryUrl);
+          parsed.push({
+            identity: entryUrl,
+            sourceUrl: entryUrl,
+            valid: true,
+            playlistSourceUrl: sourceUrl,
+            playlistTitle: expansion.title,
+            playlistIndex: entry.playlist_index || position + 1,
+            playlistCount: expansion.entry_count || expansion.entries.length,
+            playlistEntryTitle: entry.title,
+            requestContextVersion: requestContextVersions[sourceUrl],
+            selected: selectedBySourceUrl[entryUrl] ?? playlistSelected
+          });
+        }
+        // The playlist has been successfully discovered even when every
+        // entry was already represented by another input row. Do not put the
+        // source playlist back into loading state in that case.
+        continue;
+      }
+    }
+
+    parsed.push({
+      identity,
+      sourceUrl,
+      valid,
+      isPlaylist: valid && isYouTubePlaylistUrl(sourceUrl),
+      requestContextVersion: valid ? requestContextVersions[sourceUrl] : undefined,
+      selected: selectedBySourceUrl[sourceUrl] !== false
+    });
   }
 
   return parsed;
@@ -75,20 +163,29 @@ export const reconcileDownloadRows = (
   forceMediaUrls: ReadonlySet<string> = new Set(),
   createId: () => string = () => crypto.randomUUID(),
   requestFilenames: Readonly<Record<string, string>> = {},
-  requestContextVersions: Readonly<Record<string, number>> = {}
+  requestContextVersions: Readonly<Record<string, number>> = {},
+  playlistExpansions: PlaylistExpansions = {},
+  selectedBySourceUrl: Readonly<Record<string, boolean>> = {}
 ): AddDownloadDraftRow[] => {
-  const inputs = parseInputLines(rawText);
+  const inputs = parseInputLines(
+    rawText,
+    playlistExpansions,
+    requestContextVersions,
+    selectedBySourceUrl
+  );
   const existing = new Map(currentRows.map(row => [row.sourceUrl, row]));
 
   return inputs.map(input => {
     const preserved = existing.get(input.sourceUrl);
     if (preserved) {
       const forcedMedia = input.valid && forceMediaUrls.has(input.sourceUrl);
-      const requestContextVersion = requestContextVersions[input.sourceUrl];
+      const requestContextVersion = input.requestContextVersion;
       const contextChanged = requestContextVersion !== undefined
         && requestContextVersion !== preserved.requestContextVersion;
       if ((forcedMedia && !preserved.isMedia) || contextChanged) {
-        const requestedFilename = requestFilenames[input.sourceUrl];
+        const requestedFilename = input.playlistSourceUrl
+          ? `${playlistFilePrefix(input.playlistIndex, input.playlistCount)}${input.playlistEntryTitle || 'video'}`
+          : requestFilenames[input.sourceUrl];
         return {
           ...preserved,
           file: contextChanged
@@ -99,13 +196,16 @@ export const reconcileDownloadRows = (
           requestContextVersion,
           isMedia: preserved.isMedia || forcedMedia,
           formats: preserved.isMedia || forcedMedia ? undefined : preserved.formats,
-          selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat
+          selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat,
+          playlistError: undefined
         };
       }
       return preserved;
     }
 
-    const requestedFilename = requestFilenames[input.sourceUrl]
+    const requestedFilename = input.playlistSourceUrl
+      ? `${playlistFilePrefix(input.playlistIndex, input.playlistCount)}${input.playlistEntryTitle || 'video'}`
+      : requestFilenames[input.sourceUrl]
       || (inputs.length === 1 ? pendingFilename : undefined);
     const fallback = canonicalizeDownloadFileName(
       requestedFilename || fileNameFromUrl(input.sourceUrl)
@@ -118,8 +218,20 @@ export const reconcileDownloadRows = (
       file: fallback,
       status: input.valid ? 'loading' : 'invalid',
       generation: input.valid ? 1 : 0,
-      requestContextVersion: requestContextVersions[input.sourceUrl],
-      isMedia: input.valid && (forceMediaUrls.has(input.sourceUrl) || isMediaUrl(input.sourceUrl))
+      requestContextVersion: input.requestContextVersion,
+      isMedia: input.valid && (
+        Boolean(input.isPlaylist)
+        || Boolean(input.playlistSourceUrl)
+        || forceMediaUrls.has(input.sourceUrl)
+        || isMediaUrl(input.sourceUrl)
+      ),
+      isPlaylist: input.isPlaylist,
+      playlistSourceUrl: input.playlistSourceUrl,
+      playlistTitle: input.playlistTitle,
+      playlistIndex: input.playlistIndex,
+      playlistCount: input.playlistCount,
+      playlistEntryTitle: input.playlistEntryTitle,
+      selected: input.selected !== false
     };
   });
 };
@@ -177,12 +289,14 @@ export const refreshFailedMetadataRows = (
     : row
 );
 
-export const canSubmitMetadataRows = (rows: AddDownloadDraftRow[]): boolean =>
-  rows.length > 0
-  && rows.every(row =>
+export const canSubmitMetadataRows = (rows: AddDownloadDraftRow[]): boolean => {
+  const selectedRows = rows.filter(row => row.selected !== false);
+  return selectedRows.length > 0
+  && selectedRows.every(row =>
     row.status === 'ready'
     || (!row.isMedia && row.status === 'metadata-error')
   );
+};
 
 export const mediaFormatSelectorForRow = (
   row: AddDownloadDraftRow
@@ -228,19 +342,22 @@ export const mediaFileNameForSelectedFormat = (
 export const metadataSummaryMessage = (rows: AddDownloadDraftRow[]): string => {
   if (rows.length === 0) return 'Paste one or more links.';
 
-  const invalid = rows.filter(row => row.status === 'invalid').length;
+  const selectedRows = rows.filter(row => row.selected !== false);
+  if (selectedRows.length === 0) return 'Select at least one download.';
+
+  const invalid = selectedRows.filter(row => row.status === 'invalid').length;
   if (invalid > 0) {
     return `Correct or remove ${invalid} invalid URL${invalid === 1 ? '' : 's'} before continuing.`;
   }
 
-  const loading = rows.filter(row => row.status === 'loading').length;
+  const loading = selectedRows.filter(row => row.status === 'loading').length;
   if (loading > 0) {
     return `Waiting for metadata for ${loading} download${loading === 1 ? '' : 's'}.`;
   }
 
-  const failed = rows.filter(row => row.status === 'metadata-error').length;
-  const failedMedia = rows.filter(row => row.status === 'metadata-error' && row.isMedia).length;
-  const ready = rows.filter(row => row.status === 'ready').length;
+  const failed = selectedRows.filter(row => row.status === 'metadata-error').length;
+  const failedMedia = selectedRows.filter(row => row.status === 'metadata-error' && row.isMedia).length;
+  const ready = selectedRows.filter(row => row.status === 'ready').length;
   if (failedMedia > 0) {
     return `Media metadata is unavailable for ${failedMedia} item${failedMedia === 1 ? '' : 's'}. Refresh metadata before adding.`;
   }

@@ -7,12 +7,13 @@ import {
   type PendingAddRequestContext
 } from '../store/useDownloadStore';
 import { useSettingsStore } from '../store/useSettingsStore';
+import type { MediaPlaylistMetadata } from '../bindings/MediaPlaylistMetadata';
 import { FolderPlus, Settings, Shield, RefreshCw, FileText, HardDrive, Database, Link, ArrowRight, Play, ChevronDown, ChevronRight, Video, Film, Music, type LucideIcon } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invokeCommand as invoke } from '../ipc';
 import { DuplicateResolutionModal, DuplicateConflict } from './DuplicateResolutionModal';
 import { canonicalizeDownloadFileName, categoryForFileName } from '../utils/downloads';
-import { fetchMediaMetadataDeduped } from '../utils/mediaMetadata';
+import { fetchMediaMetadataDeduped, fetchMediaPlaylistMetadataDeduped } from '../utils/mediaMetadata';
 import {
   resolveCategoryDestination,
   resolveDownloadFilePath,
@@ -27,6 +28,7 @@ import {
   mediaFileNameForSelectedFormat,
   mediaFormatSelectorForRow,
   metadataSummaryMessage,
+  playlistFilePrefix,
   reconcileDownloadRows,
   refreshFailedMetadataRows,
   updateRowIfCurrent,
@@ -97,6 +99,9 @@ export const AddDownloadsModal = () => {
   const [selectedItemIndex, setSelectedItemIndex] = useState<number | null>(null);
   const [parsedItems, setParsedItems] = useState<AddDownloadDraftRow[]>([]);
   const metadataRequestsRef = useRef(new Set<string>());
+  const playlistRequestsRef = useRef(new Set<string>());
+  const latestPlaylistRequestRef = useRef(new Map<string, string>());
+  const [playlistExpansions, setPlaylistExpansions] = useState<Record<string, MediaPlaylistMetadata>>({});
 
   const [conflicts, setConflicts] = useState<DuplicateConflict[]>([]);
   const [showingDuplicates, setShowingDuplicates] = useState(false);
@@ -159,6 +164,8 @@ export const AddDownloadsModal = () => {
     if (context?.filename) return context.filename;
     return hasExtensionRequestContext ? '' : pendingAddFilename;
   };
+  const requestContextUrlForRow = (row: AddDownloadDraftRow) =>
+    row.playlistSourceUrl || row.sourceUrl;
 
   const closeModalFromDismissAction = useCallback(() => {
     if (isSubmitting || isSubmittingRef.current) return;
@@ -173,6 +180,9 @@ export const AddDownloadsModal = () => {
     if (!isAddModalOpen) {
       modalSessionRef.current = false;
       setUrls('');
+      setPlaylistExpansions({});
+      playlistRequestsRef.current.clear();
+      latestPlaylistRequestRef.current.clear();
       return;
     }
 
@@ -189,6 +199,10 @@ export const AddDownloadsModal = () => {
     setIsSaveLocationManual(false);
     setUrls(initialUrls);
     setParsedItems([]);
+    setPlaylistExpansions({});
+    metadataRequestsRef.current.clear();
+    playlistRequestsRef.current.clear();
+    latestPlaylistRequestRef.current.clear();
     setSelectedItemIndex(null);
     setPendingUseSharedDestination(false);
     setPendingDestinationOverrides({});
@@ -230,6 +244,11 @@ export const AddDownloadsModal = () => {
       || observedRequestVersionRef.current === pendingAddRequestVersion) return;
     const observedVersion = observedRequestVersionRef.current;
     observedRequestVersionRef.current = pendingAddRequestVersion;
+    // Playlist membership and entry access can depend on the handoff's
+    // browser context. Re-discover playlists when a newer extension context
+    // arrives instead of reusing entries extracted under stale cookies.
+    setPlaylistExpansions({});
+    latestPlaylistRequestRef.current.clear();
     setUrls(current => appendRequestUrlsAfterVersion(
       current,
       pendingAddRequestContexts,
@@ -282,6 +301,21 @@ export const AddDownloadsModal = () => {
   }, [saveLocation, isAddModalOpen]);
 
   useEffect(() => {
+    const activeUrls = new Set(
+      urls.split('\n').map(url => url.trim()).filter(Boolean).map(normalizeComparableUrl)
+    );
+    for (const sourceUrl of latestPlaylistRequestRef.current.keys()) {
+      if (!activeUrls.has(sourceUrl)) {
+        latestPlaylistRequestRef.current.delete(sourceUrl);
+      }
+    }
+    setPlaylistExpansions(current => {
+      const retained = Object.fromEntries(
+        Object.entries(current).filter(([sourceUrl]) => activeUrls.has(sourceUrl))
+      );
+      return Object.keys(retained).length === Object.keys(current).length ? current : retained;
+    });
+
     const forcedMediaUrls = new Set(pendingAddMediaUrls.map(url => {
       try {
         return new URL(url).href;
@@ -298,37 +332,54 @@ export const AddDownloadsModal = () => {
       Object.entries(pendingAddRequestContexts)
         .map(([url, context]) => [url, context.version])
     );
-    setParsedItems(current =>
-      reconcileDownloadRows(
+    setParsedItems(current => {
+      const selectedBySourceUrl = Object.fromEntries(
+        current.map(row => [row.sourceUrl, row.selected !== false])
+      );
+      for (const row of current) {
+        if (row.playlistSourceUrl && !(row.playlistSourceUrl in selectedBySourceUrl)) {
+          selectedBySourceUrl[row.playlistSourceUrl] = row.selected !== false;
+        }
+      }
+      return reconcileDownloadRows(
         urls,
         current,
         hasExtensionRequestContext ? undefined : pendingAddFilename || undefined,
         forcedMediaUrls,
         undefined,
         requestFilenames,
-        requestContextVersions
-      )
-    );
+        requestContextVersions,
+        playlistExpansions,
+        selectedBySourceUrl
+      );
+    });
   }, [
     urls,
     pendingAddFilename,
     pendingAddMediaUrls,
     pendingAddRequestContexts,
-    hasExtensionRequestContext
+    hasExtensionRequestContext,
+    playlistExpansions
   ]);
 
   useEffect(() => {
+    const maxConcurrentMetadataRequests = 4;
     for (const row of parsedItems) {
-      if (row.status !== 'loading') continue;
+      if (row.status !== 'loading' || row.selected === false) continue;
       const requestKey = `${row.id}:${row.generation}`;
-      if (metadataRequestsRef.current.has(requestKey)) continue;
-      metadataRequestsRef.current.add(requestKey);
+      const requestSet = row.isPlaylist ? playlistRequestsRef.current : metadataRequestsRef.current;
+      if (requestSet.has(requestKey)) continue;
+      if (metadataRequestsRef.current.size + playlistRequestsRef.current.size >= maxConcurrentMetadataRequests) {
+        break;
+      }
+      requestSet.add(requestKey);
 
       void (async () => {
         try {
           const settingsStore = useSettingsStore.getState();
           const proxy = await getProxyArgs(settingsStore);
           const login = getSiteLogin(row.sourceUrl, settingsStore);
+          const contextUrl = requestContextUrlForRow(row);
           if (login && !useAuth && !keychainAccessReady && !keychainPromptDismissed) {
             settingsStore.setShowKeychainModal(true);
             return;
@@ -345,8 +396,8 @@ export const AddDownloadsModal = () => {
               }
             }
 
-            const rowHeaders = headersForRow(row.sourceUrl);
-            const rowCookies = cookiesForRow(row.sourceUrl);
+            const rowHeaders = headersForRow(contextUrl);
+            const rowCookies = cookiesForRow(contextUrl, row.sourceUrl);
             const mediaMetadataArgs = {
               url: row.sourceUrl,
               cookieBrowser: browserArg,
@@ -357,6 +408,25 @@ export const AddDownloadsModal = () => {
               cookies: rowCookies || null,
               proxy
             };
+
+            if (row.isPlaylist) {
+              if (playlistExpansions[row.sourceUrl]) return;
+              latestPlaylistRequestRef.current.set(row.sourceUrl, requestKey);
+              const playlistData = await fetchMediaPlaylistMetadataDeduped({
+                ...mediaMetadataArgs,
+                url: contextUrl
+              });
+              if (latestPlaylistRequestRef.current.get(row.sourceUrl) !== requestKey) return;
+              if (!playlistData.entries.length) {
+                throw new Error('Playlist contains no downloadable entries');
+              }
+              setPlaylistExpansions(current => ({
+                ...current,
+                [row.sourceUrl]: playlistData
+              }));
+              return;
+            }
+
             const mediaData = await fetchMediaMetadataDeduped(mediaMetadataArgs);
             if (mediaData && mediaData.formats.length > 0) {
               const mappedFormats = mediaData.formats.map(f => {
@@ -385,12 +455,15 @@ export const AddDownloadsModal = () => {
                 currentRow => ({
                   ...currentRow,
                   downloadUrl: row.sourceUrl,
-                  file: canonicalizeDownloadFileName(`${mediaData.title}.${mediaData.formats[0].ext}`),
+                  file: canonicalizeDownloadFileName(
+                    `${playlistFilePrefix(row.playlistIndex, row.playlistCount)}${mediaData.title}.${mediaData.formats[0].ext}`
+                  ),
                   size: mappedFormats[0].bytes ? mappedFormats[0].detail : undefined,
                   sizeBytes: mappedFormats[0].bytes || undefined,
                   status: 'ready',
                   formats: mappedFormats,
-                  selectedFormat: 0
+                  selectedFormat: 0,
+                  playlistError: undefined
                 })
               ));
             } else {
@@ -410,8 +483,8 @@ export const AddDownloadsModal = () => {
               userAgent: settingsStore.customUserAgent.trim() || null,
               username: useAuth ? username.trim() || null : login?.username || null,
               password: useAuth ? password || null : keychainPassword,
-              headers: headersForRow(row.sourceUrl) || null,
-              cookies: cookiesForRow(row.sourceUrl) || null,
+              headers: headersForRow(contextUrl) || null,
+              cookies: cookiesForRow(contextUrl, row.sourceUrl) || null,
               proxy,
               deferCookies: shouldDeferCookiesForRow(row.sourceUrl)
             });
@@ -425,8 +498,8 @@ export const AddDownloadsModal = () => {
                 ...currentRow,
                 downloadUrl: nextDownloadUrl || currentRow.downloadUrl,
                 file: canonicalizeDownloadFileName(
-                  current.length === 1 && suggestedFilenameForRow(row.sourceUrl)
-                    ? suggestedFilenameForRow(row.sourceUrl)
+                  current.length === 1 && suggestedFilenameForRow(contextUrl)
+                    ? suggestedFilenameForRow(contextUrl)
                     : meta.filename
                 ),
                 size: meta.size_bytes ? meta.size : undefined,
@@ -450,15 +523,26 @@ export const AddDownloadsModal = () => {
               sizeBytes: undefined,
               status: 'metadata-error',
               formats: undefined,
-              selectedFormat: undefined
+              selectedFormat: undefined,
+              playlistError: row.isPlaylist
+                ? (e instanceof Error ? e.message : String(e))
+                : undefined
             })
           ));
         } finally {
-          metadataRequestsRef.current.delete(requestKey);
+          requestSet.delete(requestKey);
         }
       })();
     }
-  }, [keychainAccessReady, keychainPromptDismissed, parsedItems, pendingAddFilename, pendingAddMediaUrls, useAuth]);
+  }, [
+    keychainAccessReady,
+    keychainPromptDismissed,
+    parsedItems,
+    pendingAddFilename,
+    pendingAddMediaUrls,
+    playlistExpansions,
+    useAuth
+  ]);
 
   useEffect(() => {
     if (parsedItems.length === 0) {
@@ -522,6 +606,7 @@ export const AddDownloadsModal = () => {
     const platform = await getPlatformInfo().catch(() => ({ os: 'unknown' }));
     if (settings.askWhereToSaveEachFile && parsedItems.length > 0) {
       for (const [index, item] of parsedItems.entries()) {
+        if (item.selected === false) continue;
         try {
           const suggestedLocation = isSaveLocationManual
             ? finalLocation
@@ -556,6 +641,7 @@ export const AddDownloadsModal = () => {
 
     for (let i = 0; i < parsedItems.length; i++) {
       const item = parsedItems[i];
+      if (item.selected === false) continue;
       let finalFile = item.isMedia
         ? mediaFileNameForSelectedFormat(item.file, item)
         : canonicalizeDownloadFileName(item.file);
@@ -655,7 +741,9 @@ export const AddDownloadsModal = () => {
     resolutions?: { id: string, resolution: 'rename' | 'replace' | 'skip' }[],
     destinationOverrides: Record<number, string> = {}
   ) => {
-      let itemsToAdd: Array<AddDownloadDraftRow | null> = [...parsedItems];
+      let itemsToAdd: Array<AddDownloadDraftRow | null> = parsedItems.map(item =>
+        item.selected === false ? null : item
+      );
       const platform = await getPlatformInfo().catch(() => ({ os: 'unknown' }));
 
       if (resolutions) {
@@ -792,6 +880,7 @@ export const AddDownloadsModal = () => {
             ? mediaFileNameForSelectedFormat(item.file, item)
             : canonicalizeDownloadFileName(item.file);
           let formatSelector = mediaFormatSelectorForRow(item);
+        const contextUrl = requestContextUrlForRow(item);
 
         const category = categoryForFileName(finalFile);
         const added = await addDownload({
@@ -804,11 +893,11 @@ export const AddDownloadsModal = () => {
           speedLimit: speedLimitEnabled ? `${speedLimit}K` : undefined,
           username: useAuth ? username.trim() : undefined,
           password: useAuth ? password.trim() : undefined,
-          headers: headersForRow(item.sourceUrl) || undefined,
+          headers: headersForRow(contextUrl) || undefined,
           checksum: checksumEnabled && checksumValue.trim()
             ? `${checksumAlgo}=${checksumValue.trim()}`
             : undefined,
-          cookies: cookiesForRow(item.sourceUrl, item.downloadUrl) || undefined,
+          cookies: cookiesForRow(contextUrl, item.downloadUrl) || undefined,
           mirrors: mirrors.trim() || undefined,
           destination: useSharedDestination
             ? finalLocation
@@ -857,6 +946,19 @@ export const AddDownloadsModal = () => {
     </div>
   );
 
+  const toggleRowSelection = (index: number) => {
+    setParsedItems(items => items.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, selected: item.selected === false } : item
+    ));
+  };
+
+  const toggleAllRows = () => {
+    setParsedItems(items => {
+      const shouldSelect = items.some(item => item.selected === false);
+      return items.map(item => ({ ...item, selected: shouldSelect }));
+    });
+  };
+
   const selectMediaFormat = (index: number) => {
     if (selectedItemIndex === null) return;
     const selectedItem = parsedItems[selectedItemIndex];
@@ -879,8 +981,10 @@ export const AddDownloadsModal = () => {
     ));
   };
 
-  const requiredBytes = parsedItems.reduce((acc, item) => acc + (item.sizeBytes || 0), 0);
-  const hasApproximateSize = parsedItems.some(item =>
+  const selectedItems = parsedItems.filter(item => item.selected !== false);
+  const allRowsSelected = parsedItems.length > 0 && selectedItems.length === parsedItems.length;
+  const requiredBytes = selectedItems.reduce((acc, item) => acc + (item.sizeBytes || 0), 0);
+  const hasApproximateSize = selectedItems.some(item =>
     item.formats?.[item.selectedFormat ?? -1]?.isApproximate
   );
   const requiredStr = requiredBytes > 0
@@ -889,11 +993,16 @@ export const AddDownloadsModal = () => {
        : `${(requiredBytes / 1024 / 1024 / 1024).toFixed(2)} GB`}`
     : 'Unknown';
   const canSubmit = canSubmitMetadataRows(parsedItems);
-  const failedMetadataCount = parsedItems.filter(item => item.status === 'metadata-error').length;
-  const failedMediaMetadataCount = parsedItems.filter(
+  const failedMetadataCount = selectedItems.filter(item => item.status === 'metadata-error').length;
+  const failedMediaMetadataCount = selectedItems.filter(
     item => item.status === 'metadata-error' && item.isMedia
   ).length;
   const fallbackMetadataCount = failedMetadataCount - failedMediaMetadataCount;
+  const activePlaylistUrls = new Set(
+    urls.split('\n').map(url => url.trim()).filter(Boolean).map(normalizeComparableUrl)
+  );
+  const playlistSummaries = Object.entries(playlistExpansions)
+    .filter(([sourceUrl]) => activePlaylistUrls.has(sourceUrl));
 
   return (
     <>
@@ -957,9 +1066,19 @@ export const AddDownloadsModal = () => {
                   value={urls}
                   onChange={(e) => setUrls(e.target.value)}
                 />
+                {playlistSummaries.map(([sourceUrl, playlist]) => {
+                  const total = playlist.entry_count || playlist.entries.length;
+                  return (
+                    <p key={sourceUrl} className="px-1 text-[11px] text-purple-500 dark:text-purple-400">
+                      Playlist “{playlist.title}”: {playlist.entries.length}{total > playlist.entries.length ? ` of ${total}` : ''} entries loaded
+                      {playlist.truncated ? ' (safe entry limit reached)' : ''}
+                      {playlist.skipped_entries > 0 ? `; ${playlist.skipped_entries} skipped, unavailable, duplicated, or outside the safe limit` : ''}.
+                    </p>
+                  );
+                })}
                 <div className="flex justify-between items-center px-1">
                   <span className="text-[11px] text-text-muted font-medium">
-                    {parsedItems.filter(item => item.status === 'ready').length} ready, {fallbackMetadataCount} fallback, {failedMediaMetadataCount} media retry
+                    {selectedItems.filter(item => item.status === 'ready').length} selected ready, {fallbackMetadataCount} fallback, {failedMediaMetadataCount} media retry
                   </span>
                     <button
                       type="button"
@@ -969,14 +1088,22 @@ export const AddDownloadsModal = () => {
                     >
                       <RefreshCw size={12} /> Refresh Metadata
                     </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={toggleAllRows}
+                      disabled={parsedItems.length === 0}
+                      className="add-download-link-button ml-3 text-[11px] font-medium"
+                    >
+                      {allRowsSelected ? 'Clear selection' : 'Select all'}
+                    </button>
+                  </div>
               </div>
 
               <div className="grid grid-cols-4 gap-3">
-                <SummaryBox title="Files" value={parsedItems.length} icon={FileText} color="text-blue-500" />
+                <SummaryBox title="Files" value={selectedItems.length === parsedItems.length ? parsedItems.length : `${selectedItems.length}/${parsedItems.length}`} icon={FileText} color="text-blue-500" />
                 <SummaryBox title="Required" value={requiredStr} icon={Database} color="text-orange-500" />
                 <SummaryBox title="Free" value={freeSpace} icon={HardDrive} color="text-green-500" />
-                <SummaryBox title="Unknown" value={parsedItems.filter(i => !i.sizeBytes).length} icon={FileText} color="text-purple-500" />
+                <SummaryBox title="Unknown" value={selectedItems.filter(i => !i.sizeBytes).length} icon={FileText} color="text-purple-500" />
               </div>
 
               <div className="flex flex-col gap-2 flex-1 overflow-hidden">
@@ -1014,18 +1141,26 @@ export const AddDownloadsModal = () => {
                               ? 'is-selected border'
                               : 'border border-transparent'
                           }`}
-                        >
-                          <div className="flex items-center w-full">
+                          >
+                            <div className="flex items-center w-full">
+                            <input
+                              type="checkbox"
+                              checked={item.selected !== false}
+                              onChange={() => toggleRowSelection(i)}
+                              onClick={event => event.stopPropagation()}
+                              aria-label={`Select ${item.file}`}
+                              className="mr-2 shrink-0 accent-purple-500"
+                            />
                             <div className="flex-[2] text-text-primary font-medium truncate pr-2" title={item.file}>{item.file}</div>
                             <div className={`flex-1 font-mono ${item.status === 'loading' ? 'text-text-muted/50' : 'text-text-muted'}`}>{item.size || 'Unknown'}</div>
                             <div className={`flex-[1.5] font-medium ${item.status === 'metadata-error' || item.status === 'invalid' ? 'text-red-500' : item.status === 'loading' ? 'text-orange-400' : 'text-blue-500'}`}>
                               {item.status === 'loading' ? (
                                 <div className="flex items-center gap-1.5">
-                                  <RefreshCw size={12} className="animate-spin" /> Fetching...
+                                  <RefreshCw size={12} className="animate-spin" /> {item.isPlaylist ? 'Fetching playlist...' : 'Fetching...'}
                                 </div>
                               ) : (
                                 item.status === 'metadata-error'
-                                  ? item.isMedia ? 'Metadata failed' : 'Fallback'
+                                  ? item.isPlaylist ? 'Playlist failed' : item.isMedia ? 'Metadata failed' : 'Fallback'
                                   : item.status === 'invalid'
                                     ? 'Invalid'
                                     : 'Ready'
@@ -1054,6 +1189,11 @@ export const AddDownloadsModal = () => {
                   </div>
                   <div className="add-download-section-title flex items-center gap-2 mb-3 relative z-10">
                     <Video size={16} className="text-purple-500" /> Media Format
+                    {parsedItems[selectedItemIndex].playlistSourceUrl && (
+                      <span className="text-[10px] font-normal text-text-muted">
+                        Playlist item {parsedItems[selectedItemIndex].playlistIndex || '?'}
+                      </span>
+                    )}
                   </div>
 
                   {parsedItems[selectedItemIndex].status === 'loading' ? (

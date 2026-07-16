@@ -5,6 +5,8 @@ import {
   mediaFormatSelectorForRow,
   mediaFileNameForSelectedFormat,
   metadataSummaryMessage,
+  isYouTubePlaylistUrl,
+  playlistFilePrefix,
   reconcileDownloadRows,
   refreshFailedMetadataRows,
   updateRowIfCurrent,
@@ -55,6 +57,168 @@ describe('add download metadata workflow', () => {
     );
 
     expect(rows.map(item => item.status)).toEqual(['loading', 'invalid', 'invalid']);
+  });
+
+  it('recognizes pure YouTube playlist URLs without changing video-plus-playlist behavior', () => {
+    expect(isYouTubePlaylistUrl('https://www.youtube.com/playlist?list=PL123')).toBe(true);
+    expect(isYouTubePlaylistUrl('https://www.youtube.com/playlist/?list=PL123')).toBe(true);
+    expect(isYouTubePlaylistUrl('https://music.youtube.com/playlist?list=PL123')).toBe(true);
+    expect(isYouTubePlaylistUrl('https://www.youtube.com/watch?v=video&list=PL123')).toBe(false);
+    expect(isYouTubePlaylistUrl('https://example.com/playlist?list=PL123')).toBe(false);
+  });
+
+  it('keeps a playlist as one loading row until discovery succeeds', () => {
+    const rows = reconcileDownloadRows(
+      'https://www.youtube.com/playlist?list=PL123',
+      []
+    );
+
+    expect(rows[0]).toMatchObject({
+      isMedia: true,
+      isPlaylist: true,
+      status: 'loading'
+    });
+  });
+
+  it('expands playlist entries into independently identifiable media rows', () => {
+    const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+    const rows = reconcileDownloadRows(
+      playlistUrl,
+      [],
+      undefined,
+      new Set(),
+      undefined,
+      {},
+      { [playlistUrl]: 4 },
+      {
+        [playlistUrl]: {
+          title: 'Example playlist',
+          playlist_id: 'PL123',
+          entry_count: 2,
+          skipped_entries: 1,
+          truncated: false,
+          entries: [
+            { id: 'one', url: 'https://www.youtube.com/watch?v=one', title: 'First', playlist_index: 1 },
+            { id: 'one-duplicate', url: 'https://www.youtube.com/watch?v=one', title: 'Duplicate', playlist_index: 2 },
+            { id: 'two', url: 'https://www.youtube.com/watch?v=two', title: 'Second', playlist_index: 3 }
+          ]
+        }
+      }
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map(item => item.sourceUrl)).toEqual([
+      'https://www.youtube.com/watch?v=one',
+      'https://www.youtube.com/watch?v=two'
+    ]);
+    expect(rows[0]).toMatchObject({
+      file: '001 - First',
+      isMedia: true,
+      playlistSourceUrl: playlistUrl,
+      playlistTitle: 'Example playlist',
+      playlistIndex: 1,
+      playlistCount: 2,
+      requestContextVersion: 4,
+      status: 'loading'
+    });
+    expect(rows[1].file).toBe('003 - Second');
+    expect(rows.every(item => !item.isPlaylist)).toBe(true);
+  });
+
+  it('uses a stable three-digit playlist prefix and widens it for four-digit lists', () => {
+    expect(playlistFilePrefix(1, 12)).toBe('001 - ');
+    expect(playlistFilePrefix(12, 12)).toBe('012 - ');
+    expect(playlistFilePrefix(1000, 1000)).toBe('1000 - ');
+    expect(playlistFilePrefix(undefined, 12)).toBe('');
+  });
+
+  it('propagates a playlist selection to entries discovered after the user deselects it', () => {
+    const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+    const rows = reconcileDownloadRows(
+      playlistUrl,
+      [],
+      undefined,
+      new Set(),
+      undefined,
+      {},
+      {},
+      {
+        [playlistUrl]: {
+          title: 'Example playlist',
+          playlist_id: 'PL123',
+          entry_count: 1,
+          skipped_entries: 0,
+          truncated: false,
+          entries: [{ id: 'one', url: 'https://www.youtube.com/watch?v=one', title: 'First', playlist_index: 1 }]
+        }
+      },
+      { [playlistUrl]: false }
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].selected).toBe(false);
+  });
+
+  it('preserves entry-level selection when expanded rows are recreated', () => {
+    const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+    const expansion = {
+      [playlistUrl]: {
+        title: 'Example playlist',
+        playlist_id: 'PL123',
+        entry_count: 2,
+        skipped_entries: 0,
+        truncated: false,
+        entries: [
+          { id: 'one', url: 'https://www.youtube.com/watch?v=one', title: 'First', playlist_index: 1 },
+          { id: 'two', url: 'https://www.youtube.com/watch?v=two', title: 'Second', playlist_index: 2 }
+        ]
+      }
+    };
+
+    const rows = reconcileDownloadRows(
+      playlistUrl,
+      [],
+      undefined,
+      new Set(),
+      undefined,
+      {},
+      {},
+      expansion,
+      {
+        'https://www.youtube.com/watch?v=one': false,
+        'https://www.youtube.com/watch?v=two': true
+      }
+    );
+
+    expect(rows.map(item => item.selected)).toEqual([false, true]);
+  });
+
+  it('does not leave a loading playlist row when every entry is already present', () => {
+    const videoUrl = 'https://www.youtube.com/watch?v=one';
+    const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+    const rows = reconcileDownloadRows(
+      `${videoUrl}\n${playlistUrl}`,
+      [],
+      undefined,
+      new Set(),
+      undefined,
+      {},
+      {},
+      {
+        [playlistUrl]: {
+          title: 'Example playlist',
+          playlist_id: 'PL123',
+          entry_count: 1,
+          skipped_entries: 0,
+          truncated: false,
+          entries: [{ id: 'one', url: videoUrl, title: 'First', playlist_index: 1 }]
+        }
+      }
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sourceUrl).toBe(videoUrl);
+    expect(rows.some(item => item.isPlaylist)).toBe(false);
   });
 
   it('forces explicit extension media fetches through media metadata for any http page', () => {
@@ -242,6 +406,25 @@ describe('add download metadata workflow', () => {
     ])).toBe(false);
     expect(canSubmitMetadataRows([row({ status: 'loading' })])).toBe(false);
     expect(canSubmitMetadataRows([row({ status: 'invalid' })])).toBe(false);
+  });
+
+  it('validates only selected rows and requires at least one selection', () => {
+    expect(canSubmitMetadataRows([
+      row({ status: 'loading' }),
+      row({ id: 'skipped', status: 'invalid', selected: false })
+    ])).toBe(false);
+    expect(canSubmitMetadataRows([
+      row({ status: 'ready' }),
+      row({ id: 'skipped', status: 'invalid', selected: false })
+    ])).toBe(true);
+    expect(canSubmitMetadataRows([
+      row({ selected: false }),
+      row({ id: 'skipped', selected: false })
+    ])).toBe(false);
+    expect(metadataSummaryMessage([
+      row({ status: 'metadata-error', selected: false }),
+      row({ id: 'ready', status: 'ready' })
+    ])).toContain('Ready to add 1 download');
   });
 
   it('keeps failed media routing without a format selector', () => {

@@ -6,6 +6,7 @@ import type { DownloadProgressEvent } from './bindings/DownloadProgressEvent';
 import type { DownloadStateEvent } from './bindings/DownloadStateEvent';
 import type { ExtensionDownload } from './bindings/ExtensionDownload';
 import type { MediaMetadata } from './bindings/MediaMetadata';
+import type { MediaPlaylistMetadata } from './bindings/MediaPlaylistMetadata';
 import type { MetadataResponse } from './bindings/MetadataResponse';
 import type { EngineStatusItem } from './bindings/EngineStatusItem';
 import type { PostQueueAction } from './bindings/PostQueueAction';
@@ -23,6 +24,10 @@ type CommandMap = {
   fetch_media_metadata: {
     args: { url: string; cookieBrowser: string | null; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null; proxy: string | null };
     result: MediaMetadata;
+  };
+  fetch_media_playlist_metadata: {
+    args: { url: string; cookieBrowser: string | null; userAgent: string | null; username: string | null; password: string | null; headers: string | null; cookies: string | null; proxy: string | null };
+    result: MediaPlaylistMetadata;
   };
  get_aria2_engine_status: { args: undefined; result: EngineStatusItem };
  get_ytdlp_engine_status: { args: undefined; result: EngineStatusItem };

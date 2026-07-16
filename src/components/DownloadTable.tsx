@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useDownloadStore, DownloadItem } from '../store/useDownloadStore';
 import { useToast } from '../contexts/ToastContext';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -33,7 +33,7 @@ const DEFAULT_COLUMN_WIDTHS = [340, 100, 220, 100, 80, 170];
 const COLUMN_WIDTHS_STORAGE_KEY = 'firelink-download-column-widths';
 
 export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
-  const { downloads, queues, assignToQueue, openDeleteModal, redownload } = useDownloadStore();
+  const { downloads, queues, assignToQueue, openDeleteModal, redownload, moveInQueue } = useDownloadStore();
   const { addToast } = useToast();
   const isMac = navigator.userAgent.includes('Mac');
   const [isReadingClipboard, setIsReadingClipboard] = useState(false);
@@ -54,8 +54,10 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   const [sortConfig, setSortConfig] = useState<DownloadSortConfig>({ column: 'Date Added', direction: 'desc' });
   const [queueSortConfig, setQueueSortConfig] = useState<DownloadSortConfig | null>(null);
   const selectedIdsRef = useRef(selectedIds);
+  const lastSelectedIdRef = useRef(lastSelectedId);
   const sortedDownloadsRef = useRef<DownloadItem[]>([]);
   selectedIdsRef.current = selectedIds;
+  lastSelectedIdRef.current = lastSelectedId;
   const [columnWidths, setColumnWidths] = useState(() => {
     try {
       const stored = JSON.parse(window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY) || 'null');
@@ -138,25 +140,25 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   }, []);
 
 
-  const showInteractionError = (message: string, error: unknown) => {
+  const showInteractionError = useCallback((message: string, error: unknown) => {
     const detail = error instanceof Error ? error.message : String(error);
     addToast({ message: `${message}: ${detail}`, variant: 'error', isActionable: true });
-  };
+  }, [addToast]);
 
-  const getDownloadPath = async (item: DownloadItem) => {
+  const getDownloadPath = useCallback(async (item: DownloadItem) => {
     const fileName = item.fileName?.trim();
     if (!fileName) return null;
     const settings = useSettingsStore.getState();
     const destination = item.destination ||
       await resolveCategoryDestination(settings, item.category);
     return resolveDownloadFilePath(destination, fileName);
-  };
+  }, []);
 
-  const openProperties = (id: string) => {
+  const openProperties = useCallback((id: string) => {
     useDownloadStore.getState().setSelectedPropertiesDownloadId(id);
-  };
+  }, []);
 
-  const openDownloadFile = async (item: DownloadItem) => {
+  const openDownloadFile = useCallback(async (item: DownloadItem) => {
     if (item.status !== 'completed') {
       openProperties(item.id);
       return;
@@ -174,7 +176,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       console.error("Failed to open file:", error);
       showInteractionError('Could not open downloaded file', error);
     }
-  };
+  }, [getDownloadPath, openProperties, showInteractionError]);
 
   const revealDownloadFile = async (item: DownloadItem) => {
     const pathToReveal = await getDownloadPath(item);
@@ -192,14 +194,14 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
   };
 
-  const handleDownloadDoubleClick = (item: DownloadItem) => {
+  const handleDownloadDoubleClick = useCallback((item: DownloadItem) => {
     if (item.status === 'completed') {
       void openDownloadFile(item);
       return;
     }
 
     openProperties(item.id);
-  };
+  }, [openDownloadFile, openProperties]);
 
   const isQueueFilter = filter.startsWith('queue:');
   const filteredDownloads = useMemo(() => downloads.filter((d: DownloadItem) => {
@@ -232,6 +234,36 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       })
     : sortDownloads(filteredDownloads, isQueueFilter ? queueSortConfig! : sortConfig),
     [filteredDownloads, isQueueFilter, queueSortConfig, sortConfig]);
+
+  // Each row used to derive this by filtering and sorting the complete store
+  // independently. That made a 1000-entry playlist perform O(n^2 log n) work
+  // on every download update. Compute the same queue membership once and pass
+  // the resulting position to rows instead.
+  const queuePositionsByDownloadId = useMemo(() => {
+    const grouped = new Map<string | undefined, DownloadItem[]>();
+    for (const download of downloads) {
+      if (
+        download.status === 'completed'
+        || (isActiveDownloadStatus(download.status) && download.status !== 'queued')
+      ) {
+        continue;
+      }
+      const queueItems = grouped.get(download.queueId) || [];
+      queueItems.push(download);
+      grouped.set(download.queueId, queueItems);
+    }
+
+    const positions = new Map<string, { index: number; length: number }>();
+    for (const queueItems of grouped.values()) {
+      queueItems.sort((left, right) =>
+        (left.queuePosition ?? 0) - (right.queuePosition ?? 0)
+      );
+      queueItems.forEach((download, index) => {
+        positions.set(download.id, { index, length: queueItems.length });
+      });
+    }
+    return positions;
+  }, [downloads]);
   sortedDownloadsRef.current = sortedDownloads;
 
   useEffect(() => {
@@ -246,27 +278,30 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   useEffect(() => {
     setQueueSortConfig(null);
   }, [filter, isQueueFilter]);
-  const handleItemClick = (e: React.MouseEvent, item: DownloadItem) => {
+  const handleItemClick = useCallback((e: React.MouseEvent, item: DownloadItem) => {
     if (e.detail === 2) {
       handleDownloadDoubleClick(item);
       return;
     }
-    if (e.shiftKey && lastSelectedId) {
-      const currentIndex = sortedDownloads.findIndex(d => d.id === item.id);
-      const lastIndex = sortedDownloads.findIndex(d => d.id === lastSelectedId);
+    const currentSortedDownloads = sortedDownloadsRef.current;
+    const currentSelectedIds = selectedIdsRef.current;
+    const currentLastSelectedId = lastSelectedIdRef.current;
+    if (e.shiftKey && currentLastSelectedId) {
+      const currentIndex = currentSortedDownloads.findIndex(d => d.id === item.id);
+      const lastIndex = currentSortedDownloads.findIndex(d => d.id === currentLastSelectedId);
       
       if (currentIndex !== -1 && lastIndex !== -1) {
         const start = Math.min(currentIndex, lastIndex);
         const end = Math.max(currentIndex, lastIndex);
         
-        const newSelected = (e.metaKey || e.ctrlKey) ? new Set(selectedIds) : new Set<string>();
+        const newSelected = (e.metaKey || e.ctrlKey) ? new Set(currentSelectedIds) : new Set<string>();
         for (let i = start; i <= end; i++) {
-          newSelected.add(sortedDownloads[i].id);
+          newSelected.add(currentSortedDownloads[i].id);
         }
         setSelectedIds(newSelected);
       }
     } else if (e.metaKey || e.ctrlKey) {
-      const newSelected = new Set(selectedIds);
+      const newSelected = new Set(currentSelectedIds);
       if (newSelected.has(item.id)) {
         newSelected.delete(item.id);
       } else {
@@ -278,15 +313,22 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       setSelectedIds(new Set([item.id]));
       setLastSelectedId(item.id);
     }
-  };
+  }, [handleDownloadDoubleClick]);
 
-  const handleContextMenu = (menu: { x: number; y: number; id: string }) => {
-    if (!selectedIds.has(menu.id)) {
+  const handleContextMenu = useCallback((menu: { x: number; y: number; id: string }) => {
+    if (!selectedIdsRef.current.has(menu.id)) {
       setSelectedIds(new Set([menu.id]));
       setLastSelectedId(menu.id);
     }
     setContextMenu(menu);
-  };
+  }, []);
+
+  const handleMoveInQueue = useCallback((id: string, direction: 'up' | 'down') => {
+    const ids = selectedIdsRef.current.has(id)
+      ? Array.from(selectedIdsRef.current)
+      : id;
+    void moveInQueue(ids, direction);
+  }, [moveInQueue]);
 
   const handleSort = (column: DownloadSortColumn) => {
     const update = (current: DownloadSortConfig | null): DownloadSortConfig =>
@@ -317,7 +359,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
     }
   };
 
-  const handlePause = async (id: string, skipConfirm = false) => {
+  const handlePause = useCallback(async (id: string, skipConfirm = false) => {
     const download = useDownloadStore.getState().downloads.find(d => d.id === id);
     if (!skipConfirm && download && download.resumable === false) {
       const confirmPause = window.confirm("This download does not support resuming. If you pause it, you will have to start over again later. Are you sure you want to pause?");
@@ -332,9 +374,9 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       console.error("Failed to pause:", e);
       showInteractionError('Could not pause download', e);
     }
-  };
+  }, [showInteractionError]);
 
-  const handleResume = async (item: DownloadItem) => {
+  const handleResume = useCallback(async (item: DownloadItem) => {
     try {
       const resumed = await useDownloadStore.getState().resumeDownload(item.id);
       if (!resumed) {
@@ -344,7 +386,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       console.error("Failed to resume:", error);
       showInteractionError(`Could not resume ${item.fileName}`, error);
     }
-  };
+  }, [showInteractionError]);
 
   const resumeItemsSequentially = async (items: DownloadItem[]) => {
     for (const item of items) {
@@ -408,7 +450,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
   };
 
 
-  const getCategoryIcon = (category: string) => {
+  const getCategoryIcon = useCallback((category: string) => {
     switch(category) {
       case 'Musics': return <Music size={16} className="text-pink-400" />;
       case 'Movies': return <Film size={16} className="text-red-400" />;
@@ -419,7 +461,7 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
       case 'Other': return <FileQuestion size={16} className="text-gray-400" />;
       default: return <FileQuestion size={16} className="text-gray-400" />;
     }
-  }
+  }, []);
 
   return (
     <div className="downloads-view flex-1 flex flex-col h-full min-w-0">
@@ -544,14 +586,17 @@ export const DownloadTable: React.FC<DownloadTableProps> = ({ filter }) => {
                   {sortedDownloads.map((d, index) => (
                     <DownloadItemComponent
                       key={d.id}
-                      downloadId={d.id}
+                      download={d}
                       index={index}
+                      queueIndex={queuePositionsByDownloadId.get(d.id)?.index ?? -1}
+                      queueLength={queuePositionsByDownloadId.get(d.id)?.length ?? 0}
                       tableGridTemplate={tableGridTemplate}
                       setContextMenu={handleContextMenu}
                       handlePause={handlePause}
                       handleResume={handleResume}
                       getCategoryIcon={getCategoryIcon}
-                      selectedIds={selectedIds}
+                      isSelected={selectedIds.has(d.id)}
+                      onMoveInQueue={handleMoveInQueue}
                       onClick={handleItemClick}
                     />
                   ))}

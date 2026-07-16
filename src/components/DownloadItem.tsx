@@ -1,11 +1,8 @@
 import React from 'react';
-import { useShallow } from 'zustand/react/shallow';
-import { useDownloadStore } from '../store/useDownloadStore';
 import { useDownloadProgressStore } from '../store/downloadProgressStore';
 import { Play, Pause, MoreVertical, Clock, ArrowUp, ArrowDown } from 'lucide-react';
 import type { DownloadItem as DownloadItemType } from '../bindings/DownloadItem';
 import { canPauseDownload, canStartDownload, startActionLabel } from '../utils/downloadActions';
-import { isActiveDownloadStatus } from '../utils/downloads';
 import {
   downloadProgressColorClass,
   formatDownloadTotal,
@@ -13,47 +10,35 @@ import {
 } from '../utils/downloadProgress';
 
 interface DownloadItemProps {
-  downloadId: string;
+  download: DownloadItemType;
   index: number;
+  queueIndex: number;
+  queueLength: number;
   tableGridTemplate: string;
   setContextMenu: (menu: { x: number; y: number; id: string }) => void;
   handlePause: (id: string, skipConfirm?: boolean) => void;
   handleResume: (item: DownloadItemType) => void;
   getCategoryIcon: (category: string) => React.ReactNode;
-  selectedIds: Set<string>;
+  isSelected: boolean;
+  onMoveInQueue: (id: string, direction: 'up' | 'down') => void;
   onClick: (e: React.MouseEvent, item: DownloadItemType) => void;
 }
 
 export const DownloadItem = React.memo<DownloadItemProps>(({
-  downloadId,
+  download,
   index,
+  queueIndex,
+  queueLength,
   tableGridTemplate,
   setContextMenu,
   handlePause,
   handleResume,
   getCategoryIcon,
-  selectedIds,
+  isSelected,
+  onMoveInQueue,
   onClick,
 }) => {
-  const download = useDownloadStore(state => state.downloads.find(d => d.id === downloadId));
-  const queueItems = useDownloadStore(useShallow(state => {
-    const item = state.downloads.find(candidate => candidate.id === downloadId);
-    if (!item) return [];
-    const queueId = item.queueId;
-    return state.downloads
-      .filter(candidate =>
-        candidate.queueId === queueId &&
-        candidate.status !== 'completed' &&
-        !(isActiveDownloadStatus(candidate.status) && candidate.status !== 'queued')
-      )
-      .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
-      .map(candidate => candidate.id);
-  }));
-  const moveInQueue = useDownloadStore(state => state.moveInQueue);
-  const liveProgress = useDownloadProgressStore(state => state.progressMap[downloadId]);
-  const queueIndex = queueItems.indexOf(downloadId);
-
-  if (!download) return null;
+  const liveProgress = useDownloadProgressStore(state => state.progressMap[download.id]);
 
   const displayFraction = download.status === 'downloading'
     ? liveProgress?.fraction ?? download.fraction ?? 0
@@ -83,7 +68,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
   return (
     <div
-      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''} ${selectedIds.has(downloadId) ? 'is-selected' : ''}`}
+      className={`download-row group cursor-default relative ${index % 2 !== 0 ? 'striped' : ''} ${isSelected ? 'is-selected' : ''}`}
       style={{ gridTemplateColumns: tableGridTemplate }}
       onClick={(e) => onClick(e, download)}
       onContextMenu={(e) => {
@@ -138,8 +123,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 style={{ width: `${displayFraction * 100}%` }}
               />
             </div>
-            <span 
-            key={`status-${download.status}`}
+            <span
             title={
               download.lastError && (download.status === 'failed' || download.status === 'retrying')
                 ? download.lastError
@@ -181,7 +165,6 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
       
       <div className="download-cell-truncate">
         <span
-          key={`speed-${download.status}`}
           className="tabular-nums"
           title={displaySpeed}
         >
@@ -191,7 +174,6 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
 
       <div className="download-cell-truncate">
         <span
-          key={`eta-${download.status}`}
           className="tabular-nums"
           title={displayEta}
         >
@@ -215,7 +197,7 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
           {(download.status === 'queued' || download.status === 'staged') && queueIndex !== -1 && (
             <>
               <button 
-                onClick={() => moveInQueue(selectedIds.has(download.id) ? Array.from(selectedIds) : download.id, 'up')}
+                onClick={() => onMoveInQueue(download.id, 'up')}
                 disabled={queueIndex === 0}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Up"
@@ -223,8 +205,8 @@ export const DownloadItem = React.memo<DownloadItemProps>(({
                 <ArrowUp size={14} />
               </button>
               <button 
-                onClick={() => moveInQueue(selectedIds.has(download.id) ? Array.from(selectedIds) : download.id, 'down')}
-                disabled={queueIndex === queueItems.length - 1}
+                onClick={() => onMoveInQueue(download.id, 'down')}
+                disabled={queueIndex === queueLength - 1}
                 className="app-icon-button h-7 w-7 disabled:opacity-40" 
                 title="Move Down"
               >

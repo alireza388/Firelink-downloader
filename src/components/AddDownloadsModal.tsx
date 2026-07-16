@@ -373,6 +373,13 @@ export const AddDownloadsModal = () => {
         break;
       }
       requestSet.add(requestKey);
+      if (row.isPlaylist) {
+        // Invalidate stale playlist requests before any asynchronous settings,
+        // keychain, or network work can yield. Otherwise an old request can
+        // become the latest request again after the URL or browser context
+        // has already changed.
+        latestPlaylistRequestRef.current.set(row.sourceUrl, requestKey);
+      }
 
       void (async () => {
         try {
@@ -411,7 +418,6 @@ export const AddDownloadsModal = () => {
 
             if (row.isPlaylist) {
               if (playlistExpansions[row.sourceUrl]) return;
-              latestPlaylistRequestRef.current.set(row.sourceUrl, requestKey);
               const playlistData = await fetchMediaPlaylistMetadataDeduped({
                 ...mediaMetadataArgs,
                 url: contextUrl
@@ -1047,11 +1053,11 @@ export const AddDownloadsModal = () => {
       <div className="app-modal add-download-modal flex flex-col overflow-hidden text-sm">
 
         {/* Main Content Split */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
 
           {/* Left Column: URLs and Preview */}
           <div className="add-download-left w-[55%] border-r border-border-modal flex flex-col">
-            <div className="add-download-pane p-5 flex-1 flex flex-col gap-5">
+            <div className="add-download-pane p-5 flex-1 min-h-0 min-w-0 flex flex-col gap-5">
 
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between">
@@ -1106,18 +1112,18 @@ export const AddDownloadsModal = () => {
                 <SummaryBox title="Unknown" value={selectedItems.filter(i => !i.sizeBytes).length} icon={FileText} color="text-purple-500" />
               </div>
 
-              <div className="flex flex-col gap-2 flex-1 overflow-hidden">
+              <div className="flex flex-col gap-2 flex-1 min-h-0 min-w-0 overflow-hidden">
                 <div className="add-download-section-title flex items-center gap-2">
                   <ArrowRight size={16} className="text-blue-500" />
                   Preview
                 </div>
-                <div className="add-download-preview flex-1 overflow-hidden flex flex-col">
+                <div className="add-download-preview flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
                   <div className="add-download-preview-header px-3 py-2 flex text-[11px] font-semibold text-text-muted uppercase tracking-wider">
                     <div className="flex-[2]">File</div>
                     <div className="flex-1">Size</div>
                     <div className="flex-[1.5]">Status</div>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-2 space-y-1" role="listbox" aria-label="Download preview">
+                  <div className="flex-1 min-h-0 min-w-0 overflow-y-auto p-2 space-y-1" role="listbox" aria-label="Download preview">
                     {parsedItems.length === 0 ? (
                       <div className="add-download-empty h-full flex items-center justify-center text-text-muted text-xs">
                         No links added yet.

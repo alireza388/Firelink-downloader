@@ -545,6 +545,7 @@ html[data-list-density="relaxed"] {
   .add-download-left {
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
     background:
       radial-gradient(circle at 18% 0%, hsl(var(--accent-color) / 0.055), transparent 34%),
       hsl(var(--main-bg) / 0.56);
@@ -643,6 +644,8 @@ html[data-list-density="relaxed"] {
   }
 
   .add-download-preview {
+    min-width: 0;
+    min-height: 0;
     border: 1px solid hsl(var(--border-modal));
     border-radius: 11px;
     background: hsl(var(--bg-input) / 0.35);
@@ -650,11 +653,13 @@ html[data-list-density="relaxed"] {
   }
 
   .add-download-preview-header {
+    flex-shrink: 0;
     border-bottom: 1px solid hsl(var(--border-modal));
     background: hsl(var(--surface-raised) / 0.66);
   }
 
   .add-download-preview-row {
+    flex-shrink: 0;
     transition:
       background-color 100ms ease,
       border-color 100ms ease,
@@ -1780,6 +1785,7 @@ html[data-list-density="relaxed"] {
   }
 
 .download-table-header {
+  flex-shrink: 0;
   height: var(--download-header-height);
   display: grid;
   align-items: center;
@@ -1882,12 +1888,14 @@ body.is-resizing .column-resize-handle:hover::after {
 
 .download-table-list {
   height: 100%;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
 }
 
 .download-row {
+  flex: 0 0 var(--download-row-height);
   height: var(--download-row-height);
   display: grid;
   align-items: center;

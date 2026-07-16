@@ -293,7 +293,10 @@ describe('add download metadata workflow', () => {
     const existing = row({
       file: 'old-name.zip',
       requestContextVersion: 1,
-      generation: 2
+      generation: 2,
+      size: '10 MB',
+      sizeBytes: 10,
+      resumable: true
     });
 
     const refreshed = reconcileDownloadRows(
@@ -310,7 +313,47 @@ describe('add download metadata workflow', () => {
       file: 'new-name.zip',
       status: 'loading',
       generation: 3,
-      requestContextVersion: 2
+      requestContextVersion: 2,
+      size: undefined,
+      sizeBytes: undefined,
+      resumable: undefined
+    });
+  });
+
+  it('drops stale playlist provenance when an entry remains after its playlist is removed', () => {
+    const videoUrl = 'https://www.youtube.com/watch?v=one';
+    const playlistUrl = 'https://www.youtube.com/playlist?list=PL123';
+    const existing = row({
+      sourceUrl: videoUrl,
+      downloadUrl: videoUrl,
+      file: '001 - First.mp4',
+      status: 'ready',
+      generation: 3,
+      isMedia: true,
+      playlistSourceUrl: playlistUrl,
+      playlistTitle: 'Example playlist',
+      playlistIndex: 1,
+      playlistCount: 2,
+      playlistEntryTitle: 'First',
+      requestContextVersion: 7,
+      size: '10 MB',
+      sizeBytes: 10,
+      resumable: true
+    });
+
+    const rows = reconcileDownloadRows(videoUrl, [existing]);
+
+    expect(rows[0]).toMatchObject({
+      file: 'watch',
+      status: 'loading',
+      generation: 4,
+      isMedia: true,
+      playlistSourceUrl: undefined,
+      playlistIndex: undefined,
+      size: undefined,
+      sizeBytes: undefined,
+      resumable: undefined,
+      requestContextVersion: undefined
     });
   });
 
@@ -425,6 +468,10 @@ describe('add download metadata workflow', () => {
       row({ status: 'metadata-error', selected: false }),
       row({ id: 'ready', status: 'ready' })
     ])).toContain('Ready to add 1 download');
+    expect(metadataSummaryMessage([
+      row({ status: 'metadata-error' }),
+      row({ id: 'skipped', status: 'ready', selected: false })
+    ])).toContain('can still be added');
   });
 
   it('keeps failed media routing without a format selector', () => {

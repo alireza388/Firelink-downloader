@@ -182,21 +182,39 @@ export const reconcileDownloadRows = (
       const requestContextVersion = input.requestContextVersion;
       const contextChanged = requestContextVersion !== undefined
         && requestContextVersion !== preserved.requestContextVersion;
-      if ((forcedMedia && !preserved.isMedia) || contextChanged) {
+      const playlistContextChanged = preserved.playlistSourceUrl !== input.playlistSourceUrl
+        || preserved.playlistTitle !== input.playlistTitle
+        || preserved.playlistIndex !== input.playlistIndex
+        || preserved.playlistCount !== input.playlistCount
+        || preserved.playlistEntryTitle !== input.playlistEntryTitle;
+      if ((forcedMedia && !preserved.isMedia) || contextChanged || playlistContextChanged) {
         const requestedFilename = input.playlistSourceUrl
           ? `${playlistFilePrefix(input.playlistIndex, input.playlistCount)}${input.playlistEntryTitle || 'video'}`
           : requestFilenames[input.sourceUrl];
         return {
           ...preserved,
-          file: contextChanged
+          file: contextChanged || playlistContextChanged
             ? canonicalizeDownloadFileName(requestedFilename || fileNameFromUrl(input.sourceUrl))
             : preserved.file,
           status: 'loading',
           generation: preserved.generation + 1,
           requestContextVersion,
-          isMedia: preserved.isMedia || forcedMedia,
-          formats: preserved.isMedia || forcedMedia ? undefined : preserved.formats,
-          selectedFormat: preserved.isMedia || forcedMedia ? undefined : preserved.selectedFormat,
+          isMedia: preserved.isMedia || forcedMedia || Boolean(input.playlistSourceUrl),
+          size: undefined,
+          sizeBytes: undefined,
+          resumable: undefined,
+          formats: preserved.isMedia || forcedMedia || Boolean(input.playlistSourceUrl)
+            ? undefined
+            : preserved.formats,
+          selectedFormat: preserved.isMedia || forcedMedia || Boolean(input.playlistSourceUrl)
+            ? undefined
+            : preserved.selectedFormat,
+          isPlaylist: input.isPlaylist,
+          playlistSourceUrl: input.playlistSourceUrl,
+          playlistTitle: input.playlistTitle,
+          playlistIndex: input.playlistIndex,
+          playlistCount: input.playlistCount,
+          playlistEntryTitle: input.playlistEntryTitle,
           playlistError: undefined
         };
       }
@@ -361,7 +379,7 @@ export const metadataSummaryMessage = (rows: AddDownloadDraftRow[]): string => {
   if (failedMedia > 0) {
     return `Media metadata is unavailable for ${failedMedia} item${failedMedia === 1 ? '' : 's'}. Refresh metadata before adding.`;
   }
-  if (failed === rows.length) {
+  if (failed === selectedRows.length) {
     return 'Metadata is unavailable. Downloads can still be added using fallback details.';
   }
   if (failed > 0) {

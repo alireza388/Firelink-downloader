@@ -8,7 +8,7 @@ import type { ExtensionDownload } from '../bindings/ExtensionDownload';
 import type { Queue } from '../bindings/Queue';
 import { useSettingsStore } from './useSettingsStore';
 import { useDownloadProgressStore } from './downloadProgressStore';
-import { categoryForFileName, isActiveDownloadStatus, isTransferActiveStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence } from '../utils/downloads';
+import { categoryForFileName, isActiveDownloadStatus, isTransferActiveStatus, normalizeSpeedLimitForBackend, redactDownloadForPersistence, resolveDownloadConnections } from '../utils/downloads';
 import {
   resolveCategoryDestination
 } from '../utils/downloadLocations';
@@ -201,7 +201,7 @@ export async function dispatchItem(id: string): Promise<boolean> {
         url: item.url,
         destination,
         filename: item.fileName,
-        connections: item.connections || settings.perServerConnections || null,
+        connections: resolveDownloadConnections(item.connections, settings.perServerConnections),
         speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit, item.isMedia),
         username: item.username || (login ? login.username : null),
         password: item.password || keychainPassword,
@@ -694,6 +694,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
     const queuePosition = maxPos + 1;
     const ownedItem: DownloadItem = {
       ...item,
+      connections: resolveDownloadConnections(item.connections, settings.perServerConnections),
       destination: destPath,
       status: action.type === 'add-to-queue' ? 'staged' : 'ready',
       queueId,
@@ -1177,7 +1178,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
             url: item.url,
             destination: destPath,
             filename: item.fileName,
-            connections: item.connections || settings.perServerConnections || null,
+            connections: resolveDownloadConnections(item.connections, settings.perServerConnections),
             speed_limit: speedLimitForDispatch(item.speedLimit, settings.globalSpeedLimit, item.isMedia),
             username: item.username || (login ? login.username : null),
             password: item.password || keychainPassword,

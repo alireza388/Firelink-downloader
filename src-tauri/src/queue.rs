@@ -156,6 +156,11 @@ pub struct QueueManager<R: tauri::Runtime = tauri::Wry> {
     /// download id -> spawn payload for aria2 transient-error re-addUri retries.
     aria2_payloads: Mutex<HashMap<String, SpawnPayload>>,
 
+    /// The daemon-wide download cap currently applied to aria2. This mirrors
+    /// successful RPC changes so the poller can avoid treating an intentional
+    /// cap as a degraded connection pool.
+    aria2_global_speed_limit: Arc<StdMutex<Option<String>>>,
+
     /// 0-based transient-error strike counter per aria2 download id.
     aria2_retry_strikes: Mutex<HashMap<String, usize>>,
 
@@ -221,6 +226,7 @@ impl<R: tauri::Runtime> QueueManager<R> {
             aria2_gids: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_completion: Arc::new(Mutex::new(HashMap::new())),
             aria2_payloads: Mutex::new(HashMap::new()),
+            aria2_global_speed_limit: Arc::new(StdMutex::new(None)),
             aria2_retry_strikes: Mutex::new(HashMap::new()),
             aria2_retry_cancelled: Mutex::new(HashSet::new()),
             aria2_retry_inflight: Mutex::new(HashMap::new()),
@@ -465,6 +471,32 @@ impl<R: tauri::Runtime> QueueManager<R> {
             .await
             .get(id)
             .and_then(|payload| payload.connections)
+    }
+
+    pub fn set_aria2_global_speed_limit(&self, limit: Option<String>) {
+        *self
+            .aria2_global_speed_limit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = limit;
+    }
+
+    pub async fn aria2_speed_limited(&self, id: &str) -> bool {
+        if self
+            .aria2_global_speed_limit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+        {
+            return true;
+        }
+
+        self.aria2_payloads
+            .lock()
+            .await
+            .get(id)
+            .and_then(|payload| payload.speed_limit.as_deref())
+            .and_then(crate::normalize_speed_limit_for_aria2)
+            .is_some()
     }
 
     /// Pop the next task, or None if empty.

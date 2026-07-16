@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DownloadItem } from '../bindings/DownloadItem';
-import { redactDownloadForPersistence } from './downloads';
+import { redactDownloadForPersistence, resolveDownloadConnections } from './downloads';
 
 const item = (status: DownloadItem['status']): DownloadItem => ({
   id: 'download-1',
@@ -41,4 +41,18 @@ describe('download persistence progress snapshots', () => {
       expect(persisted.totalIsEstimate).toBe(false);
     }
   );
+});
+
+describe('download connection resolution', () => {
+  it('uses a clamped fallback for legacy rows without a saved value', () => {
+    expect(resolveDownloadConnections(undefined, 8)).toBe(8);
+    expect(resolveDownloadConnections(undefined, 0)).toBe(1);
+    expect(resolveDownloadConnections(undefined, Number.NaN)).toBe(16);
+  });
+
+  it('clamps malformed saved values before dispatch', () => {
+    expect(resolveDownloadConnections(0, 8)).toBe(1);
+    expect(resolveDownloadConnections(17, 8)).toBe(16);
+    expect(resolveDownloadConnections(Number.NaN, 8)).toBe(8);
+  });
 });

@@ -15,6 +15,7 @@ import {
   formatDownloadTotal,
   resolveDownloadSizeDisplay
 } from '../utils/downloadProgress';
+import { resolveDownloadConnections } from '../utils/downloads';
 
 type LoginMode = 'matching' | 'custom' | 'none';
 
@@ -46,7 +47,8 @@ export const PropertiesModal = () => {
   const [url, setUrl] = useState('');
   const [fileName, setFileName] = useState('');
   const [saveLocation, setSaveLocation] = useState('');
-  const [connections, setConnections] = useState(16);
+  const [connections, setConnections] = useState(() => resolveDownloadConnections(undefined, perServerConnections));
+  const [connectionsDirty, setConnectionsDirty] = useState(false);
   
   const [speedLimitEnabled, setSpeedLimitEnabled] = useState(false);
   const [speedLimitValue, setSpeedLimitValue] = useState('1024'); // KiB/s
@@ -79,7 +81,8 @@ export const PropertiesModal = () => {
             activeItem.category
           ).then(setSaveLocation);
         }
-        setConnections(activeItem.connections || 16);
+        setConnections(resolveDownloadConnections(activeItem.connections, perServerConnections));
+        setConnectionsDirty(false);
         
         if (activeItem.speedLimit) {
            setSpeedLimitEnabled(true);
@@ -117,7 +120,15 @@ export const PropertiesModal = () => {
         setSelectedPropertiesDownloadId(null);
       }
     }
-  }, [selectedPropertiesDownloadId, baseDownloadFolder, setSelectedPropertiesDownloadId]);
+  }, [selectedPropertiesDownloadId, setSelectedPropertiesDownloadId]);
+
+  useEffect(() => {
+    if (!selectedPropertiesDownloadId || connectionsDirty) return;
+    const activeItem = useDownloadStore.getState().downloads.find(d => d.id === selectedPropertiesDownloadId);
+    if (activeItem && activeItem.connections === undefined) {
+      setConnections(resolveDownloadConnections(undefined, perServerConnections));
+    }
+  }, [selectedPropertiesDownloadId, perServerConnections, connectionsDirty]);
 
   useEffect(() => {
     if (!selectedPropertiesDownloadId) return;
@@ -160,7 +171,6 @@ export const PropertiesModal = () => {
       url,
       fileName,
       destination: saveLocation,
-      connections: Number(connections),
       speedLimit: speedLimitEnabled && speedLimitValue ? `${speedLimitValue}K` : undefined,
       username: loginMode === 'custom' ? username.trim() : undefined,
       password: loginMode === 'custom' ? password.trim() : undefined,
@@ -168,6 +178,9 @@ export const PropertiesModal = () => {
       checksum: checksumEnabled && checksumValue.trim() ? `${checksumAlgorithm}=${checksumValue.trim()}` : undefined,
       cookies: cookies.trim() || undefined,
       mirrors: mirrors.trim() || undefined,
+      ...(connectionsDirty
+        ? { connections: resolveDownloadConnections(connections, perServerConnections) }
+        : {}),
     };
     
     try {
@@ -259,7 +272,7 @@ export const PropertiesModal = () => {
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[40px] shrink-0">Speed</span><span className="text-text-secondary truncate">{displayedSpeed}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[30px] shrink-0">ETA</span><span className="text-text-secondary truncate">{displayedEta}</span></div>
 
-              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Connections</span><span className="text-text-secondary truncate">{item.connections || perServerConnections || '-'}</span></div>
+              <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[90px] shrink-0">Connections</span><span className="text-text-secondary truncate" title={item.connections !== undefined ? 'Saved for this download; Settings changes apply to new downloads.' : 'Using the current default for new downloads.'}>{resolveDownloadConnections(item.connections, perServerConnections)}{item.connections !== undefined ? ' (saved)' : ' (default)'}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[60px] shrink-0">Speed cap</span><span className="text-text-secondary truncate">{item.speedLimit || '-'}</span></div>
               <div className="flex gap-1.5 min-w-0"><span className="text-text-muted font-medium w-[55px] shrink-0">Category</span><span className="text-text-secondary truncate">{item.category}</span></div>
             <div className="flex gap-1.5"><span className="text-text-muted font-medium w-[50px]">Last try</span><span className="text-text-secondary truncate">{formatLastTry(item.lastTry)}</span></div>
@@ -311,8 +324,20 @@ export const PropertiesModal = () => {
               
               <label className="text-xs text-text-muted text-right">Connections</label>
               <div className="flex items-center gap-2">
-                <input type="number" value={connections} min={1} max={16} onChange={e=>setConnections(Number(e.target.value))} disabled={transferLocked} className="w-16 bg-bg-input border border-border-modal rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent disabled:opacity-50" />
+                <input type="number" value={connections} min={1} max={16} onChange={e=>{ setConnections(Number(e.target.value)); setConnectionsDirty(true); }} disabled={transferLocked} className="w-16 bg-bg-input border border-border-modal rounded-lg px-2.5 py-1.5 text-xs text-text-primary focus:outline-none focus:border-accent disabled:opacity-50" />
                 <span className="text-xs text-text-muted">per file</span>
+                {!transferLocked && item.connections !== undefined && item.connections !== perServerConnections && (
+                  <button
+                    type="button"
+                    onClick={() => { setConnections(perServerConnections); setConnectionsDirty(true); }}
+                    className="text-[11px] text-accent hover:underline whitespace-nowrap"
+                  >
+                    Use current default ({perServerConnections})
+                  </button>
+                )}
+              </div>
+              <div className="col-start-2 text-[11px] text-text-muted">
+                Saved per download. The Settings default applies to new downloads.
               </div>
               
               <label className="text-xs text-text-muted text-right">Speed</label>

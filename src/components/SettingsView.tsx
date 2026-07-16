@@ -625,7 +625,7 @@ runEngineChecks(false);
                 <div className="mac-settings-row">
                   <div className="settings-row-label">
                     <span>Default connections:</span>
-                    <small>For new downloads</small>
+                    <small>New downloads; existing items keep their saved value</small>
                   </div>
                   <input
                     type="number" min="1" max="16"

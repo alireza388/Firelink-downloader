@@ -40,6 +40,37 @@ export const isActiveDownloadStatus = (status: DownloadStatus): boolean =>
 export const isTransferActiveStatus = (status: DownloadStatus): boolean =>
   status === 'downloading' || status === 'processing' || status === 'retrying';
 
+export const DOWNLOAD_CONNECTIONS_MIN = 1;
+export const DOWNLOAD_CONNECTIONS_MAX = 16;
+
+/**
+ * Resolve persisted/user-entered connection values before they cross into the
+ * backend. Older rows may omit the value, while malformed rows can contain
+ * zero, NaN, or an out-of-range number.
+ */
+export const resolveDownloadConnections = (value: unknown, fallback: unknown): number => {
+  const toFiniteInteger = (candidate: unknown): number | undefined => {
+    if (typeof candidate === 'number') {
+      return Number.isFinite(candidate) ? Math.trunc(candidate) : undefined;
+    }
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      const parsed = Number(candidate);
+      return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+    }
+    return undefined;
+  };
+  const normalizedFallback = toFiniteInteger(fallback) ?? DOWNLOAD_CONNECTIONS_MAX;
+  const safeFallback = Math.min(
+    DOWNLOAD_CONNECTIONS_MAX,
+    Math.max(DOWNLOAD_CONNECTIONS_MIN, normalizedFallback)
+  );
+  const candidate = toFiniteInteger(value) ?? safeFallback;
+  return Math.min(
+    DOWNLOAD_CONNECTIONS_MAX,
+    Math.max(DOWNLOAD_CONNECTIONS_MIN, candidate)
+  );
+};
+
 export const normalizeSpeedLimitForBackend = (value?: string | null): string | null => {
   const trimmed = value?.trim();
   if (!trimmed) return null;
